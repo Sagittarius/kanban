@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { deleteTask, updateTask } from "@/lib/board-store";
+import { deleteProject, updateProject } from "@/lib/board-store";
 
 type RouteContext = {
   params: Promise<{
@@ -11,14 +11,14 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
     const body = await request.json();
-    return NextResponse.json(await updateTask(id, body));
+    return NextResponse.json(await updateProject(id, body));
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Unable to update task";
+      error instanceof Error ? error.message : "Unable to update project";
 
     return NextResponse.json(
       { error: message },
-      { status: message === "Task not found" ? 404 : 500 }
+      { status: message === "Project not found" ? 404 : 500 }
     );
   }
 }
@@ -26,14 +26,14 @@ export async function PATCH(request: Request, context: RouteContext) {
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
-    return NextResponse.json(await deleteTask(id));
+    return NextResponse.json(await deleteProject(id));
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Unable to delete task";
+      error instanceof Error ? error.message : "Unable to delete project";
 
     return NextResponse.json(
       { error: message },
-      { status: message === "Task not found" ? 404 : 500 }
+      { status: message === "Project not found" ? 404 : 500 }
     );
   }
 }

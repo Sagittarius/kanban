@@ -4,13 +4,14 @@ import { getBoard } from "@/lib/board-store";
 
 export async function GET() {
   try {
-    return NextResponse.json(await getBoard());
+    const board = await getBoard();
+    return NextResponse.json(board.activity);
   } catch (error) {
     const message =
-      error instanceof Error ? error.message : "Unable to load board data";
+      error instanceof Error ? error.message : "Unable to load activity";
 
     if (message.startsWith("Failed query: select count(*) from")) {
-      return NextResponse.json(createSeedBoard());
+      return NextResponse.json(createSeedBoard().activity);
     }
 
     return NextResponse.json(
