@@ -7,7 +7,6 @@ export type BoardColumn = {
   id: BoardStatus;
   title: string;
   tone: string;
-  description: string;
 };
 
 export type Project = {
@@ -44,6 +43,7 @@ export type BoardTask = {
   priority: Priority;
   owner: string;
   startDate: string;
+  testDueDate: string;
   dueDate: string;
   estimate: number;
   progress: number;
@@ -53,6 +53,7 @@ export type BoardTask = {
   subtasks: Subtask[];
   orderIndex: number;
   deletedAt: string | null;
+  completedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -69,42 +70,158 @@ export type ActivityLog = {
   createdAt: string;
 };
 
+export type SystemParameter = {
+  key: string;
+  value: string;
+  label: string;
+  valueType: "text" | "number" | "boolean";
+  group: string;
+  unit: string;
+  minValue: number | null;
+  maxValue: number | null;
+  orderIndex: number;
+  updatedAt: string;
+};
+
+export type SystemSettings = {
+  dueSoonDays: number;
+  activityRetentionDays: number;
+  parameters: SystemParameter[];
+};
+
 export type BoardData = {
   columns: BoardColumn[];
   projects: Project[];
   tasks: BoardTask[];
   activity: ActivityLog[];
-  storageMode?: "d1" | "local";
+  settings: SystemSettings;
+  storageMode?: "d1" | "sqlite" | "local";
 };
 
 const seedTime = "2026-06-06T09:00:00.000Z";
+
+export const defaultSystemParameters: SystemParameter[] = [
+  {
+    key: "due_soon_days",
+    value: "2",
+    label: "临期天数",
+    valueType: "number",
+    group: "任务",
+    unit: "天",
+    minValue: 0,
+    maxValue: 30,
+    orderIndex: 10,
+    updatedAt: seedTime,
+  },
+  {
+    key: "activity_retention_days",
+    value: "180",
+    label: "活动保留天数",
+    valueType: "number",
+    group: "活动记录",
+    unit: "天",
+    minValue: 1,
+    maxValue: 3650,
+    orderIndex: 20,
+    updatedAt: seedTime,
+  },
+  {
+    key: "column_backlog_name",
+    value: "需求池",
+    label: "第1阶段名称",
+    valueType: "text",
+    group: "看板阶段",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 30,
+    updatedAt: seedTime,
+  },
+  {
+    key: "column_dev_name",
+    value: "开发中",
+    label: "第2阶段名称",
+    valueType: "text",
+    group: "看板阶段",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 40,
+    updatedAt: seedTime,
+  },
+  {
+    key: "column_test_name",
+    value: "测试中",
+    label: "第3阶段名称",
+    valueType: "text",
+    group: "看板阶段",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 50,
+    updatedAt: seedTime,
+  },
+  {
+    key: "column_done_name",
+    value: "已完成",
+    label: "第4阶段名称",
+    valueType: "text",
+    group: "看板阶段",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 60,
+    updatedAt: seedTime,
+  },
+];
+
+export const defaultSystemSettings: SystemSettings = {
+  dueSoonDays: 2,
+  activityRetentionDays: 180,
+  parameters: defaultSystemParameters.map((parameter) => ({ ...parameter })),
+};
 
 export const boardColumns: BoardColumn[] = [
   {
     id: "backlog",
     title: "需求池",
     tone: "bg-[#6f6a5f]",
-    description: "待拆分、待确认或尚未排期的任务。",
   },
   {
     id: "dev",
     title: "开发中",
     tone: "bg-[#1f6f68]",
-    description: "正在设计、开发、联调或内容生产。",
   },
   {
     id: "test",
     title: "测试中",
     tone: "bg-[#7b4f82]",
-    description: "进入测试、验收、复核和交付确认。",
   },
   {
     id: "done",
     title: "已完成",
     tone: "bg-[#4f7a45]",
-    description: "已交付、已复盘或可进入项目归档。",
   },
 ];
+
+const columnNameKeys: Record<BoardStatus, string> = {
+  backlog: "column_backlog_name",
+  dev: "column_dev_name",
+  test: "column_test_name",
+  done: "column_done_name",
+};
+
+export function columnsFromSettings(settings: SystemSettings = defaultSystemSettings): BoardColumn[] {
+  return boardColumns.map((column) => {
+    const configuredTitle = settings.parameters
+      .find((parameter) => parameter.key === columnNameKeys[column.id])
+      ?.value.trim();
+    return {
+      ...column,
+      title: configuredTitle || column.title,
+    };
+  });
+}
 
 export const priorityLabels: Record<Priority, string> = {
   high: "高",
@@ -230,6 +347,7 @@ export const seedTasks: BoardTask[] = [
     priority: "high",
     owner: "Vincent",
     startDate: "2026-06-08",
+    testDueDate: "2026-06-10",
     dueDate: "2026-06-12",
     estimate: 5,
     progress: 30,
@@ -239,6 +357,7 @@ export const seedTasks: BoardTask[] = [
     subtasks: seedSubtasks.filter((step) => step.taskId === "task-001"),
     orderIndex: 10,
     deletedAt: null,
+    completedAt: null,
     createdAt: seedTime,
     updatedAt: seedTime,
   },
@@ -251,6 +370,7 @@ export const seedTasks: BoardTask[] = [
     priority: "high",
     owner: "后端组",
     startDate: "2026-06-03",
+    testDueDate: "2026-06-08",
     dueDate: "2026-06-10",
     estimate: 8,
     progress: 62,
@@ -260,6 +380,7 @@ export const seedTasks: BoardTask[] = [
     subtasks: seedSubtasks.filter((step) => step.taskId === "task-002"),
     orderIndex: 20,
     deletedAt: null,
+    completedAt: null,
     createdAt: seedTime,
     updatedAt: seedTime,
   },
@@ -272,6 +393,7 @@ export const seedTasks: BoardTask[] = [
     priority: "medium",
     owner: "前端组",
     startDate: "2026-06-01",
+    testDueDate: "2026-06-05",
     dueDate: "2026-06-07",
     estimate: 3,
     progress: 88,
@@ -281,6 +403,7 @@ export const seedTasks: BoardTask[] = [
     subtasks: seedSubtasks.filter((step) => step.taskId === "task-003"),
     orderIndex: 10,
     deletedAt: null,
+    completedAt: null,
     createdAt: seedTime,
     updatedAt: seedTime,
   },
@@ -293,6 +416,7 @@ export const seedTasks: BoardTask[] = [
     priority: "medium",
     owner: "运营组",
     startDate: "",
+    testDueDate: "",
     dueDate: "2026-06-18",
     estimate: 2,
     progress: 0,
@@ -302,6 +426,7 @@ export const seedTasks: BoardTask[] = [
     subtasks: [],
     orderIndex: 10,
     deletedAt: null,
+    completedAt: null,
     createdAt: seedTime,
     updatedAt: seedTime,
   },
@@ -314,6 +439,7 @@ export const seedTasks: BoardTask[] = [
     priority: "low",
     owner: "数据组",
     startDate: "2026-05-28",
+    testDueDate: "2026-06-03",
     dueDate: "2026-06-05",
     estimate: 4,
     progress: 100,
@@ -323,6 +449,7 @@ export const seedTasks: BoardTask[] = [
     subtasks: [],
     orderIndex: 10,
     deletedAt: null,
+    completedAt: "2026-06-06T10:30:00.000Z",
     createdAt: seedTime,
     updatedAt: seedTime,
   },
@@ -335,6 +462,7 @@ export const seedTasks: BoardTask[] = [
     priority: "high",
     owner: "QA",
     startDate: "2026-06-04",
+    testDueDate: "2026-06-07",
     dueDate: "2026-06-09",
     estimate: 3,
     progress: 45,
@@ -344,6 +472,7 @@ export const seedTasks: BoardTask[] = [
     subtasks: seedSubtasks.filter((step) => step.taskId === "task-006"),
     orderIndex: 30,
     deletedAt: null,
+    completedAt: null,
     createdAt: seedTime,
     updatedAt: seedTime,
   },
@@ -356,6 +485,7 @@ export const seedTasks: BoardTask[] = [
     priority: "low",
     owner: "市场组",
     startDate: "2026-06-11",
+    testDueDate: "2026-06-17",
     dueDate: "2026-06-20",
     estimate: 5,
     progress: 12,
@@ -365,6 +495,7 @@ export const seedTasks: BoardTask[] = [
     subtasks: [],
     orderIndex: 20,
     deletedAt: null,
+    completedAt: null,
     createdAt: seedTime,
     updatedAt: seedTime,
   },
@@ -408,14 +539,15 @@ export const seedActivity: ActivityLog[] = [
 
 export function createSeedBoard(): BoardData {
   return {
-    columns: boardColumns,
-    projects: seedProjects.map((project) => ({ ...project })),
-    tasks: seedTasks.map((task) => ({
-      ...task,
-      tags: [...task.tags],
-      subtasks: task.subtasks.map((step) => ({ ...step })),
-    })),
-    activity: seedActivity.map((item) => ({ ...item, meta: { ...item.meta } })),
+    columns: columnsFromSettings(defaultSystemSettings),
+    projects: [],
+    tasks: [],
+    activity: [],
+    settings: {
+      dueSoonDays: defaultSystemSettings.dueSoonDays,
+      activityRetentionDays: defaultSystemSettings.activityRetentionDays,
+      parameters: defaultSystemSettings.parameters.map((parameter) => ({ ...parameter })),
+    },
     storageMode: "local",
   };
 }

@@ -1,0 +1,1 @@
+ALTER TABLE tasks ADD COLUMN test_due_date TEXT NOT NULL DEFAULT '';

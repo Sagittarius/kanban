@@ -25,6 +25,7 @@ export const tasks = sqliteTable("tasks", {
   priority: text("priority").notNull().default("medium"),
   owner: text("owner").notNull().default("未分配"),
   startDate: text("start_date").notNull().default(""),
+  testDueDate: text("test_due_date").notNull().default(""),
   dueDate: text("due_date").notNull().default(""),
   estimate: integer("estimate").notNull().default(1),
   progress: integer("progress").notNull().default(0),
@@ -33,6 +34,7 @@ export const tasks = sqliteTable("tasks", {
   tags: text("tags").notNull().default("[]"),
   orderIndex: integer("order_index").notNull().default(0),
   deletedAt: text("deleted_at"),
+  completedAt: text("completed_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
@@ -57,4 +59,17 @@ export const activityLog = sqliteTable("task_activity", {
   message: text("message").notNull(),
   meta: text("meta").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+});
+
+export const systemParameters = sqliteTable("system_parameters", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull().default(""),
+  label: text("label").notNull(),
+  valueType: text("value_type").notNull().default("text"),
+  group: text("parameter_group").notNull().default("基础"),
+  unit: text("unit").notNull().default(""),
+  minValue: integer("min_value"),
+  maxValue: integer("max_value"),
+  orderIndex: integer("order_index").notNull().default(0),
+  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });

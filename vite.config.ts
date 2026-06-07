@@ -11,12 +11,11 @@ const { d1, r2 } = hostingConfig;
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  compatibility_flags: ["nodejs_compat"],
   d1_databases: d1
     ? [
         {
           binding: d1,
-          database_name: "site-creator-d1",
+          database_name: "project-kanban-board",
           database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
         },
       ]

@@ -1,9 +1,10 @@
 import { and, asc, desc, eq, inArray, isNull, sql } from "drizzle-orm";
-import { getDb } from "@/db";
-import { activityLog, projects, subtasks, tasks } from "@/db/schema";
+import { getDb, getStorageMode } from "@/db";
+import { activityLog, projects, subtasks, systemParameters, tasks } from "@/db/schema";
 import {
-  boardColumns,
-  createSeedBoard,
+  columnsFromSettings,
+  defaultSystemParameters,
+  defaultSystemSettings,
   isPriority,
   isProjectHealth,
   isProjectStatus,
@@ -17,12 +18,15 @@ import {
   type ProjectHealth,
   type ProjectStatus,
   type Subtask,
+  type SystemParameter,
+  type SystemSettings,
 } from "@/lib/board-data";
 
 type TaskRow = typeof tasks.$inferSelect;
 type ProjectRow = typeof projects.$inferSelect;
 type SubtaskRow = typeof subtasks.$inferSelect;
 type ActivityRow = typeof activityLog.$inferSelect;
+type SystemParameterRow = typeof systemParameters.$inferSelect;
 
 export type CreateProjectInput = {
   name?: unknown;
@@ -49,6 +53,7 @@ export type CreateTaskInput = {
   status?: unknown;
   priority?: unknown;
   owner?: unknown;
+  testDueDate?: unknown;
   dueDate?: unknown;
   tags?: unknown;
 };
@@ -61,6 +66,7 @@ export type UpdateTaskInput = Partial<{
   priority: unknown;
   owner: unknown;
   startDate: unknown;
+  testDueDate: unknown;
   dueDate: unknown;
   estimate: unknown;
   progress: unknown;
@@ -80,6 +86,12 @@ export type CreateSubtaskInput = {
 export type UpdateSubtaskInput = Partial<{
   title: unknown;
   done: unknown;
+}>;
+
+export type UpdateSystemSettingsInput = Partial<{
+  dueSoonDays: unknown;
+  activityRetentionDays: unknown;
+  parameters: unknown;
 }>;
 
 function nowIso() {
@@ -188,6 +200,7 @@ function rowToTask(row: TaskRow, taskSubtasks: Subtask[]): BoardTask {
     priority,
     owner: row.owner,
     startDate: row.startDate,
+    testDueDate: row.testDueDate,
     dueDate: row.dueDate,
     estimate: row.estimate,
     progress: row.progress,
@@ -197,6 +210,7 @@ function rowToTask(row: TaskRow, taskSubtasks: Subtask[]): BoardTask {
     subtasks: taskSubtasks,
     orderIndex: row.orderIndex,
     deletedAt: row.deletedAt,
+    completedAt: row.completedAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -222,6 +236,49 @@ function rowToActivity(row: ActivityRow): ActivityLog {
   };
 }
 
+function rowToSystemParameter(row: SystemParameterRow): SystemParameter {
+  return {
+    key: row.key,
+    value: row.value,
+    label: row.label,
+    valueType:
+      row.valueType === "number" || row.valueType === "boolean"
+        ? row.valueType
+        : "text",
+    group: row.group,
+    unit: row.unit,
+    minValue: row.minValue,
+    maxValue: row.maxValue,
+    orderIndex: row.orderIndex,
+    updatedAt: row.updatedAt,
+  };
+}
+
+function settingsFromRows(rows: SystemParameterRow[]): SystemSettings {
+  const parameters = rows.map(rowToSystemParameter);
+  const dueSoonValue =
+    parameters.find((parameter) => parameter.key === "due_soon_days")?.value ??
+    String(defaultSystemSettings.dueSoonDays);
+  const activityRetentionValue =
+    parameters.find((parameter) => parameter.key === "activity_retention_days")?.value ??
+    String(defaultSystemSettings.activityRetentionDays);
+
+  return {
+    dueSoonDays: asNumber(dueSoonValue, defaultSystemSettings.dueSoonDays, 0, 30),
+    activityRetentionDays: asNumber(
+      activityRetentionValue,
+      defaultSystemSettings.activityRetentionDays,
+      1,
+      3650
+    ),
+    parameters,
+  };
+}
+
+function statusLabel(status: BoardStatus, settings: SystemSettings = defaultSystemSettings) {
+  return columnsFromSettings(settings).find((column) => column.id === status)?.title ?? status;
+}
+
 async function recordActivity(input: {
   entityType: ActivityLog["entityType"];
   entityId: string;
@@ -231,7 +288,7 @@ async function recordActivity(input: {
   message: string;
   meta?: Record<string, unknown>;
 }) {
-  const db = getDb();
+  const db = await getDb();
   await db.insert(activityLog).values({
     id: crypto.randomUUID(),
     entityType: input.entityType,
@@ -246,50 +303,58 @@ async function recordActivity(input: {
 }
 
 async function ensureSeeded() {
-  const db = getDb();
-  const [{ count }] = await db
-    .select({ count: sql<number>`count(*)` })
-    .from(projects);
+  await getDb();
+}
 
-  if (Number(count) > 0) {
-    return;
-  }
+async function ensureSystemParameters() {
+  const db = await getDb();
+  const now = nowIso();
 
-  const seed = createSeedBoard();
-  await db.insert(projects).values(seed.projects);
-  await db.insert(tasks).values(
-    seed.tasks.map((task) => {
-      const taskRow = {
-        ...task,
-        tags: JSON.stringify(task.tags),
-      } as Omit<BoardTask, "subtasks" | "tags"> & {
-        subtasks?: Subtask[];
-        tags: string;
-      };
-      delete taskRow.subtasks;
-      return taskRow;
-    })
-  );
-  const seedSubtasks = seed.tasks.flatMap((task) => task.subtasks);
-  if (seedSubtasks.length > 0) {
-    await db.insert(subtasks).values(seedSubtasks);
+  for (const parameter of defaultSystemParameters) {
+    const [existing] = await db
+      .select({ key: systemParameters.key })
+      .from(systemParameters)
+      .where(eq(systemParameters.key, parameter.key));
+
+    if (existing) {
+      await db
+        .update(systemParameters)
+        .set({
+          label: parameter.label,
+          valueType: parameter.valueType,
+          group: parameter.group,
+          unit: parameter.unit,
+          minValue: parameter.minValue,
+          maxValue: parameter.maxValue,
+          orderIndex: parameter.orderIndex,
+        })
+        .where(eq(systemParameters.key, parameter.key));
+      continue;
+    }
+
+    await db.insert(systemParameters).values({
+      key: parameter.key,
+      value: parameter.value,
+      label: parameter.label,
+      valueType: parameter.valueType,
+      group: parameter.group,
+      unit: parameter.unit,
+      minValue: parameter.minValue,
+      maxValue: parameter.maxValue,
+      orderIndex: parameter.orderIndex,
+      updatedAt: now,
+    });
   }
-  await db.insert(activityLog).values(
-    seed.activity.map((item) => ({
-      ...item,
-      meta: JSON.stringify(item.meta),
-    }))
-  );
 }
 
 async function nextProjectOrderIndex() {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db.select({ orderIndex: projects.orderIndex }).from(projects);
   return rows.reduce((max, row) => Math.max(max, row.orderIndex), 0) + 10;
 }
 
 async function nextTaskOrderIndex(status: BoardStatus, projectId?: string) {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db
     .select({ orderIndex: tasks.orderIndex })
     .from(tasks)
@@ -302,7 +367,7 @@ async function nextTaskOrderIndex(status: BoardStatus, projectId?: string) {
 }
 
 async function nextSubtaskOrderIndex(taskId: string) {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db
     .select({ orderIndex: subtasks.orderIndex })
     .from(subtasks)
@@ -311,7 +376,7 @@ async function nextSubtaskOrderIndex(taskId: string) {
 }
 
 async function recalculateTaskProgress(taskId: string) {
-  const db = getDb();
+  const db = await getDb();
   const rows = await db
     .select()
     .from(subtasks)
@@ -331,11 +396,32 @@ async function recalculateTaskProgress(taskId: string) {
   return progress;
 }
 
+let lastActivityCleanupAt = 0;
+
+async function cleanupExpiredActivity(settings: SystemSettings) {
+  const now = Date.now();
+  if (now - lastActivityCleanupAt < 60 * 60 * 1000) {
+    return;
+  }
+
+  lastActivityCleanupAt = now;
+  const retentionDays = asNumber(
+    settings.activityRetentionDays,
+    defaultSystemSettings.activityRetentionDays,
+    1,
+    3650
+  );
+  const cutoffIso = new Date(now - retentionDays * 86400000).toISOString();
+  const db = await getDb();
+  await db.delete(activityLog).where(sql`${activityLog.createdAt} < ${cutoffIso}`);
+}
+
 export async function getBoard(): Promise<BoardData> {
   await ensureSeeded();
+  await ensureSystemParameters();
 
-  const db = getDb();
-  const [projectRows, taskRows, subtaskRows, activityRows] = await Promise.all([
+  const db = await getDb();
+  const [projectRows, taskRows, subtaskRows, parameterRows] = await Promise.all([
     db.select().from(projects).orderBy(asc(projects.status), asc(projects.orderIndex)),
     db
       .select()
@@ -343,8 +429,11 @@ export async function getBoard(): Promise<BoardData> {
       .where(isNull(tasks.deletedAt))
       .orderBy(asc(tasks.status), asc(tasks.orderIndex), desc(tasks.updatedAt)),
     db.select().from(subtasks).orderBy(asc(subtasks.orderIndex)),
-    db.select().from(activityLog).orderBy(desc(activityLog.createdAt)).limit(80),
+    db.select().from(systemParameters).orderBy(asc(systemParameters.orderIndex), asc(systemParameters.key)),
   ]);
+  const settings = settingsFromRows(parameterRows);
+  await cleanupExpiredActivity(settings);
+  const activityRows = await db.select().from(activityLog).orderBy(desc(activityLog.createdAt)).limit(80);
 
   const subtasksByTask = new Map<string, Subtask[]>();
   for (const row of subtaskRows) {
@@ -355,18 +444,109 @@ export async function getBoard(): Promise<BoardData> {
   }
 
   return {
-    columns: boardColumns,
+    columns: columnsFromSettings(settings),
     projects: projectRows.map(rowToProject),
     tasks: taskRows.map((row) => rowToTask(row, subtasksByTask.get(row.id) ?? [])),
     activity: activityRows.map(rowToActivity),
-    storageMode: "d1",
+    settings,
+    storageMode: getStorageMode(),
   };
+}
+
+export async function getSystemSettings(): Promise<SystemSettings> {
+  await ensureSeeded();
+  await ensureSystemParameters();
+
+  const db = await getDb();
+  const rows = await db.select().from(systemParameters).orderBy(asc(systemParameters.orderIndex), asc(systemParameters.key));
+  return settingsFromRows(rows);
+}
+
+export async function updateSystemSettings(
+  input: UpdateSystemSettingsInput
+): Promise<SystemSettings> {
+  await ensureSeeded();
+  await ensureSystemParameters();
+
+  const db = await getDb();
+  const current = await getSystemSettings();
+  const defaultsByKey = new Map(defaultSystemParameters.map((parameter) => [parameter.key, parameter]));
+  const currentByKey = new Map(current.parameters.map((parameter) => [parameter.key, parameter]));
+  const requested = new Map<string, unknown>();
+
+  if (input.dueSoonDays !== undefined) {
+    requested.set("due_soon_days", input.dueSoonDays);
+  }
+  if (input.activityRetentionDays !== undefined) {
+    requested.set("activity_retention_days", input.activityRetentionDays);
+  }
+  if (Array.isArray(input.parameters)) {
+    for (const item of input.parameters) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+      const raw = item as Record<string, unknown>;
+      const key = typeof raw.key === "string" ? raw.key : "";
+      if (!defaultsByKey.has(key)) {
+        continue;
+      }
+      requested.set(key, raw.value);
+    }
+  }
+
+  if (requested.size === 0) {
+    return current;
+  }
+
+  const now = nowIso();
+
+  for (const [key, rawValue] of requested.entries()) {
+    const parameter = defaultsByKey.get(key);
+    const currentParameter = currentByKey.get(key);
+    if (!parameter || !currentParameter) {
+      continue;
+    }
+
+    const nextValue =
+      parameter.valueType === "number"
+        ? (() => {
+            const fallbackNumber = Number(currentParameter.value);
+            return String(
+              asNumber(
+                rawValue,
+                Number.isFinite(fallbackNumber) ? fallbackNumber : Number(parameter.value),
+                parameter.minValue ?? 0,
+                parameter.maxValue ?? 100000
+              )
+            );
+          })()
+        : parameter.valueType === "boolean"
+          ? String(rawValue === true || rawValue === "true")
+          : optionalText(rawValue, currentParameter.value);
+
+    await db
+      .update(systemParameters)
+      .set({ value: nextValue, updatedAt: now })
+      .where(eq(systemParameters.key, key));
+
+    if (nextValue !== currentParameter.value) {
+      await recordActivity({
+        entityType: "board",
+        entityId: "settings",
+        action: "settings.update",
+        message: `更新系统参数「${parameter.label}」为 ${nextValue}。`,
+        meta: { key, before: currentParameter.value, after: nextValue },
+      });
+    }
+  }
+
+  return getSystemSettings();
 }
 
 export async function createProject(input: CreateProjectInput): Promise<Project> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const now = nowIso();
   const project = {
     id: crypto.randomUUID(),
@@ -401,7 +581,7 @@ export async function updateProject(
 ): Promise<Project> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const [existing] = await db.select().from(projects).where(eq(projects.id, id));
   if (!existing) {
     throw new Error("Project not found");
@@ -452,7 +632,7 @@ export async function updateProject(
 export async function deleteProject(id: string): Promise<{ id: string }> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const [existing] = await db.select().from(projects).where(eq(projects.id, id));
   if (!existing) {
     throw new Error("Project not found");
@@ -475,9 +655,9 @@ export async function deleteProject(id: string): Promise<{ id: string }> {
 export async function createTask(input: CreateTaskInput): Promise<BoardTask> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const now = nowIso();
-  const status = normalizeBoardStatus(input.status);
+  const status: BoardStatus = "backlog";
   const priority: Priority = isPriority(input.priority)
     ? input.priority
     : "medium";
@@ -491,6 +671,7 @@ export async function createTask(input: CreateTaskInput): Promise<BoardTask> {
     priority,
     owner: asText(input.owner, "未分配"),
     startDate: "",
+    testDueDate: optionalText(input.testDueDate, ""),
     dueDate: optionalText(input.dueDate, ""),
     estimate: 1,
     progress: 0,
@@ -499,6 +680,7 @@ export async function createTask(input: CreateTaskInput): Promise<BoardTask> {
     tags: normalizeTags(input.tags, []),
     orderIndex: await nextTaskOrderIndex(status, projectId),
     deletedAt: null,
+    completedAt: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -526,7 +708,7 @@ export async function updateTask(
 ): Promise<BoardTask> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const [existing] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!existing || existing.deletedAt) {
     throw new Error("Task not found");
@@ -541,6 +723,12 @@ export async function updateTask(
   const nextPriority = isPriority(input.priority) ? input.priority : current.priority;
   const tags = normalizeTags(input.tags, current.tags);
   const now = nowIso();
+  const completedAt =
+    nextStatus === "done"
+      ? current.status === "done"
+        ? current.completedAt
+        : now
+      : null;
   const patch = {
     title: asText(input.title, current.title),
     description: optionalText(input.description, current.description),
@@ -549,6 +737,7 @@ export async function updateTask(
     priority: nextPriority,
     owner: asText(input.owner, current.owner),
     startDate: optionalText(input.startDate, current.startDate),
+    testDueDate: optionalText(input.testDueDate, current.testDueDate),
     dueDate: optionalText(input.dueDate, current.dueDate),
     estimate: asNumber(input.estimate, current.estimate, 1, 99),
     progress: asNumber(input.progress, current.progress, 0, 100),
@@ -559,6 +748,7 @@ export async function updateTask(
       nextStatus !== current.status
         ? await nextTaskOrderIndex(nextStatus, current.projectId)
         : current.orderIndex,
+    completedAt,
     updatedAt: now,
   };
 
@@ -570,25 +760,33 @@ export async function updateTask(
     status: patch.status !== current.status,
     priority: patch.priority !== current.priority,
     owner: patch.owner !== current.owner,
+    startDate: patch.startDate !== current.startDate,
+    testDueDate: patch.testDueDate !== current.testDueDate,
     dueDate: patch.dueDate !== current.dueDate,
+    estimate: patch.estimate !== current.estimate,
+    progress: patch.progress !== current.progress,
     blockers: patch.blockers !== current.blockers,
+    blockedReason: patch.blockedReason !== current.blockedReason,
     tags: JSON.stringify(tags) !== JSON.stringify(current.tags),
   })
     .filter(([, changed]) => changed)
     .map(([field]) => field);
 
-  await recordActivity({
-    entityType: "task",
-    entityId: id,
-    projectId: patch.projectId,
-    taskId: id,
-    action: nextStatus !== current.status ? "task.status" : "task.update",
-    message:
-      nextStatus !== current.status
-        ? `「${patch.title}」移动到${boardColumns.find((column) => column.id === nextStatus)?.title}。`
-        : `更新任务「${patch.title}」。`,
-    meta: { changedFields, beforeStatus: current.status, afterStatus: nextStatus },
-  });
+  if (changedFields.length > 0) {
+    const settings = await getSystemSettings();
+    await recordActivity({
+      entityType: "task",
+      entityId: id,
+      projectId: patch.projectId,
+      taskId: id,
+      action: nextStatus !== current.status ? "task.status" : "task.update",
+      message:
+        nextStatus !== current.status
+          ? `移动任务「${patch.title}」：${statusLabel(current.status, settings)} → ${statusLabel(nextStatus, settings)}。`
+          : `更新任务「${patch.title}」。`,
+      meta: { changedFields, beforeStatus: current.status, afterStatus: nextStatus },
+    });
+  }
 
   const [updated] = await db.select().from(tasks).where(eq(tasks.id, id));
   const updatedSubtasks = (
@@ -600,7 +798,7 @@ export async function updateTask(
 export async function deleteTask(id: string): Promise<{ id: string }> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const [existing] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!existing || existing.deletedAt) {
     throw new Error("Task not found");
@@ -646,31 +844,48 @@ export async function reorderTasks(input: ReorderTaskInput): Promise<{ ok: true 
     return { ok: true };
   }
 
-  const db = getDb();
+  const db = await getDb();
   const ids = normalized.map((item) => item.id);
   const existingRows = await db.select().from(tasks).where(inArray(tasks.id, ids));
   const existingById = new Map(existingRows.map((row) => [row.id, row]));
   const now = nowIso();
 
   for (const item of normalized) {
+    const existing = existingById.get(item.id);
+    const existingStatus = existing ? normalizeBoardStatus(existing.status) : item.status;
+    const completedAt =
+      item.status === "done"
+        ? existingStatus === "done"
+          ? existing?.completedAt ?? now
+          : now
+        : null;
+
     await db
       .update(tasks)
-      .set({ status: item.status, orderIndex: item.orderIndex, updatedAt: now })
+      .set({ status: item.status, orderIndex: item.orderIndex, completedAt, updatedAt: now })
       .where(eq(tasks.id, item.id));
   }
 
-  const moved = normalized.filter((item) => {
+  const statusChanged = normalized.filter((item) => {
     const existing = existingById.get(item.id);
-    return existing && (existing.status !== item.status || existing.orderIndex !== item.orderIndex);
+    return existing && normalizeBoardStatus(existing.status) !== item.status;
   });
 
-  if (moved.length > 0) {
+  const settings = statusChanged.length > 0 ? await getSystemSettings() : defaultSystemSettings;
+  for (const item of statusChanged) {
+    const existing = existingById.get(item.id);
+    if (!existing) {
+      continue;
+    }
+    const beforeStatus = normalizeBoardStatus(existing.status);
     await recordActivity({
-      entityType: "board",
-      entityId: "board",
-      action: "board.reorder",
-      message: `更新 ${moved.length} 张任务卡片的位置。`,
-      meta: { moved },
+      entityType: "task",
+      entityId: item.id,
+      projectId: existing.projectId,
+      taskId: item.id,
+      action: "task.move",
+      message: `移动任务「${existing.title}」：${statusLabel(beforeStatus, settings)} → ${statusLabel(item.status, settings)}。`,
+      meta: { beforeStatus, afterStatus: item.status },
     });
   }
 
@@ -683,7 +898,7 @@ export async function createSubtask(
 ): Promise<Subtask> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task || task.deletedAt) {
     throw new Error("Task not found");
@@ -693,7 +908,7 @@ export async function createSubtask(
   const subtask = {
     id: crypto.randomUUID(),
     taskId,
-    title: asText(input.title, "新子步骤"),
+    title: asText(input.title, "新拆解项"),
     done: false,
     orderIndex: await nextSubtaskOrderIndex(taskId),
     createdAt: now,
@@ -708,7 +923,7 @@ export async function createSubtask(
     projectId: task.projectId,
     taskId,
     action: "subtask.create",
-    message: `为「${task.title}」添加子步骤「${subtask.title}」。`,
+    message: `为「${task.title}」添加任务拆解「${subtask.title}」。`,
   });
 
   return subtask;
@@ -721,7 +936,7 @@ export async function updateSubtask(
 ): Promise<Subtask> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   const [existing] = await db
     .select()
@@ -748,8 +963,8 @@ export async function updateSubtask(
     action: patch.done !== existing.done ? "subtask.toggle" : "subtask.update",
     message:
       patch.done !== existing.done
-        ? `${patch.done ? "完成" : "取消完成"}子步骤「${patch.title}」。`
-        : `更新子步骤「${patch.title}」。`,
+        ? `${patch.done ? "完成" : "取消完成"}任务拆解「${patch.title}」。`
+        : `更新任务拆解「${patch.title}」。`,
     meta: { done: patch.done },
   });
 
@@ -763,7 +978,7 @@ export async function deleteSubtask(
 ): Promise<{ id: string }> {
   await ensureSeeded();
 
-  const db = getDb();
+  const db = await getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   const [existing] = await db
     .select()
@@ -782,7 +997,7 @@ export async function deleteSubtask(
     projectId: task.projectId,
     taskId,
     action: "subtask.delete",
-    message: `删除子步骤「${existing.title}」。`,
+    message: `删除任务拆解「${existing.title}」。`,
   });
 
   return { id: subtaskId };
