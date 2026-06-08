@@ -1,0 +1,19 @@
+services:
+  kanban:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - KANBAN_DB_DRIVER=sqlite
+      - KANBAN_SQLITE_PATH=/data/kanban.sqlite
+      - KANBAN_AUTH_SECRET=${KANBAN_AUTH_SECRET:-change-this-to-a-long-random-secret}
+      - KANBAN_SUPER_ADMIN_USERNAME=${KANBAN_SUPER_ADMIN_USERNAME:-admin}
+      - KANBAN_SUPER_ADMIN_PASSWORD=${KANBAN_SUPER_ADMIN_PASSWORD:-admin@123}
+    volumes:
+      - kanban-data:/data
+    restart: unless-stopped
+
+volumes:
+  kanban-data:

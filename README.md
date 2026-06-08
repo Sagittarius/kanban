@@ -238,6 +238,157 @@ node scripts/migrate-local-sqlite.mjs
 Start-Service project-kanban-board
 ```
 
+## Docker 部署
+
+### 构建多平台镜像
+
+项目支持在 x86_64 (amd64) 和 ARM64 (aarch64) 架构上构建和运行。
+
+#### 本地单平台构建
+
+```bash
+# 构建当前架构镜像
+docker build -t project-kanban-board:latest .
+
+# 指定架构构建
+docker build --platform linux/amd64 -t project-kanban-board:amd64 .
+docker build --platform linux/arm64 -t project-kanban-board:arm64 .
+```
+
+#### 多平台构建并推送到镜像仓库
+
+```bash
+# 创建 multi-platform builder（仅首次）
+docker buildx create --name kanban-builder --use
+
+# 构建 amd64 + arm64 并推送到 Docker Hub
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t your-registry/project-kanban-board:latest \
+  --push .
+
+# 或只构建不推送，导出为本地 tar
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t project-kanban-board:latest \
+  --output type=tar,dest=kanban-multiarch.tar .
+```
+
+### SQLite 部署
+
+```bash
+docker compose -f docker-compose.sqlite.yml up -d
+```
+
+- 数据持久化在 Docker volume `kanban-data` 中
+- 容器启动时自动执行 SQLite 迁移
+- 访问 `http://服务器IP:3000`
+- 默认管理员：`admin` / `admin@123`
+
+指定宿主机目录存放数据库：
+
+```bash
+KANBAN_DATA_DIR=/opt/kanban-data docker compose -f docker-compose.sqlite.yml up -d
+```
+
+### PostgreSQL 部署
+
+```bash
+# 设置 PostgreSQL 密码
+export POSTGRES_PASSWORD=your_secure_password
+export KANBAN_AUTH_SECRET=your_random_secret
+docker compose -f docker-compose.postgres.yml up -d
+```
+
+- PostgreSQL 16 Alpine 镜像，数据持久化在 `pgdata` volume
+- kanban 容器等待 PG healthcheck 通过后启动
+- 自动执行 PostgreSQL 迁移
+
+### Docker 离线部署
+
+适合内网无法联网的服务器。
+
+#### 1. 在外网构建机上准备
+
+```bash
+# 构建镜像（指定目标服务器架构，如 ARM64）
+docker build --platform linux/arm64 -t project-kanban-board:v1.0 .
+
+# 导出镜像为 tar
+docker save -o project-kanban-board-v1.0.tar project-kanban-board:v1.0
+
+# 压缩（可选）
+gzip project-kanban-board-v1.0.tar
+```
+
+如果目标服务器是 x86_64：
+
+```bash
+docker build --platform linux/amd64 -t project-kanban-board:v1.0 .
+docker save -o project-kanban-board-v1.0-amd64.tar project-kanban-board:v1.0
+```
+
+导出多架构镜像包（同时支持 amd64 和 arm64）：
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t project-kanban-board:v1.0 \
+  --output type=oci,dest=kanban-v1.0-oci.tar .
+```
+
+#### 2. 传输到内网服务器
+
+```bash
+scp project-kanban-board-v1.0.tar.gz user@内网服务器:/opt/
+# 或使用 U 盘、移动硬盘等物理介质
+```
+
+#### 3. 在内网服务器上导入并运行
+
+```bash
+# 解压
+gunzip project-kanban-board-v1.0.tar.gz
+
+# 导入镜像
+docker load -i project-kanban-board-v1.0.tar
+
+# 创建数据目录
+mkdir -p /opt/kanban-data
+
+# SQLite 模式运行
+docker run -d \
+  --name kanban \
+  -p 3000:3000 \
+  -v /opt/kanban-data:/data \
+  -e KANBAN_AUTH_SECRET=your-random-secret \
+  -e KANBAN_SUPER_ADMIN_USERNAME=admin \
+  -e KANBAN_SUPER_ADMIN_PASSWORD=your-secure-password \
+  --restart unless-stopped \
+  project-kanban-board:v1.0
+
+# 或使用 docker compose（需将镜像 tag 写入 compose 文件）
+docker compose -f docker-compose.sqlite.yml up -d
+```
+
+#### 4. 确认运行状态
+
+```bash
+docker logs kanban
+curl http://localhost:3000
+```
+
+### 环境变量说明
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `KANBAN_DB_DRIVER` | `sqlite` | 数据库驱动：`sqlite` 或 `postgres` |
+| `KANBAN_SQLITE_PATH` | `.data/kanban.sqlite` | SQLite 数据库文件路径 |
+| `POSTGRES_URL` | - | PostgreSQL 连接字符串 |
+| `KANBAN_AUTH_SECRET` | 内置占位 | Session 加密密钥，生产必须修改 |
+| `KANBAN_SUPER_ADMIN_USERNAME` | `admin` | 初始超级管理员用户名 |
+| `KANBAN_SUPER_ADMIN_PASSWORD` | `admin@123` | 初始超级管理员密码，部署后立即修改 |
+
 ## 活动记录
 
 活动记录是全局审计日志，不属于某个任务详情。项目创建、项目更新、归档/恢复、任务创建、任务更新、状态变更、删除、跨阶段移动、任务拆解创建/勾选/删除会写入 `task_activity` 表。纯拖拽排序只保存卡片位置，不写活动记录。跨阶段移动会记录任务名称和阶段变化。访问看板或活动接口时会按系统参数 `activity_retention_days` 自动清理过期记录，默认保留 180 天。

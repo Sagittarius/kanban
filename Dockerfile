@@ -11,7 +11,6 @@ RUN pnpm install --frozen-lockfile
 COPY . .
 
 ENV PORT=3000
-ENV KANBAN_SQLITE_PATH=/data/kanban.sqlite
 ENV NODE_ENV=production
 
 RUN pnpm run build
@@ -20,4 +19,12 @@ RUN mkdir -p /data
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "node scripts/migrate-local-sqlite.mjs && node_modules/.bin/vinext start --hostname 0.0.0.0"]
+CMD ["sh", "-c", "\
+  if [ \"$KANBAN_DB_DRIVER\" = 'postgres' ]; then \
+    echo 'Running PostgreSQL migrations...'; \
+    node scripts/migrate-postgres.mjs; \
+  else \
+    echo 'Running SQLite migrations...'; \
+    node scripts/migrate-local-sqlite.mjs; \
+  fi && \
+  node_modules/.bin/vinext start --hostname 0.0.0.0"]
