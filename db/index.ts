@@ -19,11 +19,31 @@ export async function getDb() {
     return cachedDb;
   }
 
+  // Prefer local SQLite when running in Node.js (dev or on-prem)
+  const sqliteClient = await tryGetLocalSQLiteD1Client();
+  if (sqliteClient) {
+    storageMode = "sqlite";
+    cachedDb = drizzle(sqliteClient, { schema });
+    return cachedDb;
+  }
+
+  // Fall back to Cloudflare D1 (Workers / vinext Miniflare)
   const cloudflareDb = await getCloudflareD1Binding();
-  const client = cloudflareDb ?? (await getLocalSQLiteD1Client());
-  storageMode = cloudflareDb ? "d1" : "sqlite";
-  cachedDb = drizzle(client, { schema });
-  return cachedDb;
+  if (cloudflareDb) {
+    storageMode = "d1";
+    cachedDb = drizzle(cloudflareDb, { schema });
+    return cachedDb;
+  }
+
+  throw new Error("No database available. Set KANBAN_SQLITE_PATH or configure D1.");
+}
+
+async function tryGetLocalSQLiteD1Client(): Promise<AnyD1Database | null> {
+  try {
+    return await getLocalSQLiteD1Client();
+  } catch {
+    return null;
+  }
 }
 
 export function getStorageMode() {
@@ -31,6 +51,13 @@ export function getStorageMode() {
 }
 
 async function getCloudflareD1Binding(): Promise<AnyD1Database | null> {
+  try {
+    if (process.env.KANBAN_SQLITE_PATH) {
+      return null;
+    }
+  } catch {
+    // process.env not available in this runtime
+  }
   try {
     const { env } = (await import("cloudflare:workers")) as {
       env?: { DB?: unknown };

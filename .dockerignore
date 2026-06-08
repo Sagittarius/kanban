@@ -1,0 +1,11 @@
+.git
+.gitignore
+.data
+.next
+.wrangler
+.vinext
+.claude
+node_modules/.cache
+*.md
+!README.md
+dist

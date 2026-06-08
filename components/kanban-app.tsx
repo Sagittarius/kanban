@@ -609,11 +609,17 @@ export default function KanbanApp({
     ? board.projects.find((project) => project.id === selectedProjectId) ?? null
     : null;
   const allTags = useMemo(
-    () =>
-      Array.from(new Set(board.tasks.flatMap((task) => task.tags))).sort((a, b) =>
-        a > b ? 1 : a < b ? -1 : 0
-      ),
-    [board.tasks]
+    () => {
+      const activeIds = new Set(activeProjects.map((p) => p.id));
+      return Array.from(
+        new Set(
+          board.tasks
+            .filter((t) => activeIds.has(t.projectId))
+            .flatMap((task) => task.tags)
+        )
+      ).sort((a, b) => (a > b ? 1 : a < b ? -1 : 0));
+    },
+    [board.tasks, activeProjects]
   );
 
   const filteredTasks = useMemo(() => {
@@ -1241,6 +1247,65 @@ export default function KanbanApp({
     }
   }
 
+  async function updateSubtaskTitle(taskId: string, subtask: Subtask, title: string) {
+    if (!title.trim()) return;
+    setBoard((current) => ({
+      ...current,
+      tasks: current.tasks.map((task) => {
+        if (task.id !== taskId) return task;
+        return {
+          ...task,
+          subtasks: task.subtasks.map((s) =>
+            s.id === subtask.id ? { ...s, title: title.trim(), updatedAt: new Date().toISOString() } : s
+          ),
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+    }));
+
+    if (isLocalPreview) {
+      appendLocalActivity(`更新任务拆解「${title.trim()}」。`, "subtask");
+      setSyncState("local");
+      return;
+    }
+
+    try {
+      await apiRequest(`/api/tasks/${taskId}/subtasks/${subtask.id}`, "PATCH", { title: title.trim() });
+      await refreshBoard(false);
+    } catch {
+      setSyncState("local");
+    }
+  }
+
+  async function deleteSubtaskItem(taskId: string, subtask: Subtask) {
+    setBoard((current) => ({
+      ...current,
+      tasks: current.tasks.map((task) => {
+        if (task.id !== taskId) return task;
+        const subtasks = task.subtasks.filter((s) => s.id !== subtask.id);
+        return {
+          ...task,
+          subtasks,
+          progress: progressFromSubtasks(subtasks, task.progress),
+          updatedAt: new Date().toISOString(),
+        };
+      }),
+    }));
+
+    if (isLocalPreview) {
+      appendLocalActivity(`删除任务拆解「${subtask.title}」。`, "subtask");
+      setSyncState("local");
+      return;
+    }
+
+    try {
+      await apiRequest(`/api/tasks/${taskId}/subtasks/${subtask.id}`, "DELETE");
+      await refreshBoard(false);
+    } catch {
+      setSyncState("local");
+    }
+  }
+
   const activeProjectChoices = activeProjects.length ? activeProjects : board.projects;
   const newTaskProjectId = newTask.projectId || firstProjectId(activeProjectChoices);
 
@@ -1298,7 +1363,7 @@ export default function KanbanApp({
           onDragEnd={(event) => void handleDragEnd(event)}
           onDragCancel={handleDragCancel}
         >
-        <section className="grid min-h-0 gap-4 lg:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)_360px]">
+        <section className="grid min-h-0 gap-4 lg:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)]">
           <aside className="min-h-0 space-y-4 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-4">
             <div className="space-y-2">
               <div className="flex items-center justify-between">
@@ -1386,7 +1451,7 @@ export default function KanbanApp({
                 name="newTaskTitle"
                 value={newTask.title}
                 onChange={(event) => setNewTask((current) => ({ ...current, title: event.target.value }))}
-                placeholder="任务标题"
+                placeholder="任务名称"
                 className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
               <textarea
@@ -1511,14 +1576,6 @@ export default function KanbanApp({
             </div>
           </section>
 
-          <aside className="hidden min-h-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--panel)] 2xl:block">
-            <ActivityPanel
-              activity={board.activity}
-              projects={board.projects}
-              tasks={board.tasks}
-              onOpen={() => setDrawerMode("activity")}
-            />
-          </aside>
         </section>
 
         {draggingTaskId ? <TrashDropZone armed={trashArmed} /> : null}
@@ -1546,7 +1603,7 @@ export default function KanbanApp({
         type="button"
         title="活动记录"
         onClick={() => setDrawerMode("activity")}
-        className="fixed bottom-5 right-5 z-30 inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--text)] px-4 py-3 text-sm font-semibold text-[var(--panel)] shadow-lg transition 2xl:hidden"
+        className="fixed bottom-5 right-5 z-30 inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--text)] px-4 py-3 text-sm font-semibold text-[var(--panel)] shadow-lg transition hover:opacity-90"
       >
         <Activity size={17} />
         活动记录
@@ -1568,6 +1625,8 @@ export default function KanbanApp({
               onDelete={() => void removeTask(selectedTask.id)}
               onCreateSubtask={createSubtask}
               onToggleSubtask={(subtask) => void toggleSubtask(selectedTask.id, subtask)}
+              onUpdateSubtask={(subtask, title) => void updateSubtaskTitle(selectedTask.id, subtask, title)}
+              onDeleteSubtask={(subtask) => void deleteSubtaskItem(selectedTask.id, subtask)}
             />
           ) : null}
           {drawerMode === "project" ? (
@@ -2072,6 +2131,8 @@ function TaskDrawer({
   onDelete,
   onCreateSubtask,
   onToggleSubtask,
+  onUpdateSubtask,
+  onDeleteSubtask,
 }: {
   task: BoardTask;
   projects: Project[];
@@ -2082,9 +2143,13 @@ function TaskDrawer({
   onDelete: () => void;
   onCreateSubtask: (event: FormEvent<HTMLFormElement>) => void;
   onToggleSubtask: (subtask: Subtask) => void;
+  onUpdateSubtask: (subtask: Subtask, title: string) => void;
+  onDeleteSubtask: (subtask: Subtask) => void;
 }) {
   const [draft, setDraft] = useState<TaskDraft>(() => taskDraftFromTask(task));
   const [saving, setSaving] = useState(false);
+  const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
+  const [editingSubtaskTitle, setEditingSubtaskTitle] = useState("");
 
   async function saveTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -2113,12 +2178,18 @@ function TaskDrawer({
   return (
     <section className="space-y-5 pr-10">
       <div>
-        <h2 className="text-base font-semibold">{task.title}</h2>
-        <p className="mt-0.5 text-xs text-[var(--muted)]">编辑任务信息</p>
+        <h2 className="text-base font-semibold">编辑任务信息</h2>
       </div>
 
-      <form id="task-edit-form" onSubmit={saveTask} className="space-y-4">
-        <div className="grid grid-cols-2 gap-3">
+      <form id="task-edit-form" onSubmit={saveTask} className="flex flex-col gap-5">
+        <Field label="任务名称">
+          <input
+            name="taskTitle"
+            value={draft.title}
+            onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+          />
+        </Field>
+        <div className="grid grid-cols-2 gap-4">
           <Field label="项目">
             <select
               name="taskProjectId"
@@ -2191,7 +2262,7 @@ function TaskDrawer({
           />
         </Field>
 
-        <div className="grid grid-cols-[1fr_100px] gap-3">
+        <div className="grid grid-cols-[1fr_100px] gap-4">
           <Field label={`进度 ${draft.progress}%`}>
             <input
               type="range"
@@ -2234,38 +2305,109 @@ function TaskDrawer({
         </Field>
       </form>
 
-      <section className="space-y-3 border-t border-[var(--border)] pt-4">
+      <section className="flex flex-col gap-4 border-t border-[var(--border)] pt-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold">任务拆解</h2>
-          <span className="text-xs text-[var(--muted)]">
-            {task.subtasks.filter((step) => step.done).length}/{task.subtasks.length}
-          </span>
+          <h2 className="text-base font-semibold">任务拆解</h2>
+          {task.subtasks.length > 0 ? (
+            <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-xs font-semibold text-[var(--accent)]">
+              {task.subtasks.filter((step) => step.done).length}/{task.subtasks.length}
+            </span>
+          ) : null}
         </div>
-        <div className="space-y-2">
-          {task.subtasks.map((step) => (
-            <button
-              key={step.id}
-              type="button"
-              onClick={() => onToggleSubtask(step)}
-              className={`flex w-full items-center gap-3 rounded-md border px-3 py-2 text-left text-sm transition ${
-                step.done
-                  ? "border-[#c8d8bf] bg-[#edf6ea] text-[#58704e]"
-                  : "border-[var(--border)] bg-[var(--input)] hover:bg-[var(--panel-soft)]"
-              }`}
-            >
-              <span
-                className={`grid h-5 w-5 shrink-0 place-items-center rounded-full border transition ${
-                  step.done
-                    ? "scale-105 border-[#4f7a45] bg-[#4f7a45] text-white"
-                    : "border-[var(--border)] bg-[var(--input)]"
-                }`}
+        {task.subtasks.length > 0 ? (
+          <div className="h-2 overflow-hidden rounded-full bg-[var(--panel-soft)]">
+            <div
+              className="h-full rounded-full bg-[var(--accent)] transition-all"
+              style={{ width: `${Math.round((task.subtasks.filter((s) => s.done).length / task.subtasks.length) * 100)}%` }}
+            />
+          </div>
+        ) : null}
+        <div className="flex flex-col gap-2">
+          {task.subtasks.filter((s) => !s.done).map((step) => (
+            <div key={step.id} className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2">
+              <button
+                type="button"
+                onClick={() => onToggleSubtask(step)}
+                className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[var(--border)] transition hover:border-[var(--accent)]"
               >
-                {step.done ? <Check size={13} /> : null}
-              </span>
-              <span className={`transition ${step.done ? "text-[#6d8064] line-through opacity-70" : ""}`}>
-                {step.title}
-              </span>
-            </button>
+                <Check size={11} className="opacity-0" />
+              </button>
+              {editingSubtaskId === step.id ? (
+                <input
+                  value={editingSubtaskTitle}
+                  onChange={(e) => setEditingSubtaskTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { onUpdateSubtask(step, editingSubtaskTitle); setEditingSubtaskId(null); }
+                    if (e.key === "Escape") { setEditingSubtaskId(null); }
+                  }}
+                  onBlur={() => {
+                    if (editingSubtaskTitle.trim()) { onUpdateSubtask(step, editingSubtaskTitle); }
+                    setEditingSubtaskId(null);
+                  }}
+                  autoFocus
+                  className="flex-1 rounded border border-[var(--accent)] bg-[var(--input)] px-2 py-1 text-sm outline-none"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setEditingSubtaskId(step.id); setEditingSubtaskTitle(step.title); }}
+                  className="flex-1 rounded px-1 py-0.5 text-left text-sm transition hover:bg-[var(--panel-soft)]"
+                >
+                  {step.title}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDeleteSubtask(step); }}
+                title="删除拆解"
+                className="shrink-0 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--danger)]"
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+          {task.subtasks.filter((s) => s.done).map((step) => (
+            <div key={step.id} className="flex items-center gap-2 rounded-md border border-[#c8d8bf] bg-[#edf6ea] px-3 py-2">
+              <button
+                type="button"
+                onClick={() => onToggleSubtask(step)}
+                className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[#4f7a45] bg-[#4f7a45] text-white transition"
+              >
+                <Check size={11} />
+              </button>
+              {editingSubtaskId === step.id ? (
+                <input
+                  value={editingSubtaskTitle}
+                  onChange={(e) => setEditingSubtaskTitle(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") { onUpdateSubtask(step, editingSubtaskTitle); setEditingSubtaskId(null); }
+                    if (e.key === "Escape") { setEditingSubtaskId(null); }
+                  }}
+                  onBlur={() => {
+                    if (editingSubtaskTitle.trim()) { onUpdateSubtask(step, editingSubtaskTitle); }
+                    setEditingSubtaskId(null);
+                  }}
+                  autoFocus
+                  className="flex-1 rounded border border-[var(--accent)] bg-white px-2 py-1 text-sm text-[#58704e] outline-none"
+                />
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => { setEditingSubtaskId(step.id); setEditingSubtaskTitle(step.title); }}
+                  className="flex-1 rounded px-1 py-0.5 text-left text-sm text-[#58704e] line-through transition hover:bg-white/50"
+                >
+                  {step.title}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onDeleteSubtask(step); }}
+                title="删除拆解"
+                className="shrink-0 rounded p-1 text-[#6d8064] transition hover:bg-white/50 hover:text-[var(--danger)]"
+              >
+                <X size={13} />
+              </button>
+            </div>
           ))}
         </div>
         <form onSubmit={onCreateSubtask} className="grid grid-cols-[minmax(0,1fr)_42px] gap-2">
@@ -2273,7 +2415,7 @@ function TaskDrawer({
             value={newSubtaskTitle}
             name="newSubtaskTitle"
             onChange={(event) => setNewSubtaskTitle(event.target.value)}
-            placeholder="添加任务拆解"
+            placeholder="添加新拆解项"
             className="h-10 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
           />
           <button type="submit" title="添加任务拆解" className="grid h-10 place-items-center rounded-md bg-[var(--accent)] text-white transition hover:bg-[var(--accent-hover)]">
@@ -2624,7 +2766,7 @@ function OwnerTag({ name }: { name: string }) {
 
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <label className="space-y-1 text-sm text-[var(--muted)] [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-[var(--border)] [&_input]:bg-[var(--input)] [&_input]:px-2 [&_input]:py-2 [&_input]:text-sm [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--input)] [&_select]:px-2 [&_select]:py-2 [&_select]:text-sm [&_textarea]:w-full [&_textarea]:rounded-md [&_textarea]:border [&_textarea]:border-[var(--border)] [&_textarea]:bg-[var(--input)] [&_textarea]:px-2 [&_textarea]:py-2 [&_textarea]:text-sm">
+    <label className="flex flex-col gap-1.5 text-sm text-[var(--muted)] [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-[var(--border)] [&_input]:bg-[var(--input)] [&_input]:px-2 [&_input]:py-2 [&_input]:text-sm [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--input)] [&_select]:px-2 [&_select]:py-2 [&_select]:text-sm [&_textarea]:w-full [&_textarea]:rounded-md [&_textarea]:border [&_textarea]:border-[var(--border)] [&_textarea]:bg-[var(--input)] [&_textarea]:px-2 [&_textarea]:py-2 [&_textarea]:text-sm">
       <span>{label}</span>
       {children}
     </label>
