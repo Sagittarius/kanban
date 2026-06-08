@@ -1,0 +1,4 @@
+-- SQLite / Cloudflare D1
+-- 请使用 scripts/reset-password-sql.mjs 生成唯一密码哈希，不要直接执行此文件
+-- 用法: node scripts/reset-password-sql.mjs admin 新密码 > reset.sql
+-- UPDATE users SET password_hash = '<PLACEHOLDER: 用 reset-password-sql.mjs 生成>', updated_at = CURRENT_TIMESTAMP WHERE username = 'admin' AND role = 'super_admin';
