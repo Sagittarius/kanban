@@ -5,7 +5,10 @@
 .wrangler
 .vinext
 .claude
+.remember
+node_modules
 node_modules/.cache
+dist
 *.md
 !README.md
-dist
+offline-packages
