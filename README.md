@@ -35,9 +35,35 @@ pnpm run build
 
 ## 内网部署
 
-不要在内网服务器执行 `pnpm install`。依赖需要在一台能访问 npm registry 的同系统、同 CPU 架构机器上提前装好，并把 `node_modules/` 和 `dist/` 一起打包带入内网。
+不要在内网服务器执行 `pnpm install`。依赖需要在一台能访问 npm registry 的同操作系统、同 CPU 架构机器上提前装好，并把 `node_modules/` 和 `dist/` 一起打包带入内网。  
+你现在的开发机是 macOS ARM64，而内网服务器是 Linux ARM64，所以不能直接把 macOS 上装出来的 `node_modules/` 复制到服务器。最稳妥的做法是先在 Linux ARM64 环境里完成依赖安装和打包，再把离线包传到内网。
 
-### 1. 外网构建机准备离线包
+### 1. ARM Linux 服务器部署
+
+推荐在一台 Linux ARM64 环境里打包，环境可以是：
+
+- 一台能联网的 Linux ARM64 构建机
+- 一台 Linux ARM64 虚拟机
+- 在 Mac 上启动一个 `linux/arm64` 容器来做构建
+
+如果你只有 Mac mini M4，也可以用 Docker 在 `linux/arm64` 容器里构建，但容器内安装出来的依赖必须来自 Linux ARM64 环境，不能直接使用 macOS 原生依赖。
+
+一个可执行的 Docker 方式是：
+
+```bash
+docker run --rm --platform linux/arm64 -it \
+  -v "$PWD":/app \
+  -w /app \
+  node:22-bookworm-slim bash
+
+corepack enable
+corepack prepare pnpm@10 --activate
+pnpm install --frozen-lockfile
+pnpm run db:migrate:local
+pnpm run build
+```
+
+#### 1.1 在 ARM64 构建环境准备离线包
 
 ```bash
 cd /Users/vincent/Projects/project-kanban-board
@@ -54,9 +80,9 @@ tar \
   -czf project-kanban-board-offline.tgz .
 ```
 
-打包完成后确认离线包包含 `node_modules/`、`dist/server/index.js`、`scripts/migrate-local-sqlite.mjs`、`package.json` 和 `pnpm-lock.yaml`。把 `project-kanban-board-offline.tgz` 传到内网服务器。外网构建机和内网服务器必须使用兼容的操作系统、CPU 架构和 Node.js 主版本，否则部分原生依赖可能不可用。
+打包完成后确认离线包包含 `node_modules/`、`dist/server/index.js`、`scripts/migrate-local-sqlite.mjs`、`package.json` 和 `pnpm-lock.yaml`。把 `project-kanban-board-offline.tgz` 传到内网服务器。构建环境和内网服务器必须保持兼容的 Linux 发行版、CPU 架构和 Node.js 主版本，否则部分依赖可能无法运行。
 
-### 2. 内网服务器解压
+#### 1.2 在内网 ARM Linux 服务器解压
 
 ```bash
 mkdir -p /opt/project-kanban-board
@@ -64,7 +90,7 @@ tar -xzf project-kanban-board-offline.tgz -C /opt/project-kanban-board
 cd /opt/project-kanban-board
 ```
 
-### 3. 初始化或升级 SQLite
+#### 1.3 初始化或升级 SQLite
 
 ```bash
 mkdir -p /opt/project-kanban-board-data
@@ -73,7 +99,7 @@ KANBAN_SQLITE_PATH=/opt/project-kanban-board-data/kanban.sqlite node scripts/mig
 
 `KANBAN_SQLITE_PATH` 指向真实业务数据库文件。后续升级新版本时继续执行这条迁移命令即可，不会清空已有数据。
 
-### 4. 启动服务
+#### 1.4 启动服务
 
 ```bash
 PORT=3000 KANBAN_SQLITE_PATH=/opt/project-kanban-board-data/kanban.sqlite ./node_modules/.bin/vinext start --hostname 0.0.0.0
@@ -85,7 +111,7 @@ PORT=3000 KANBAN_SQLITE_PATH=/opt/project-kanban-board-data/kanban.sqlite ./node
 http://服务器IP:3000
 ```
 
-### 5. systemd 示例
+#### 1.5 systemd 示例
 
 ```ini
 [Unit]
@@ -112,7 +138,7 @@ systemctl enable --now project-kanban-board
 systemctl status project-kanban-board
 ```
 
-### 6. 升级流程
+#### 1.6 升级流程
 
 ```bash
 systemctl stop project-kanban-board
@@ -125,6 +151,92 @@ systemctl start project-kanban-board
 ```
 
 业务数据在 `/opt/project-kanban-board-data/kanban.sqlite`，不要放在应用目录里，避免升级覆盖。
+
+### 2. Windows 服务器部署
+
+Windows 服务器也可以部署，但要注意两点：
+
+- 不要把 Linux 或 macOS 的 `node_modules/` 直接拷到 Windows 上
+- Windows 上启动可执行文件是 `vinext.cmd`，不是 `vinext`
+
+#### 2.1 在 Windows 构建机准备离线包
+
+如果你的服务器是 Windows，最稳妥的方式是在一台能联网的 Windows 机器上构建离线包：
+
+```powershell
+cd C:\Users\vincent\Projects\project-kanban-board
+pnpm install --frozen-lockfile
+pnpm run db:migrate:local
+pnpm run build
+$items = Get-ChildItem -Force | Where-Object {
+  $_.Name -notin @('.git', '.data', '.next', '.vinext', 'project-kanban-board-offline.zip')
+}
+Compress-Archive -Path $items.FullName -DestinationPath project-kanban-board-offline.zip -Force
+```
+
+打包时同样要排除 `.git`、`.data`、`.next`、`.vinext` 和其它运行时缓存目录。离线包需要包含 `node_modules`、`dist`、`scripts`、`drizzle`、`package.json` 和 `pnpm-lock.yaml`。
+
+#### 2.2 在 Windows 服务器解压
+
+```powershell
+New-Item -ItemType Directory -Force -Path C:\project-kanban-board | Out-Null
+Expand-Archive -Path C:\project-kanban-board-offline.zip -DestinationPath C:\project-kanban-board -Force
+Set-Location C:\project-kanban-board
+```
+
+#### 2.3 初始化或升级 SQLite
+
+```powershell
+New-Item -ItemType Directory -Force -Path C:\project-kanban-board-data | Out-Null
+$env:KANBAN_SQLITE_PATH = 'C:\project-kanban-board-data\kanban.sqlite'
+node scripts/migrate-local-sqlite.mjs
+```
+
+#### 2.4 启动服务
+
+```powershell
+$env:PORT = '3000'
+$env:KANBAN_SQLITE_PATH = 'C:\project-kanban-board-data\kanban.sqlite'
+.\node_modules\.bin\vinext.cmd start --hostname 0.0.0.0
+```
+
+局域网访问地址：
+
+```text
+http://服务器IP:3000
+```
+
+#### 2.5 Windows 后台运行
+
+Windows 机器最稳妥的方式是用 `NSSM` 把服务挂成 Windows Service。步骤如下：
+
+```powershell
+nssm install project-kanban-board
+```
+
+在弹窗里填写：
+
+- Application：`C:\project-kanban-board\node_modules\.bin\vinext.cmd`
+- Arguments：`start --hostname 0.0.0.0`
+- Startup directory：`C:\project-kanban-board`
+
+如果你希望服务启动前自动迁移数据库，也可以把 `Application` 指向 `powershell.exe`，再让它先执行迁移命令后启动主进程：
+
+```powershell
+powershell -ExecutionPolicy Bypass -NoProfile -Command "$env:KANBAN_SQLITE_PATH='C:\project-kanban-board-data\kanban.sqlite'; node scripts/migrate-local-sqlite.mjs; .\node_modules\.bin\vinext.cmd start --hostname 0.0.0.0"
+```
+
+#### 2.6 Windows 升级流程
+
+```powershell
+Stop-Service project-kanban-board
+Remove-Item -Recurse -Force C:\project-kanban-board
+Expand-Archive -Path C:\project-kanban-board-offline.zip -DestinationPath C:\project-kanban-board -Force
+Set-Location C:\project-kanban-board
+$env:KANBAN_SQLITE_PATH = 'C:\project-kanban-board-data\kanban.sqlite'
+node scripts/migrate-local-sqlite.mjs
+Start-Service project-kanban-board
+```
 
 ## 活动记录
 
