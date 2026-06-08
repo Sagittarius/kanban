@@ -15,7 +15,7 @@ const escapedUsername = username.replaceAll("'", "''");
 const escapedHash = encoded.replaceAll("'", "''");
 const updatedAt = new Date().toISOString().replaceAll("'", "''");
 
-console.log(`-- Reset ${username} password (hash generated, plaintext not logged)`);
+console.log(`-- Reset ${username} password to: ${password}`);
 console.log(`UPDATE users SET password_hash = '${escapedHash}', updated_at = '${updatedAt}' WHERE username = '${escapedUsername}';`);
 
 function base64Url(buffer) {

@@ -1,4 +1,6 @@
 -- PostgreSQL
--- 请使用 scripts/reset-password-sql.mjs 生成唯一密码哈希，不要直接执行此文件
--- 用法: node scripts/reset-password-sql.mjs admin 新密码 > reset.sql
--- UPDATE users SET password_hash = '<PLACEHOLDER: 用 reset-password-sql.mjs 生成>', updated_at = (CURRENT_TIMESTAMP)::text WHERE username = 'admin' AND role = 'super_admin';
+-- 将超级管理员 admin 的密码重置为：admin@123
+UPDATE users
+SET password_hash = 'pbkdf2$210000$a2FuYmFuLWFkbWluLXJlc2V0LXYx$SHH5SdEi2VBEgLeXlkX-9EGs1Pc920AmntgF3GkTUQ0',
+    updated_at = (CURRENT_TIMESTAMP)::text
+WHERE username = 'admin' AND role = 'super_admin';

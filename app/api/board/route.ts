@@ -1,21 +1,13 @@
 import { NextResponse } from "next/server";
-import { createSeedBoard } from "@/lib/board-data";
 import { getBoard } from "@/lib/board-store";
+import { errorMessage, errorStatus, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
 
 export async function GET() {
   try {
-    return NextResponse.json(await getBoard());
+    const user = await requireSessionUser();
+    const board = await resolveActiveBoard(user);
+    return NextResponse.json(await getBoard(user, board.id));
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to load board data";
-
-    if (message.startsWith("Failed query: select count(*) from")) {
-      return NextResponse.json(createSeedBoard());
-    }
-
-    return NextResponse.json(
-      { error: message },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: errorMessage(error, "Unable to load board data") }, { status: errorStatus(error) });
   }
 }

@@ -1,43 +1,95 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
-export const projects = sqliteTable("projects", {
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    role: text("role").notNull().default("user"),
+    timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    usernameIdx: uniqueIndex("users_username_unique").on(table.username),
+  })
+);
+
+export const boards = sqliteTable("boards", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
-  owner: text("owner").notNull(),
-  color: text("color").notNull(),
-  health: text("health").notNull().default("normal"),
-  status: text("status").notNull().default("active"),
-  summary: text("summary").notNull().default(""),
-  archivedAt: text("archived_at"),
-  orderIndex: integer("order_index").notNull().default(0),
+  ownerUserId: text("owner_user_id").notNull(),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const tasks = sqliteTable("tasks", {
-  id: text("id").primaryKey(),
-  projectId: text("project_id").notNull(),
-  title: text("title").notNull(),
-  description: text("description").notNull().default(""),
-  status: text("status").notNull().default("backlog"),
-  priority: text("priority").notNull().default("medium"),
-  owner: text("owner").notNull().default("未分配"),
-  startDate: text("start_date").notNull().default(""),
-  testDueDate: text("test_due_date").notNull().default(""),
-  dueDate: text("due_date").notNull().default(""),
-  estimate: integer("estimate").notNull().default(1),
-  progress: integer("progress").notNull().default(0),
-  blockers: integer("blockers").notNull().default(0),
-  blockedReason: text("blocked_reason").notNull().default(""),
-  tags: text("tags").notNull().default("[]"),
-  orderIndex: integer("order_index").notNull().default(0),
-  deletedAt: text("deleted_at"),
-  completedAt: text("completed_at"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-  updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+export const boardMembers = sqliteTable(
+  "board_members",
+  {
+    boardId: text("board_id").notNull(),
+    userId: text("user_id").notNull(),
+    role: text("role").notNull().default("viewer"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("board_members_board_user_unique").on(table.boardId, table.userId),
+  })
+);
+
+export const projects = sqliteTable(
+  "projects",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id").notNull().default("default-board"),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    owner: text("owner").notNull(),
+    color: text("color").notNull(),
+    health: text("health").notNull().default("normal"),
+    status: text("status").notNull().default("active"),
+    summary: text("summary").notNull().default(""),
+    archivedAt: text("archived_at"),
+    orderIndex: integer("order_index").notNull().default(0),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    boardIdx: index("projects_board_id_idx").on(table.boardId),
+  })
+);
+
+export const tasks = sqliteTable(
+  "tasks",
+  {
+    id: text("id").primaryKey(),
+    projectId: text("project_id").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    status: text("status").notNull().default("backlog"),
+    priority: text("priority").notNull().default("medium"),
+    owner: text("owner").notNull().default("未分配"),
+    startDate: text("start_date").notNull().default(""),
+    testDueDate: text("test_due_date").notNull().default(""),
+    dueDate: text("due_date").notNull().default(""),
+    estimate: integer("estimate").notNull().default(1),
+    progress: integer("progress").notNull().default(0),
+    blockers: integer("blockers").notNull().default(0),
+    blockedReason: text("blocked_reason").notNull().default(""),
+    tags: text("tags").notNull().default("[]"),
+    orderIndex: integer("order_index").notNull().default(0),
+    deletedAt: text("deleted_at"),
+    completedAt: text("completed_at"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    projectIdx: index("tasks_project_id_idx").on(table.projectId),
+  })
+);
 
 export const subtasks = sqliteTable("subtasks", {
   id: text("id").primaryKey(),
@@ -49,17 +101,24 @@ export const subtasks = sqliteTable("subtasks", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
-export const activityLog = sqliteTable("task_activity", {
-  id: text("id").primaryKey(),
-  entityType: text("entity_type").notNull(),
-  entityId: text("entity_id").notNull(),
-  projectId: text("project_id"),
-  taskId: text("task_id"),
-  action: text("action").notNull(),
-  message: text("message").notNull(),
-  meta: text("meta").notNull().default("{}"),
-  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+export const activityLog = sqliteTable(
+  "task_activity",
+  {
+    id: text("id").primaryKey(),
+    boardId: text("board_id").notNull().default("default-board"),
+    entityType: text("entity_type").notNull(),
+    entityId: text("entity_id").notNull(),
+    projectId: text("project_id"),
+    taskId: text("task_id"),
+    action: text("action").notNull(),
+    message: text("message").notNull(),
+    meta: text("meta").notNull().default("{}"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    boardIdx: index("task_activity_board_id_idx").on(table.boardId),
+  })
+);
 
 export const systemParameters = sqliteTable("system_parameters", {
   key: text("key").primaryKey(),

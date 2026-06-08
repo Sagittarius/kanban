@@ -1,40 +1,28 @@
 import { NextResponse } from "next/server";
 import { deleteSubtask, updateSubtask } from "@/lib/board-store";
+import { errorMessage, errorStatus, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
 
-type RouteContext = {
-  params: Promise<{
-    id: string;
-    subtaskId: string;
-  }>;
-};
+type RouteContext = { params: Promise<{ id: string; subtaskId: string }> };
 
 export async function PATCH(request: Request, context: RouteContext) {
   try {
+    const user = await requireSessionUser();
+    const board = await resolveActiveBoard(user);
     const { id, subtaskId } = await context.params;
-    const body = await request.json();
-    return NextResponse.json(await updateSubtask(id, subtaskId, body));
+    const body = await request.json().catch(() => ({}));
+    return NextResponse.json(await updateSubtask(user, board.id, id, subtaskId, body));
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to update subtask";
-
-    return NextResponse.json(
-      { error: message },
-      { status: message === "Subtask not found" ? 404 : 500 }
-    );
+    return NextResponse.json({ error: errorMessage(error, "Unable to update subtask") }, { status: errorStatus(error) });
   }
 }
 
 export async function DELETE(_request: Request, context: RouteContext) {
   try {
+    const user = await requireSessionUser();
+    const board = await resolveActiveBoard(user);
     const { id, subtaskId } = await context.params;
-    return NextResponse.json(await deleteSubtask(id, subtaskId));
+    return NextResponse.json(await deleteSubtask(user, board.id, id, subtaskId));
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to delete subtask";
-
-    return NextResponse.json(
-      { error: message },
-      { status: message === "Subtask not found" ? 404 : 500 }
-    );
+    return NextResponse.json({ error: errorMessage(error, "Unable to delete subtask") }, { status: errorStatus(error) });
   }
 }

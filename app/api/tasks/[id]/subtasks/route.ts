@@ -1,24 +1,17 @@
 import { NextResponse } from "next/server";
 import { createSubtask } from "@/lib/board-store";
+import { errorMessage, errorStatus, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
 
-type RouteContext = {
-  params: Promise<{
-    id: string;
-  }>;
-};
+type RouteContext = { params: Promise<{ id: string }> };
 
 export async function POST(request: Request, context: RouteContext) {
   try {
+    const user = await requireSessionUser();
+    const board = await resolveActiveBoard(user);
     const { id } = await context.params;
-    const body = await request.json();
-    return NextResponse.json(await createSubtask(id, body), { status: 201 });
+    const body = await request.json().catch(() => ({}));
+    return NextResponse.json(await createSubtask(user, board.id, id, body), { status: 201 });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to create subtask";
-
-    return NextResponse.json(
-      { error: message },
-      { status: message === "Task not found" ? 404 : 500 }
-    );
+    return NextResponse.json({ error: errorMessage(error, "Unable to create subtask") }, { status: errorStatus(error) });
   }
 }

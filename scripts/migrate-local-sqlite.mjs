@@ -31,8 +31,17 @@ for (const migration of migrations) {
   const sql = fs.readFileSync(path.join(migrationsDir, migration), "utf8");
   for (const statement of sql.split("--> statement-breakpoint")) {
     const trimmed = statement.trim();
-    if (trimmed) {
+    if (!trimmed) continue;
+    try {
       database.exec(trimmed);
+    } catch (err) {
+      // Skip statements that fail due to existing columns/tables (idempotent migration)
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("already exists") || msg.includes("duplicate column")) {
+        console.warn(`  Skipping (already exists): ${trimmed.substring(0, 60)}...`);
+        continue;
+      }
+      throw err;
     }
   }
   database.prepare("INSERT INTO d1_migrations (name) VALUES (?)").run(migration);

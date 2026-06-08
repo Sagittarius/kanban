@@ -1,17 +1,14 @@
 import { NextResponse } from "next/server";
 import { reorderTasks } from "@/lib/board-store";
+import { errorMessage, errorStatus, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    return NextResponse.json(await reorderTasks(body));
+    const user = await requireSessionUser();
+    const board = await resolveActiveBoard(user);
+    const body = await request.json().catch(() => ({}));
+    return NextResponse.json(await reorderTasks(user, board.id, body));
   } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Unable to reorder tasks",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: errorMessage(error, "Unable to reorder tasks") }, { status: errorStatus(error) });
   }
 }

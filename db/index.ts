@@ -1,5 +1,19 @@
-import { drizzle, type AnyD1Database } from "drizzle-orm/d1";
-import * as schema from "./schema";
+export type StorageMode = "sqlite" | "postgres";
+export type SqlValue = string | number | boolean | null | undefined;
+
+export type QueryResult = {
+  changes?: number;
+  lastInsertRowid?: number;
+};
+
+export type DatabaseAdapter = {
+  mode: StorageMode;
+  query<T extends Record<string, unknown> = Record<string, unknown>>(
+    sql: string,
+    params?: SqlValue[]
+  ): Promise<T[]>;
+  execute(sql: string, params?: SqlValue[]): Promise<QueryResult>;
+};
 
 type LocalSQLiteDatabase = {
   exec: (sql: string) => void;
@@ -10,174 +24,162 @@ type LocalSQLiteDatabase = {
   };
 };
 
-let cachedDb: ReturnType<typeof drizzle<typeof schema>> | null = null;
-let cachedLocalClient: AnyD1Database | null = null;
-let storageMode: "d1" | "sqlite" = "d1";
+type PgPool = {
+  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+};
 
-export async function getDb() {
-  if (cachedDb) {
-    return cachedDb;
+let cachedAdapter: DatabaseAdapter | null = null;
+let cachedLocalDatabase: LocalSQLiteDatabase | null = null;
+let cachedPgPool: PgPool | null = null;
+
+export async function getDbAdapter(): Promise<DatabaseAdapter> {
+  if (cachedAdapter) {
+    return cachedAdapter;
   }
 
-  // Prefer local SQLite when running in Node.js (dev or on-prem)
-  const sqliteClient = await tryGetLocalSQLiteD1Client();
-  if (sqliteClient) {
-    storageMode = "sqlite";
-    cachedDb = drizzle(sqliteClient, { schema });
-    return cachedDb;
+  const requested = normalizeStorageMode(process.env.KANBAN_DB_DRIVER ?? process.env.DB_DRIVER) ?? "sqlite";
+
+  if (requested === "postgres") {
+    cachedAdapter = await createPostgresAdapter();
+    return cachedAdapter;
   }
 
-  // Fall back to Cloudflare D1 (Workers / vinext Miniflare)
-  const cloudflareDb = await getCloudflareD1Binding();
-  if (cloudflareDb) {
-    storageMode = "d1";
-    cachedDb = drizzle(cloudflareDb, { schema });
-    return cachedDb;
-  }
-
-  throw new Error("No database available. Set KANBAN_SQLITE_PATH or configure D1.");
+  cachedAdapter = await createSQLiteAdapter();
+  return cachedAdapter;
 }
 
-async function tryGetLocalSQLiteD1Client(): Promise<AnyD1Database | null> {
-  try {
-    return await getLocalSQLiteD1Client();
-  } catch {
-    return null;
-  }
+export function getStorageMode(): StorageMode {
+  return cachedAdapter?.mode ?? normalizeStorageMode(process.env.KANBAN_DB_DRIVER ?? process.env.DB_DRIVER) ?? "sqlite";
 }
 
-export function getStorageMode() {
-  return storageMode;
+function normalizeStorageMode(value: string | undefined | null): StorageMode | null {
+  if (value === "sqlite" || value === "postgres") {
+    return value;
+  }
+  return null;
 }
 
-async function getCloudflareD1Binding(): Promise<AnyD1Database | null> {
-  try {
-    if (process.env.KANBAN_SQLITE_PATH) {
-      return null;
-    }
-  } catch {
-    // process.env not available in this runtime
-  }
-  try {
-    const { env } = (await import("cloudflare:workers")) as {
-      env?: { DB?: unknown };
-    };
-    return env?.DB ? (env.DB as AnyD1Database) : null;
-  } catch {
-    return null;
-  }
-}
-
-async function getLocalSQLiteD1Client(): Promise<AnyD1Database> {
-  if (cachedLocalClient) {
-    return cachedLocalClient;
-  }
-
+async function createSQLiteAdapter(): Promise<DatabaseAdapter> {
   const [{ DatabaseSync }, fs, path] = await Promise.all([
     import("node:sqlite"),
     import("node:fs"),
     import("node:path"),
   ]);
-  const databasePath =
-    process.env.KANBAN_SQLITE_PATH ??
-    path.join(process.cwd(), ".data", "kanban.sqlite");
+  const databasePath = process.env.KANBAN_SQLITE_PATH ?? path.join(process.cwd(), ".data", "kanban.sqlite");
 
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
-  const database = new DatabaseSync(databasePath) as LocalSQLiteDatabase;
-  applyLocalMigrations(database, fs, path);
-
-  cachedLocalClient = createD1CompatClient(database);
-  return cachedLocalClient;
+  cachedLocalDatabase = new DatabaseSync(databasePath) as LocalSQLiteDatabase;
+  const adapter = createSQLiteAdapterFromDatabase(cachedLocalDatabase);
+  await applyFileMigrations(adapter, ["drizzle"], "d1_migrations");
+  return adapter;
 }
 
-function applyLocalMigrations(
-  database: LocalSQLiteDatabase,
-  fs: typeof import("node:fs"),
-  path: typeof import("node:path")
-) {
-  database.exec(
-    "CREATE TABLE IF NOT EXISTS d1_migrations (name TEXT PRIMARY KEY NOT NULL, applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+function createSQLiteAdapterFromDatabase(database: LocalSQLiteDatabase): DatabaseAdapter {
+  return {
+    mode: "sqlite",
+    async query<T extends Record<string, unknown>>(sql: string, params: SqlValue[] = []) {
+      return database.prepare(sql).all(...normalizeParams(params)) as T[];
+    },
+    async execute(sql: string, params: SqlValue[] = []) {
+      const result = database.prepare(sql).run(...normalizeParams(params));
+      return {
+        changes: result.changes,
+        lastInsertRowid: Number(result.lastInsertRowid),
+      };
+    },
+  };
+}
+
+async function createPostgresAdapter(): Promise<DatabaseAdapter> {
+  const connectionString = process.env.POSTGRES_URL ?? process.env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error("POSTGRES_URL or DATABASE_URL is required when KANBAN_DB_DRIVER=postgres.");
+  }
+
+  if (!cachedPgPool) {
+    const { Pool } = await import("pg");
+    const sslConfig = process.env.POSTGRES_CA
+      ? { ca: await loadFile(process.env.POSTGRES_CA) }
+      : process.env.POSTGRES_SSL === "true"
+        ? { rejectUnauthorized: true }
+        : undefined;
+    cachedPgPool = new Pool({
+      connectionString,
+      ssl: sslConfig,
+    }) as PgPool;
+  }
+
+  const adapter: DatabaseAdapter = {
+    mode: "postgres",
+    async query<T extends Record<string, unknown>>(sql: string, params: SqlValue[] = []) {
+      const result = await cachedPgPool!.query(toPostgresSql(sql), normalizeParams(params));
+      return result.rows as T[];
+    },
+    async execute(sql: string, params: SqlValue[] = []) {
+      const result = await cachedPgPool!.query(toPostgresSql(sql), normalizeParams(params));
+      return { changes: result.rowCount ?? undefined };
+    },
+  };
+
+  await applyFileMigrations(adapter, ["migrations", "postgres"], "kanban_migrations");
+  return adapter;
+}
+
+async function loadFile(filePath: string): Promise<string> {
+  const fs = await import("node:fs");
+  return fs.readFileSync(filePath, "utf8");
+}
+
+async function applyFileMigrations(adapter: DatabaseAdapter, migrationsPath: string[], tableName: string) {
+  const [fs, path] = await Promise.all([import("node:fs"), import("node:path")]);
+  const migrationsDir = path.join(process.cwd(), ...migrationsPath);
+  if (!fs.existsSync(migrationsDir)) {
+    return;
+  }
+
+  const timestampType = adapter.mode === "postgres" ? "TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP" : "TEXT DEFAULT CURRENT_TIMESTAMP";
+  await adapter.execute(
+    `CREATE TABLE IF NOT EXISTS ${tableName} (name TEXT PRIMARY KEY NOT NULL, applied_at ${timestampType} NOT NULL)`
   );
 
-  const migrationsDir = path.join(process.cwd(), "drizzle");
   const migrations = fs
     .readdirSync(migrationsDir)
     .filter((file) => file.endsWith(".sql"))
     .sort();
 
   for (const migration of migrations) {
-    const existing = database
-      .prepare("SELECT name FROM d1_migrations WHERE name = ?")
-      .get(migration);
-    if (existing) {
+    const existing = await adapter.query<{ name: string }>(
+      `SELECT name FROM ${tableName} WHERE name = ?`,
+      [migration]
+    );
+    if (existing.length > 0) {
       continue;
     }
 
     const sql = fs.readFileSync(path.join(migrationsDir, migration), "utf8");
-    for (const statement of sql.split("--> statement-breakpoint")) {
-      const trimmed = statement.trim();
-      if (trimmed) {
-        database.exec(trimmed);
+    for (const statement of splitSqlStatements(sql)) {
+      try {
+        await adapter.execute(statement);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("already exists") || msg.includes("duplicate column")) {
+          continue;
+        }
+        throw err;
       }
     }
-    database.prepare("INSERT INTO d1_migrations (name) VALUES (?)").run(migration);
+    await adapter.execute(`INSERT INTO ${tableName} (name) VALUES (?)`, [migration]);
   }
 }
 
-function createD1CompatClient(database: LocalSQLiteDatabase): AnyD1Database {
-  return {
-    prepare(sql: string) {
-      return createPreparedStatement(database, sql, []);
-    },
-    async batch(statements: ReturnType<typeof createPreparedStatement>[]) {
-      const results = [];
-      for (const statement of statements) {
-        results.push(await statement.all());
-      }
-      return results;
-    },
-  } as unknown as AnyD1Database;
+function splitSqlStatements(sql: string) {
+  return sql
+    .split("--> statement-breakpoint")
+    .map((statement) => statement.trim())
+    .filter(Boolean);
 }
 
-function createPreparedStatement(
-  database: LocalSQLiteDatabase,
-  sql: string,
-  params: unknown[]
-) {
-  return {
-    bind(...nextParams: unknown[]) {
-      return createPreparedStatement(database, sql, nextParams);
-    },
-    async all() {
-      const rows = database.prepare(sql).all(...normalizeParams(params));
-      return { results: rows, success: true, meta: {} };
-    },
-    async raw() {
-      const rows = database.prepare(sql).all(...normalizeParams(params));
-      return rows.map((row) => Object.values(row));
-    },
-    async first(column?: string) {
-      const row = database.prepare(sql).get(...normalizeParams(params));
-      if (!row) {
-        return null;
-      }
-      return column ? row[column] : row;
-    },
-    async run() {
-      const result = database.prepare(sql).run(...normalizeParams(params));
-      return {
-        results: [],
-        success: true,
-        meta: {
-          changes: result.changes,
-          last_row_id: Number(result.lastInsertRowid),
-        },
-      };
-    },
-  };
-}
-
-function normalizeParams(params: unknown[]) {
+function normalizeParams(params: SqlValue[]) {
   return params.map((value) => {
     if (value === undefined) {
       return null;
@@ -187,4 +189,9 @@ function normalizeParams(params: unknown[]) {
     }
     return value;
   });
+}
+
+function toPostgresSql(sql: string) {
+  let index = 0;
+  return sql.replace(/\?/g, () => `$${++index}`);
 }

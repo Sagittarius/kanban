@@ -8,15 +8,9 @@ if (!connectionString) {
   process.exit(1);
 }
 
-const sslConfig = process.env.POSTGRES_CA
-  ? { ca: fs.readFileSync(process.env.POSTGRES_CA) }
-  : process.env.POSTGRES_SSL === "true"
-    ? { rejectUnauthorized: true }
-    : undefined;
-
 const pool = new Pool({
   connectionString,
-  ssl: sslConfig,
+  ssl: process.env.POSTGRES_SSL === "true" ? { rejectUnauthorized: false } : undefined,
 });
 
 const migrationsDir = path.join(process.cwd(), "migrations", "postgres");

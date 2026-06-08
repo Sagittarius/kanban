@@ -1,26 +1,27 @@
+import AuthenticatedShell from "@/components/authenticated-shell";
 import KanbanApp from "@/components/kanban-app";
+import LoginPage from "@/components/login-page";
+import TimezoneBoundary from "@/components/timezone-boundary";
 import { createSeedBoard } from "@/lib/board-data";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { getOptionalSessionUser, resolveActiveBoard } from "@/lib/server-session";
+import { todayKeyInTimeZone } from "@/lib/timezone";
 
-function todayKeyInChina() {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("zh-CN", {
-      timeZone: "Asia/Shanghai",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    })
-      .formatToParts(new Date())
-      .map((part) => [part.type, part.value])
-  );
+export default async function Home() {
+  const user = await getOptionalSessionUser();
+  if (!user) {
+    return <LoginPage />;
+  }
 
-  return `${parts.year}-${parts.month}-${parts.day}`;
-}
+  const repo = await getKanbanRepository();
+  const activeBoard = await resolveActiveBoard(user);
+  const boards = await repo.listBoardsForUser(user);
 
-export default function Home() {
   return (
-    <KanbanApp
-      initialBoard={createSeedBoard()}
-      todayKey={todayKeyInChina()}
-    />
+    <AuthenticatedShell user={user} boards={boards} activeBoardId={activeBoard.id}>
+      <TimezoneBoundary timezone={user.timezone}>
+        <KanbanApp initialBoard={createSeedBoard()} todayKey={todayKeyInTimeZone(user.timezone)} />
+      </TimezoneBoundary>
+    </AuthenticatedShell>
   );
 }

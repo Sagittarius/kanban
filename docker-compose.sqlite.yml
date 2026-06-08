@@ -1,0 +1,19 @@
+services:
+  kanban:
+    build: .
+    image: private-kanban:latest
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      KANBAN_DB_DRIVER: sqlite
+      KANBAN_SQLITE_PATH: /data/kanban.sqlite
+      KANBAN_AUTH_SECRET: change-this-to-a-long-random-secret
+      KANBAN_SUPER_ADMIN_USERNAME: admin
+      KANBAN_SUPER_ADMIN_PASSWORD: admin@123
+      KANBAN_DEFAULT_TIMEZONE: Asia/Shanghai
+    volumes:
+      - kanban_sqlite:/data
+
+volumes:
+  kanban_sqlite:

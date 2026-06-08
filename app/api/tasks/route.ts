@@ -1,17 +1,14 @@
 import { NextResponse } from "next/server";
 import { createTask } from "@/lib/board-store";
+import { errorMessage, errorStatus, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
 
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    return NextResponse.json(await createTask(body), { status: 201 });
+    const user = await requireSessionUser();
+    const board = await resolveActiveBoard(user);
+    const body = await request.json().catch(() => ({}));
+    return NextResponse.json(await createTask(user, board.id, body), { status: 201 });
   } catch (error) {
-    return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Unable to create task",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: errorMessage(error, "Unable to create task") }, { status: errorStatus(error) });
   }
 }

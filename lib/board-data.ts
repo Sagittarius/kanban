@@ -95,7 +95,7 @@ export type BoardData = {
   tasks: BoardTask[];
   activity: ActivityLog[];
   settings: SystemSettings;
-  storageMode?: "d1" | "sqlite" | "local";
+  storageMode?: "sqlite" | "postgres" | "local";
 };
 
 const seedTime = "2026-06-06T09:00:00.000Z";
