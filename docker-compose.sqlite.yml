@@ -8,9 +8,9 @@ services:
     environment:
       KANBAN_DB_DRIVER: sqlite
       KANBAN_SQLITE_PATH: /data/kanban.sqlite
-      KANBAN_AUTH_SECRET: change-this-to-a-long-random-secret
-      KANBAN_SUPER_ADMIN_USERNAME: admin
-      KANBAN_SUPER_ADMIN_PASSWORD: admin@123
+      KANBAN_AUTH_SECRET: ${KANBAN_AUTH_SECRET:?必须设置 KANBAN_AUTH_SECRET，例如 export KANBAN_AUTH_SECRET=$(openssl rand -hex 32)}
+      KANBAN_SUPER_ADMIN_USERNAME: ${KANBAN_SUPER_ADMIN_USERNAME:-admin}
+      KANBAN_SUPER_ADMIN_PASSWORD: ${KANBAN_SUPER_ADMIN_PASSWORD:?必须设置 KANBAN_SUPER_ADMIN_PASSWORD，例如 export KANBAN_SUPER_ADMIN_PASSWORD=your-secure-password}
       KANBAN_DEFAULT_TIMEZONE: Asia/Shanghai
     volumes:
       - kanban_sqlite:/data

@@ -5,7 +5,7 @@ services:
     environment:
       POSTGRES_DB: kanban
       POSTGRES_USER: kanban
-      POSTGRES_PASSWORD: kanban_password
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?必须设置 POSTGRES_PASSWORD，例如 export POSTGRES_PASSWORD=$(openssl rand -hex 16)}
     volumes:
       - kanban_postgres:/var/lib/postgresql/data
     healthcheck:
@@ -25,10 +25,10 @@ services:
       - "3000:3000"
     environment:
       KANBAN_DB_DRIVER: postgres
-      POSTGRES_URL: postgres://kanban:kanban_password@postgres:5432/kanban
-      KANBAN_AUTH_SECRET: change-this-to-a-long-random-secret
-      KANBAN_SUPER_ADMIN_USERNAME: admin
-      KANBAN_SUPER_ADMIN_PASSWORD: admin@123
+      POSTGRES_URL: postgres://kanban:${POSTGRES_PASSWORD:?必须设置 POSTGRES_PASSWORD}@postgres:5432/kanban
+      KANBAN_AUTH_SECRET: ${KANBAN_AUTH_SECRET:?必须设置 KANBAN_AUTH_SECRET，例如 export KANBAN_AUTH_SECRET=$(openssl rand -hex 32)}
+      KANBAN_SUPER_ADMIN_USERNAME: ${KANBAN_SUPER_ADMIN_USERNAME:-admin}
+      KANBAN_SUPER_ADMIN_PASSWORD: ${KANBAN_SUPER_ADMIN_PASSWORD:?必须设置 KANBAN_SUPER_ADMIN_PASSWORD，例如 export KANBAN_SUPER_ADMIN_PASSWORD=your-secure-password}
       KANBAN_DEFAULT_TIMEZONE: Asia/Shanghai
 
 volumes:
