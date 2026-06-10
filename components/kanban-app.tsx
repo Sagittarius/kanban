@@ -1310,8 +1310,8 @@ export default function KanbanApp({
   const newTaskProjectId = newTask.projectId || firstProjectId(activeProjectChoices);
 
   return (
-    <main data-theme={themeId} className="kanban-theme min-h-screen bg-[var(--app-bg)] text-[var(--text)]">
-      <div className="mx-auto grid min-h-screen w-full max-w-[2160px] grid-rows-[auto_1fr] gap-4 px-5 py-4 2xl:px-8">
+    <main data-theme={themeId} className="kanban-theme flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--text)]">
+      <div className="mx-auto grid min-h-screen w-full max-w-[2160px] flex-1 grid-rows-[auto_1fr] gap-4 px-5 py-4 2xl:px-8">
         <header className="flex flex-col gap-4 border-b border-[var(--border)] pb-4 2xl:flex-row 2xl:items-end 2xl:justify-between">
           <div>
             <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase text-[var(--muted)]">
@@ -1598,6 +1598,13 @@ export default function KanbanApp({
         </DragOverlay>
         </DndContext>
       </div>
+
+      <footer className="border-t border-[var(--border)] px-5 py-4 text-center text-xs text-[var(--muted)] 2xl:px-8">
+        <div className="mx-auto flex w-full max-w-[2160px] flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+          <span>Copyright © 2026 项目看板</span>
+          <span>署名：kfzx-chenwh4（0000959918）</span>
+        </div>
+      </footer>
 
       <button
         type="button"
