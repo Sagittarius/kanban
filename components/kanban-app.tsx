@@ -1599,10 +1599,17 @@ export default function KanbanApp({
         </DndContext>
       </div>
 
-      <footer className="border-t border-[var(--border)] px-5 py-4 text-center text-xs text-[var(--muted)] 2xl:px-8">
-        <div className="mx-auto flex w-full max-w-[2160px] flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
-          <span>Copyright © 2026 项目看板</span>
-          <span>署名：kfzx-chenwh4（0000959918）</span>
+      <footer className="border-t border-[var(--border)] text-xs text-[var(--muted)]">
+        <div className="mx-auto flex w-full max-w-[2160px] flex-col items-center gap-2 px-5 py-5 sm:flex-row sm:justify-between 2xl:px-8">
+          <div className="flex items-center gap-2">
+            <span className="inline-flex h-2 w-2 rounded-full bg-[var(--accent)]" />
+            <span>Copyright &copy; 2026 <span className="font-semibold text-[var(--text)]">项目看板</span></span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px] uppercase tracking-widest">署名</span>
+            <span className="font-medium text-[var(--text)]">kfzx-chenwh4</span>
+            <span className="rounded bg-[var(--panel-soft)] px-1.5 py-0.5 text-[10px]">0000959918</span>
+          </div>
         </div>
       </footer>
 
