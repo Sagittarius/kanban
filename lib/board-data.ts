@@ -1,4 +1,4 @@
-export type BoardStatus = "backlog" | "design" | "dev" | "test" | "done";
+export type BoardStatus = "backlog" | "dev" | "test" | "done";
 export type Priority = "high" | "medium" | "low";
 export type ProjectHealth = "good" | "normal" | "risk";
 export type ProjectStatus = "active" | "archived";
@@ -138,21 +138,9 @@ export const defaultSystemParameters: SystemParameter[] = [
     updatedAt: seedTime,
   },
   {
-    key: "column_design_name",
-    value: "设计中",
-    label: "第2阶段名称",
-    valueType: "text",
-    group: "看板阶段",
-    unit: "",
-    minValue: null,
-    maxValue: null,
-    orderIndex: 35,
-    updatedAt: seedTime,
-  },
-  {
     key: "column_dev_name",
     value: "开发中",
-    label: "第3阶段名称",
+    label: "第2阶段名称",
     valueType: "text",
     group: "看板阶段",
     unit: "",
@@ -164,7 +152,7 @@ export const defaultSystemParameters: SystemParameter[] = [
   {
     key: "column_test_name",
     value: "测试中",
-    label: "第4阶段名称",
+    label: "第3阶段名称",
     valueType: "text",
     group: "看板阶段",
     unit: "",
@@ -176,7 +164,7 @@ export const defaultSystemParameters: SystemParameter[] = [
   {
     key: "column_done_name",
     value: "已完成",
-    label: "第5阶段名称",
+    label: "第4阶段名称",
     valueType: "text",
     group: "看板阶段",
     unit: "",
@@ -200,11 +188,6 @@ export const boardColumns: BoardColumn[] = [
     tone: "bg-[#6f6a5f]",
   },
   {
-    id: "design",
-    title: "设计中",
-    tone: "bg-[#b45f3c]",
-  },
-  {
     id: "dev",
     title: "开发中",
     tone: "bg-[#1f6f68]",
@@ -223,7 +206,6 @@ export const boardColumns: BoardColumn[] = [
 
 const columnNameKeys: Record<BoardStatus, string> = {
   backlog: "column_backlog_name",
-  design: "column_design_name",
   dev: "column_dev_name",
   test: "column_test_name",
   done: "column_done_name",
@@ -580,9 +562,6 @@ export function normalizeBoardStatus(value: unknown): BoardStatus {
   }
   if (value === "review") {
     return "test";
-  }
-  if (value === "design") {
-    return "design";
   }
   return isBoardStatus(value) ? value : "backlog";
 }
