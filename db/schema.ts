@@ -26,6 +26,7 @@ export const tasks = sqliteTable("tasks", {
   owner: text("owner").notNull().default("未分配"),
   startDate: text("start_date").notNull().default(""),
   testDueDate: text("test_due_date").notNull().default(""),
+  designDueDate: text("design_due_date").notNull().default(""),
   dueDate: text("due_date").notNull().default(""),
   estimate: integer("estimate").notNull().default(1),
   progress: integer("progress").notNull().default(0),

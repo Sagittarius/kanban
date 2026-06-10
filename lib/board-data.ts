@@ -44,6 +44,7 @@ export type BoardTask = {
   owner: string;
   startDate: string;
   testDueDate: string;
+  designDueDate: string;
   dueDate: string;
   estimate: number;
   progress: number;

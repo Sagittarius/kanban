@@ -23,6 +23,7 @@ import {
 } from "@dnd-kit/core";
 import {
   arrayMove,
+  horizontalListSortingStrategy,
   SortableContext,
   sortableKeyboardCoordinates,
   useSortable,
@@ -86,6 +87,7 @@ type NewTaskForm = {
   owner: string;
   priority: Priority;
   testDueDate: string;
+  designDueDate: string;
   dueDate: string;
   tags: string;
 };
@@ -220,10 +222,51 @@ type DeadlineMarker = {
 
 function deadlineMarkers(task: BoardTask, todayKey: string, dueSoonDays: number): DeadlineMarker[] {
   const markers: DeadlineMarker[] = [];
+  const designDays = daysUntil(task.designDueDate, todayKey);
   const testDays = daysUntil(task.testDueDate, todayKey);
   const deliveryDays = daysUntil(task.dueDate, todayKey);
+  const designLateDaysAfterCompletion = lateDaysByCompletion(task.designDueDate, task.completedAt);
   const testLateDaysAfterCompletion = lateDaysByCompletion(task.testDueDate, task.completedAt);
   const deliveryLateDaysAfterCompletion = lateDaysByCompletion(task.dueDate, task.completedAt);
+
+  // 设计截止：设计中阶段标注临期/超期
+  if (task.status === "design" && task.designDueDate) {
+    markers.push({
+      label: "设计",
+      date: task.designDueDate,
+      state:
+        designDays !== null && designDays < 0
+          ? "overdue"
+          : designDays !== null && designDays <= dueSoonDays
+            ? "due-soon"
+            : "normal",
+      note: designDays !== null && designDays < 0 ? negativeDayNote(designDays) : undefined,
+    });
+  }
+
+  // 已完成且超设计截止
+  if ((task.status === "dev" || task.status === "test" || task.status === "done") && task.designDueDate) {
+    markers.push({
+      label: "设计",
+      date: task.designDueDate,
+      state:
+        task.status === "done"
+          ? designLateDaysAfterCompletion !== null
+            ? "late"
+            : "normal"
+          : designDays !== null && designDays < 0
+            ? "overdue"
+            : "normal",
+      note:
+        task.status === "done"
+          ? designLateDaysAfterCompletion !== null
+            ? negativeDayNote(designLateDaysAfterCompletion)
+            : undefined
+          : designDays !== null && designDays < 0
+            ? negativeDayNote(designDays)
+            : undefined,
+    });
+  }
 
   if (task.status === "dev" && task.testDueDate) {
     markers.push({
@@ -540,6 +583,7 @@ export default function KanbanApp({
     owner: "",
     priority: "medium",
     testDueDate: "",
+    designDueDate: "",
     dueDate: "",
     tags: "",
   });
@@ -961,6 +1005,7 @@ export default function KanbanApp({
       owner: newTask.owner.trim() || "未分配",
       startDate: "",
       testDueDate: newTask.testDueDate,
+      designDueDate: newTask.designDueDate,
       dueDate: newTask.dueDate,
       estimate: 1,
       progress: 0,
@@ -983,6 +1028,7 @@ export default function KanbanApp({
       description: "",
       owner: "",
       testDueDate: "",
+      designDueDate: "",
       dueDate: "",
       tags: "",
     }));
@@ -1004,6 +1050,7 @@ export default function KanbanApp({
         owner: newTask.owner,
         priority: newTask.priority,
         testDueDate: newTask.testDueDate,
+        designDueDate: newTask.designDueDate,
         dueDate: newTask.dueDate,
         tags: parseTags(newTask.tags),
       });
@@ -1503,16 +1550,31 @@ export default function KanbanApp({
                   <input
                     name="newTaskTestDueDate"
                     type="date"
+                    placeholder="yyyy-mm-dd"
                     value={newTask.testDueDate}
                     onChange={(event) => setNewTask((current) => ({ ...current, testDueDate: event.target.value }))}
                     className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
                   />
                 </label>
                 <label className="space-y-1 text-sm text-[var(--muted)]">
+                  <span>设计截止</span>
+                  <input
+                    name="newTaskDesignDueDate"
+                    type="date"
+                    placeholder="yyyy-mm-dd"
+                    value={newTask.designDueDate}
+                    onChange={(event) => setNewTask((current) => ({ ...current, designDueDate: event.target.value }))}
+                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                  />
+                </label>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="space-y-1 text-sm text-[var(--muted)]">
                   <span>交付日期</span>
                   <input
                     name="newTaskDueDate"
                     type="date"
+                    placeholder="yyyy-mm-dd"
                     value={newTask.dueDate}
                     onChange={(event) => setNewTask((current) => ({ ...current, dueDate: event.target.value }))}
                     className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
@@ -1554,8 +1616,31 @@ export default function KanbanApp({
           </aside>
 
           <section className="min-w-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--board-bg)]">
+            {/* 需求池：横向布局 - 始终显示，拖拽时不消失 */}
+            <div className="border-b border-[var(--border)] p-3">
+              {board.columns.slice(0, 1).map((column) => {
+                const columnTasks = sortTasks(
+                  filteredTasks.filter((task) => task.status === column.id)
+                );
+                return (
+                  <HorizontalBoardColumn
+                    key={column.id}
+                    column={column}
+                    tasks={columnTasks}
+                    projects={board.projects}
+                    selectedTaskId={selectedTaskId}
+                    todayKey={todayKey}
+                    dueSoonDays={dueSoonDays}
+                    draggingTaskId={draggingTaskId}
+                    crossColumnTarget={dragOverColumn === column.id}
+                    onOpenTask={openTask}
+                  />
+                );
+              })}
+            </div>
+            {/* 其余4列：纵向布局 */}
             <div className="flex h-full min-h-[760px] gap-3 overflow-x-auto p-3 2xl:min-h-[900px]">
-              {board.columns.map((column) => {
+              {board.columns.slice(1).map((column) => {
                 const columnTasks = sortTasks(
                   filteredTasks.filter((task) => task.status === column.id)
                 );
@@ -1586,15 +1671,17 @@ export default function KanbanApp({
             const task = board.tasks.find((t) => t.id === draggingTaskId);
             if (!task) return null;
             return (
-              <TaskCard
-                task={task}
-                todayKey={todayKey}
-                dueSoonDays={dueSoonDays}
-                project={projectById(board.projects, task.projectId)}
-                selected={false}
-                dragging={true}
-                onSelect={() => {}}
-              />
+              <div style={{ boxShadow: "0 20px 50px rgba(0,0,0,0.2), 0 8px 20px rgba(0,0,0,0.12)", borderRadius: "0.5rem" }}>
+                <TaskCard
+                  task={task}
+                  todayKey={todayKey}
+                  dueSoonDays={dueSoonDays}
+                  project={projectById(board.projects, task.projectId)}
+                  selected={false}
+                  dragging={true}
+                  onSelect={() => {}}
+                />
+              </div>
             );
           })() : null}
         </DragOverlay>
@@ -1699,6 +1786,82 @@ type DragBindingProps = {
   listeners: DraggableSyntheticListeners;
 };
 
+function HorizontalBoardColumn({
+  column,
+  tasks,
+  projects,
+  selectedTaskId,
+  todayKey,
+  dueSoonDays,
+  draggingTaskId,
+  crossColumnTarget,
+  onOpenTask,
+}: {
+  column: BoardData["columns"][number];
+  tasks: BoardTask[];
+  projects: Project[];
+  selectedTaskId: string | null;
+  todayKey: string;
+  dueSoonDays: number;
+  draggingTaskId: string | null;
+  crossColumnTarget: boolean;
+  onOpenTask: (taskId: string) => void;
+}) {
+  const { setNodeRef } = useDroppable({
+    id: `column-${column.id}`,
+    data: { type: "column", status: column.id } satisfies DragTargetData,
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      role="region"
+      aria-label={`${column.title}列表`}
+      className={`rounded-lg border bg-[var(--column-bg)] transition ${
+        crossColumnTarget
+          ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]"
+          : "border-[var(--border)]"
+      }`}
+    >
+      <div className="flex items-center gap-4 px-3 py-2">
+        <div className="flex items-center gap-2 shrink-0">
+          <span className={`h-2.5 w-2.5 rounded-full ${column.tone}`} />
+          <h2 className="text-sm font-semibold">{column.title}</h2>
+        </div>
+        <span className="rounded-md bg-[var(--panel-soft)] px-2 py-1 text-xs text-[var(--muted)]">
+          {tasks.length}
+        </span>
+      </div>
+      <SortableContext items={tasks.map((task) => task.id)} strategy={horizontalListSortingStrategy}>
+        <div className="flex min-h-[90px] gap-3 overflow-x-auto px-3 pb-3">
+          {tasks.map((task) => (
+            <div key={task.id} className="w-[280px] shrink-0">
+              <SortableTaskCard
+                task={task}
+                todayKey={todayKey}
+                dueSoonDays={dueSoonDays}
+                project={projectById(projects, task.projectId)}
+                selected={task.id === selectedTaskId}
+                dragging={task.id === draggingTaskId}
+                onSelect={() => onOpenTask(task.id)}
+              />
+            </div>
+          ))}
+          {crossColumnTarget ? (
+            <div className="flex w-[280px] shrink-0 items-center justify-center rounded-md border-2 border-dashed border-[var(--accent)] bg-[var(--accent-soft)] text-xs font-semibold text-[var(--accent)]">
+              移至此处
+            </div>
+          ) : tasks.length === 0 ? (
+            <div className="flex w-[280px] shrink-0 items-center justify-center rounded-md border border-dashed border-[var(--border)] text-xs text-[var(--muted)] min-h-[90px]">
+              拖入任务
+            </div>
+          ) : null}
+        </div>
+      </SortableContext>
+    </div>
+  );
+}
+
 function BoardColumnView({
   column,
   tasks,
@@ -1798,10 +1961,15 @@ function SortableTaskCard({
     listeners,
     setNodeRef,
     transform,
+    transition,
     isDragging,
   } = useSortable({
     id: task.id,
     data: { type: "task", status: task.status } satisfies DragTargetData,
+    transition: {
+      duration: 500,
+      easing: "ease",
+    },
   });
 
   return (
@@ -1809,7 +1977,7 @@ function SortableTaskCard({
       ref={setNodeRef}
       style={{
         transform: SortableCSS.Transform.toString(transform),
-        transition: isDragging ? "unset" : "transform 500ms ease",
+        transition,
         touchAction: "none",
         opacity: isDragging ? 0 : 1,
       }}
@@ -2114,6 +2282,7 @@ type TaskDraft = {
   status: BoardStatus;
   priority: Priority;
   testDueDate: string;
+  designDueDate: string;
   dueDate: string;
   owner: string;
   progress: number;
@@ -2130,6 +2299,7 @@ function taskDraftFromTask(task: BoardTask): TaskDraft {
     status: task.status,
     priority: task.priority,
     testDueDate: task.testDueDate,
+    designDueDate: task.designDueDate,
     dueDate: task.dueDate,
     owner: task.owner,
     progress: task.progress,
@@ -2183,6 +2353,7 @@ function TaskDrawer({
       status: draft.status,
       priority: draft.priority,
       testDueDate: draft.testDueDate,
+      designDueDate: draft.designDueDate,
       dueDate: draft.dueDate,
       owner: draft.owner,
       progress: draft.progress,
@@ -2258,6 +2429,14 @@ function TaskDrawer({
               type="date"
               value={draft.testDueDate}
               onChange={(event) => setDraft((current) => ({ ...current, testDueDate: event.target.value }))}
+            />
+          </Field>
+          <Field label="设计截止">
+            <input
+              name="taskDesignDueDate"
+              type="date"
+              value={draft.designDueDate}
+              onChange={(event) => setDraft((current) => ({ ...current, designDueDate: event.target.value }))}
             />
           </Field>
           <Field label="交付日期">
