@@ -1554,29 +1554,8 @@ export default function KanbanApp({
           </aside>
 
           <section className="min-w-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--board-bg)]">
-            <div className="flex h-full min-h-[500px] gap-3 overflow-x-auto p-3">
-              {board.columns.slice(0, 1).map((column) => {
-                const columnTasks = sortTasks(
-                  filteredTasks.filter((task) => task.status === column.id)
-                );
-                return (
-                  <BoardColumnView
-                    key={column.id}
-                    column={column}
-                    tasks={columnTasks}
-                    projects={board.projects}
-                    selectedTaskId={selectedTaskId}
-                    todayKey={todayKey}
-                    dueSoonDays={dueSoonDays}
-                    draggingTaskId={draggingTaskId}
-                    crossColumnTarget={dragOverColumn === column.id}
-                    onOpenTask={openTask}
-                  />
-                );
-              })}
-            </div>
-            <div className="flex h-full min-h-[500px] gap-3 overflow-x-auto p-3 pt-0">
-              {board.columns.slice(1).map((column) => {
+            <div className="flex h-full min-h-[760px] gap-3 overflow-x-auto p-3 2xl:min-h-[900px]">
+              {board.columns.map((column) => {
                 const columnTasks = sortTasks(
                   filteredTasks.filter((task) => task.status === column.id)
                 );
