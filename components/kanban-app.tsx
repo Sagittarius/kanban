@@ -1967,8 +1967,8 @@ function SortableTaskCard({
     id: task.id,
     data: { type: "task", status: task.status } satisfies DragTargetData,
     transition: {
-      duration: 500,
-      easing: "ease",
+      duration: 250,
+      easing: "cubic-bezier(0.25, 1, 0.5, 1)",
     },
   });
 
@@ -1980,6 +1980,7 @@ function SortableTaskCard({
         transition,
         touchAction: "none",
         opacity: isDragging ? 0 : 1,
+        boxShadow: isDragging ? "0 4px 16px rgba(0,0,0,0.08)" : undefined,
       }}
       className="touch-none"
     >
