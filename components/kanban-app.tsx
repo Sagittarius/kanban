@@ -114,12 +114,13 @@ type Toast = {
 
 const defaultStatusNames: Record<BoardStatus, string> = {
   backlog: "需求池",
+  design: "设计中",
   dev: "开发中",
   test: "测试中",
   done: "已完成",
 };
 
-const statusOrder: BoardStatus[] = ["backlog", "dev", "test", "done"];
+const statusOrder: BoardStatus[] = ["backlog", "design", "dev", "test", "done"];
 
 const priorityTone: Record<Priority, string> = {
   high: "border-[#c7523d] bg-[#fff2ed] text-[#8f2f20]",
