@@ -1692,10 +1692,11 @@ export default function KanbanApp({
         <div className="mx-auto flex w-full max-w-[2160px] flex-col items-center gap-3 px-5 py-5 sm:flex-row sm:justify-between 2xl:px-8">
           <div className="flex items-center gap-2">
             <Copyright size={14} />
-            <span>2026 Kanban</span>
+            <span>&copy; 2026 <span className="font-semibold text-[var(--text)]">项目看板</span></span>
           </div>
           <div className="flex items-center gap-2">
             <Edit3 size={13} />
+            <span className="text-[var(--text)]">署名</span>
             <span className="h-3 w-px bg-[var(--border)]" />
             <span className="font-medium text-[var(--text)]">kfzx-chenwh4</span>
             <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--accent)]">0000959918</span>
@@ -1965,6 +1966,10 @@ function SortableTaskCard({
   } = useSortable({
     id: task.id,
     data: { type: "task", status: task.status } satisfies DragTargetData,
+    transition: {
+      duration: 250,
+      easing: "cubic-bezier(0.25, 1, 0.5, 1)",
+    },
   });
 
   return (
@@ -1972,9 +1977,10 @@ function SortableTaskCard({
       ref={setNodeRef}
       style={{
         transform: SortableCSS.Transform.toString(transform),
-        transition: isDragging ? "unset" : "transform 500ms ease",
+        transition,
         touchAction: "none",
         opacity: isDragging ? 0 : 1,
+        boxShadow: isDragging ? "0 4px 16px rgba(0,0,0,0.08)" : undefined,
       }}
       className="touch-none"
     >
