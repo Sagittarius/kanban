@@ -1160,7 +1160,7 @@ export default function KanbanApp({
     }
 
     setBoard((current) => ({ ...current, tasks: finalTasks }));
-    await persistCurrentOrder(finalTasks);
+    persistCurrentOrder(finalTasks);
     clearDragState();
   }
 
@@ -1187,7 +1187,6 @@ export default function KanbanApp({
       await apiRequest("/api/tasks/reorder", "POST", {
         updates: taskUpdates(tasksToPersist),
       });
-      await refreshBoard();
     } catch {
       if (statusChanged && currentTask && origin) {
         appendLocalActivity(
