@@ -109,6 +109,90 @@ body {
   --danger-soft: #fff0ee;
 }
 
+.kanban-theme[data-theme="slack"] {
+  --app-bg: #f7f6f8;
+  --board-bg: #ece8ef;
+  --panel: #ffffff;
+  --panel-soft: #f2edf4;
+  --column-bg: #fbf9fc;
+  --card: #ffffff;
+  --card-border: #ded6e3;
+  --input: #ffffff;
+  --hover: #eee7f1;
+  --text: #261f2b;
+  --muted: #6f6676;
+  --border: #d8cedf;
+  --accent: #1264a3;
+  --accent-hover: #0b4f82;
+  --accent-soft: rgba(18, 100, 163, 0.16);
+  --tag-bg: #e8f5f1;
+  --danger: #e01e5a;
+  --danger-soft: #fff0f5;
+}
+
+.kanban-theme[data-theme="figma"] {
+  --app-bg: #f8f8f8;
+  --board-bg: #eeeeee;
+  --panel: #ffffff;
+  --panel-soft: #f1f1f1;
+  --column-bg: #fafafa;
+  --card: #ffffff;
+  --card-border: #dadada;
+  --input: #ffffff;
+  --hover: #ededed;
+  --text: #1f1f1f;
+  --muted: #6c6c6c;
+  --border: #d7d7d7;
+  --accent: #0acf83;
+  --accent-hover: #08ad6e;
+  --accent-soft: rgba(10, 207, 131, 0.16);
+  --tag-bg: #eef7ff;
+  --danger: #f24e1e;
+  --danger-soft: #fff1eb;
+}
+
+.kanban-theme[data-theme="monday"] {
+  --app-bg: #f7f8fb;
+  --board-bg: #eef0f7;
+  --panel: #ffffff;
+  --panel-soft: #f0f3fa;
+  --column-bg: #fafbff;
+  --card: #ffffff;
+  --card-border: #d9dfec;
+  --input: #ffffff;
+  --hover: #e9edf7;
+  --text: #181b34;
+  --muted: #676b7f;
+  --border: #d5dbea;
+  --accent: #00c875;
+  --accent-hover: #00a861;
+  --accent-soft: rgba(0, 200, 117, 0.16);
+  --tag-bg: #eaf8ff;
+  --danger: #e44258;
+  --danger-soft: #fff0f2;
+}
+
+.kanban-theme[data-theme="microsoft"] {
+  --app-bg: #f6f7fb;
+  --board-bg: #edf0f6;
+  --panel: #ffffff;
+  --panel-soft: #f1f4f9;
+  --column-bg: #f9fbff;
+  --card: #ffffff;
+  --card-border: #d6deea;
+  --input: #ffffff;
+  --hover: #e8eef7;
+  --text: #202428;
+  --muted: #667085;
+  --border: #d2dae7;
+  --accent: #0078d4;
+  --accent-hover: #106ebe;
+  --accent-soft: rgba(0, 120, 212, 0.16);
+  --tag-bg: #edf6ff;
+  --danger: #d13438;
+  --danger-soft: #fff0f0;
+}
+
 button,
 input,
 textarea,

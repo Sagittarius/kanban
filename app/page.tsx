@@ -1,4 +1,4 @@
-import KanbanApp from "@/components/kanban-app";
+import KanbanRuntimeGuard from "@/components/kanban-runtime-guard";
 import { createSeedBoard } from "@/lib/board-data";
 
 function todayKeyInChina() {
@@ -18,7 +18,7 @@ function todayKeyInChina() {
 
 export default function Home() {
   return (
-    <KanbanApp
+    <KanbanRuntimeGuard
       initialBoard={createSeedBoard()}
       todayKey={todayKeyInChina()}
     />

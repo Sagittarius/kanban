@@ -1,45 +1,32 @@
 "use client";
 
 import {
-  closestCenter,
-  DndContext,
   DragOverlay,
-  KeyboardSensor,
-  MeasuringStrategy,
-  PointerSensor,
-  TouchSensor,
-  pointerWithin,
-  useDroppable,
-  useSensor,
-  useSensors,
-  type Collision,
-  type CollisionDetection,
+  DragDropProvider,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
-  type DraggableAttributes,
-  type DraggableSyntheticListeners,
-  type Over,
-} from "@dnd-kit/core";
+  KeyboardSensor,
+  PointerSensor,
+  useDroppable,
+} from "@dnd-kit/react";
+import { PointerActivationConstraints } from "@dnd-kit/dom";
 import {
-  arrayMove,
-  horizontalListSortingStrategy,
-  SortableContext,
-  sortableKeyboardCoordinates,
+  isSortable,
   useSortable,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable";
-import { CSS as SortableCSS } from "@dnd-kit/utilities";
+} from "@dnd-kit/react/sortable";
+import { move } from "@dnd-kit/helpers";
 import {
   Activity,
   Archive,
   ArchiveRestore,
+  ChevronDown,
+  ChevronUp,
   Check,
   CheckCircle2,
   Copyright,
   Edit3,
   FolderPlus,
-  GripVertical,
   PanelRightOpen,
   Plus,
   Search,
@@ -74,11 +61,19 @@ import {
 
 type SyncState = "synced" | "syncing" | "local";
 type DrawerMode = "task" | "project" | "activity" | "settings" | null;
-type ThemeId = "linear" | "github" | "notion" | "atlassian";
+type ThemeId =
+  | "linear"
+  | "github"
+  | "notion"
+  | "atlassian"
+  | "slack"
+  | "figma"
+  | "monday"
+  | "microsoft";
+type MetricFilter = "dueSoon" | "blocked" | null;
 type DragTargetData =
   | { type: "task"; status: BoardStatus }
-  | { type: "column"; status: BoardStatus }
-  | { type: "trash" };
+  | { type: "column"; status: BoardStatus };
 
 type NewTaskForm = {
   title: string;
@@ -108,21 +103,17 @@ type SettingsPatch = {
   }>;
 };
 
+const sortableTransition = {
+  duration: 320,
+  easing: "cubic-bezier(0.25, 1, 0.5, 1)",
+  idle: true,
+};
+
 type Toast = {
   id: string;
   type: "success" | "error";
   message: string;
 };
-
-const defaultStatusNames: Record<BoardStatus, string> = {
-  backlog: "需求池",
-  design: "设计中",
-  dev: "开发中",
-  test: "测试中",
-  done: "已完成",
-};
-
-const statusOrder: BoardStatus[] = ["backlog", "design", "dev", "test", "done"];
 
 const priorityTone: Record<Priority, string> = {
   high: "border-[#c7523d] bg-[#fff2ed] text-[#8f2f20]",
@@ -141,6 +132,10 @@ const themePresets: Array<{ id: ThemeId; label: string }> = [
   { id: "github", label: "GitHub" },
   { id: "notion", label: "Notion" },
   { id: "atlassian", label: "Atlassian" },
+  { id: "slack", label: "Slack" },
+  { id: "figma", label: "Figma" },
+  { id: "monday", label: "Monday" },
+  { id: "microsoft", label: "Microsoft" },
 ];
 
 const fallbackProject: Project = {
@@ -341,13 +336,83 @@ function taskHasDueSoonAlert(task: BoardTask, todayKey: string, dueSoonDays: num
   return deadlineMarkers(task, todayKey, dueSoonDays).some((marker) => marker.state === "due-soon");
 }
 
-function statusNameMap(columns: BoardData["columns"]) {
-  return Object.fromEntries(
-    statusOrder.map((status) => [
-      status,
-      columns.find((column) => column.id === status)?.title ?? defaultStatusNames[status],
-    ])
-  ) as Record<BoardStatus, string>;
+function isBoardStatus(value: unknown): value is BoardStatus {
+  return value === "backlog" || value === "design" || value === "dev" || value === "test" || value === "done";
+}
+
+function isDragTargetData(value: unknown): value is DragTargetData {
+  if (!value || typeof value !== "object" || !("type" in value)) {
+    return false;
+  }
+
+  const data = value as { type?: unknown; status?: unknown };
+  return (data.type === "task" || data.type === "column") && isBoardStatus(data.status);
+}
+
+function targetStatusFromEntity(target: { id: string | number; data?: unknown } | null | undefined) {
+  if (isDragTargetData(target?.data)) {
+    return target.data.status;
+  }
+
+  return typeof target?.id === "string" && isBoardStatus(target.id)
+    ? target.id
+    : null;
+}
+
+function tasksByStatus(tasks: BoardTask[]) {
+  return {
+    backlog: sortTasks(tasks.filter((task) => task.status === "backlog")),
+    design: sortTasks(tasks.filter((task) => task.status === "design")),
+    dev: sortTasks(tasks.filter((task) => task.status === "dev")),
+    test: sortTasks(tasks.filter((task) => task.status === "test")),
+    done: sortTasks(tasks.filter((task) => task.status === "done")),
+  } satisfies Record<BoardStatus, BoardTask[]>;
+}
+
+function boardTasksFromGroups(currentTasks: BoardTask[], groups: Record<BoardStatus, BoardTask[]>) {
+  const updates = new Map<string, BoardTask>();
+
+  (Object.entries(groups) as Array<[BoardStatus, BoardTask[]]>).forEach(([status, items]) => {
+    items.forEach((task, index) => {
+      updates.set(task.id, {
+        ...task,
+        status,
+        orderIndex: (index + 1) * 10,
+      });
+    });
+  });
+
+  return currentTasks.map((task) => updates.get(task.id) ?? task);
+}
+
+function tasksFromDragEvent(tasks: BoardTask[], event: DragOverEvent | DragEndEvent) {
+  const groups = tasksByStatus(tasks);
+  const nextGroups = move(groups, event);
+  return boardTasksFromGroups(tasks, nextGroups);
+}
+
+function moveTaskToStatusEnd(tasks: BoardTask[], taskId: string, targetStatus: BoardStatus) {
+  const groups = tasksByStatus(tasks);
+  let movingTask: BoardTask | null = null;
+
+  (Object.keys(groups) as BoardStatus[]).forEach((status) => {
+    const nextItems = groups[status].filter((task) => {
+      if (task.id === taskId) {
+        movingTask = task;
+        return false;
+      }
+      return true;
+    });
+    groups[status] = nextItems;
+  });
+
+  if (!movingTask) {
+    return tasks;
+  }
+
+  const taskToMove: BoardTask = movingTask;
+  groups[targetStatus] = [...groups[targetStatus], { ...taskToMove, status: targetStatus }];
+  return boardTasksFromGroups(tasks, groups);
 }
 
 function projectById(projects: Project[], projectId: string) {
@@ -392,122 +457,34 @@ function settingNumber(settings: SystemSettings, key: string, fallback: number) 
   return Number.isFinite(value) ? value : fallback;
 }
 
-function isThemeId(value: unknown): value is ThemeId {
-  return value === "linear" || value === "github" || value === "notion" || value === "atlassian";
+function settingText(settings: SystemSettings, key: string, fallback: string) {
+  const value = settings.parameters.find((parameter) => parameter.key === key)?.value?.trim();
+  return value || fallback;
 }
 
-function dragTargetData(over: Over | null): DragTargetData | null {
-  const data = over?.data.current as DragTargetData | undefined;
-  return data ?? null;
-}
-
-function collisionTargetData(
-  droppableContainers: Parameters<CollisionDetection>[0]["droppableContainers"],
-  collision: Collision
-): DragTargetData | null {
-  const container = droppableContainers.find((item) => item.id === collision.id);
-  return (container?.data.current as DragTargetData | undefined) ?? null;
-}
-
-const kanbanCollisionDetection: CollisionDetection = (args) => {
-  const pointerHits = pointerWithin(args);
-
-  for (const targetType of ["trash", "task", "column"] as const) {
-    const hit = pointerHits.find(
-      (collision) => collisionTargetData(args.droppableContainers, collision)?.type === targetType
-    );
-    if (hit) {
-      return [hit];
+function sortProjects(projects: Project[]) {
+  return [...projects].sort((left, right) => {
+    if (left.status !== right.status) {
+      return left.status === "active" ? -1 : 1;
     }
-  }
-
-  return closestCenter(args);
-};
-
-function statusFromOver(tasks: BoardTask[], over: Over | null) {
-  const data = dragTargetData(over);
-  if (!data || data.type === "trash") {
-    return null;
-  }
-
-  if (data.type === "column") {
-    return data.status;
-  }
-
-  const overTask = typeof over?.id === "string"
-    ? tasks.find((task) => task.id === over.id)
-    : null;
-  return overTask?.status ?? data.status;
-}
-
-function applyDndGroups(tasks: BoardTask[], groups: Map<BoardStatus, BoardTask[]>) {
-  const updates = new Map<string, BoardTask>();
-  for (const [status, group] of groups.entries()) {
-    group.forEach((task, index) => {
-      updates.set(task.id, {
-        ...task,
-        status,
-        orderIndex: (index + 1) * 10,
-      });
-    });
-  }
-
-  let changed = false;
-  const nextTasks = tasks.map((task) => {
-    const nextTask = updates.get(task.id) ?? task;
-    if (nextTask.status !== task.status || nextTask.orderIndex !== task.orderIndex) {
-      changed = true;
+    if (left.orderIndex !== right.orderIndex) {
+      return left.orderIndex - right.orderIndex;
     }
-    return nextTask;
+    return left.name.localeCompare(right.name, "zh-CN", { numeric: true, sensitivity: "base" });
   });
-
-  return changed ? nextTasks : tasks;
 }
 
-function withDndFinalOrder(tasks: BoardTask[], taskId: string, over: Over | null) {
-  const moving = tasks.find((task) => task.id === taskId);
-  if (!moving) {
-    return tasks;
-  }
-
-  const targetStatus = statusFromOver(tasks, over);
-  if (!targetStatus) {
-    return tasks;
-  }
-
-  if (moving.status === targetStatus) {
-    const data = dragTargetData(over);
-    const overTaskId = data?.type === "task" && typeof over?.id === "string" ? over.id : null;
-    if (!overTaskId || overTaskId === taskId) {
-      return tasks;
-    }
-
-    const ordered = sortTasks(tasks.filter((task) => task.status === targetStatus));
-    const movingIndex = ordered.findIndex((task) => task.id === taskId);
-    const overIndex = ordered.findIndex((task) => task.id === overTaskId);
-
-    if (movingIndex < 0 || overIndex < 0 || movingIndex === overIndex) {
-      return tasks;
-    }
-
-    const groups = new Map<BoardStatus, BoardTask[]>();
-    groups.set(targetStatus, arrayMove(ordered, movingIndex, overIndex));
-    return applyDndGroups(tasks, groups);
-  }
-
-  const groups = new Map<BoardStatus, BoardTask[]>();
-  groups.set(
-    moving.status,
-    sortTasks(tasks.filter((task) => task.status === moving.status && task.id !== taskId))
+function isThemeId(value: unknown): value is ThemeId {
+  return (
+    value === "linear" ||
+    value === "github" ||
+    value === "notion" ||
+    value === "atlassian" ||
+    value === "slack" ||
+    value === "figma" ||
+    value === "monday" ||
+    value === "microsoft"
   );
-  groups.set(
-    targetStatus,
-    [
-      ...sortTasks(tasks.filter((task) => task.status === targetStatus && task.id !== taskId)),
-      { ...moving, status: targetStatus },
-    ]
-  );
-  return applyDndGroups(tasks, groups);
 }
 
 function sameTaskOrder(left: BoardTask[], right: BoardTask[]) {
@@ -521,6 +498,7 @@ function sameTaskOrder(left: BoardTask[], right: BoardTask[]) {
     return nextTask && nextTask.status === task.status && nextTask.orderIndex === task.orderIndex;
   });
 }
+
 
 async function apiRequest<T>(url: string, method: string, body?: unknown) {
   const response = await fetch(url, {
@@ -551,31 +529,22 @@ export default function KanbanApp({
   const [priorityFilter, setPriorityFilter] = useState<Priority | "all">("all");
   const [tagFilters, setTagFilters] = useState<string[]>([]);
   const [tagSearch, setTagSearch] = useState("");
-  const [dragOverColumn, setDragOverColumn] = useState<BoardStatus | null>(null);
-  const [themeId, setThemeId] = useState<ThemeId>(() => {
-    if (typeof window === "undefined") {
-      return "notion";
-    }
-    const savedTheme = window.localStorage.getItem("kanban-theme");
-    return isThemeId(savedTheme) ? savedTheme : "notion";
-  });
+  const [metricFilter, setMetricFilter] = useState<MetricFilter>(null);
+  const [backlogCollapsed, setBacklogCollapsed] = useState(false);
+  const [themeId, setThemeId] = useState<ThemeId>("notion");
   const [drawerMode, setDrawerMode] = useState<DrawerMode>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     initialBoard.projects[0]?.id ?? null
   );
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
-  const [trashArmed, setTrashArmed] = useState(false);
+  const [dragOriginStatus, setDragOriginStatus] = useState<BoardStatus | null>(null);
+  const [dragOverStatus, setDragOverStatus] = useState<BoardStatus | null>(null);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const localIdCounter = useRef(0);
-  const dragOriginRef = useRef<{ taskId: string; status: BoardStatus } | null>(null);
+  const metricRef = useRef<HTMLDivElement>(null);
   const dragStartTasksRef = useRef<BoardTask[] | null>(null);
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 120, tolerance: 6 } }),
-    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
-  );
   const [newTask, setNewTask] = useState<NewTaskForm>({
     title: "",
     description: "",
@@ -636,18 +605,29 @@ export default function KanbanApp({
     };
   }, []);
 
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      const savedTheme = window.localStorage.getItem("kanban-theme");
+      if (isThemeId(savedTheme)) {
+        setThemeId(savedTheme);
+      }
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, []);
+
+  const sortedProjects = useMemo(() => sortProjects(board.projects), [board.projects]);
   const activeProjects = useMemo(
-    () => board.projects.filter((project) => project.status === "active"),
-    [board.projects]
+    () => sortedProjects.filter((project) => project.status === "active"),
+    [sortedProjects]
   );
   const isLocalPreview = board.storageMode === "local";
   const settings = board.settings ?? defaultSystemSettings;
   const dueSoonDays = settings.dueSoonDays;
-  const statusLabels = useMemo(() => statusNameMap(board.columns), [board.columns]);
   const archivedProjects = useMemo(
-    () => board.projects.filter((project) => project.status === "archived"),
-    [board.projects]
+    () => sortedProjects.filter((project) => project.status === "archived"),
+    [sortedProjects]
   );
+  const boardTitle = settingText(settings, "board_title", "项目看板");
   const selectedTask = selectedTaskId
     ? board.tasks.find((task) => task.id === selectedTaskId) ?? null
     : null;
@@ -668,6 +648,22 @@ export default function KanbanApp({
     [board.tasks, activeProjects]
   );
 
+  useEffect(() => {
+    if (!metricFilter) {
+      return;
+    }
+
+    function handleClickOutside(event: MouseEvent) {
+      if (metricRef.current?.contains(event.target as Node)) {
+        return;
+      }
+      setMetricFilter(null);
+    }
+
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [metricFilter]);
+
   const filteredTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
     const activeProjectIds = new Set(activeProjects.map((project) => project.id));
@@ -685,16 +681,33 @@ export default function KanbanApp({
         task.description.toLowerCase().includes(query) ||
         task.owner.toLowerCase().includes(query) ||
         task.tags.some((tag) => tag.toLowerCase().includes(query));
+      const matchesMetric =
+        metricFilter === null ||
+        (metricFilter === "blocked"
+          ? task.blockers > 0
+          : task.status !== "done" && taskHasDueSoonAlert(task, todayKey, dueSoonDays));
 
       return (
         activeProjectIds.has(project.id) &&
         matchesProject &&
         matchesPriority &&
         matchesTag &&
-        matchesSearch
+        matchesSearch &&
+        matchesMetric
       );
     });
-  }, [activeProjects, board.projects, board.tasks, priorityFilter, projectFilter, search, tagFilters]);
+  }, [
+    activeProjects,
+    board.projects,
+    board.tasks,
+    dueSoonDays,
+    metricFilter,
+    priorityFilter,
+    projectFilter,
+    search,
+    tagFilters,
+    todayKey,
+  ]);
 
   const metrics = useMemo(() => {
     const activeProjectIds = new Set(activeProjects.map((project) => project.id));
@@ -1105,80 +1118,65 @@ export default function KanbanApp({
   }
 
   function handleDragStart(event: DragStartEvent) {
-    const taskId = String(event.active.id);
+    const taskId = String(event.operation.source?.id ?? "");
     const task = board.tasks.find((item) => item.id === taskId);
     if (!task) {
       return;
     }
 
-    dragOriginRef.current = { taskId, status: task.status };
     dragStartTasksRef.current = board.tasks;
     setDraggingTaskId(taskId);
+    setDragOriginStatus(task.status);
   }
 
-  function handleDragOver(event: DragOverEvent) {
-    setTrashArmed(dragTargetData(event.over)?.type === "trash");
-    const origin = dragOriginRef.current;
-    const targetStatus = statusFromOver(board.tasks, event.over);
-    if (origin && targetStatus && targetStatus !== origin.status) {
-      setDragOverColumn(targetStatus);
-    } else {
-      setDragOverColumn(null);
-    }
-  }
-
-  function clearDragState(restore = false) {
-    if (restore && dragStartTasksRef.current) {
-      setBoard((current) => ({ ...current, tasks: dragStartTasksRef.current ?? current.tasks }));
-    }
+  function clearDragState() {
     setDraggingTaskId(null);
-    setTrashArmed(false);
-    setDragOverColumn(null);
-    dragOriginRef.current = null;
+    setDragOriginStatus(null);
+    setDragOverStatus(null);
     dragStartTasksRef.current = null;
   }
 
-  function handleDragCancel() {
-    clearDragState(true);
+  function handleDragOver(event: DragOverEvent) {
+    const source = event.operation.source;
+    if (!isSortable(source)) {
+      return;
+    }
+
+    const targetStatus = targetStatusFromEntity(event.operation.target);
+    setDragOverStatus(targetStatus);
   }
 
   async function handleDragEnd(event: DragEndEvent) {
-    const taskId = String(event.active.id);
-    const targetData = dragTargetData(event.over);
-
-    if (targetData?.type === "trash") {
-      await removeTask(taskId);
+    if (event.canceled) {
       clearDragState();
       return;
     }
 
-    const baseTasks = dragStartTasksRef.current ?? board.tasks;
-    const finalTasks = withDndFinalOrder(baseTasks, taskId, event.over);
-    if (sameTaskOrder(baseTasks, finalTasks)) {
+    const startTasks = dragStartTasksRef.current ?? board.tasks;
+    const source = event.operation.source;
+    let finalTasks = tasksFromDragEvent(startTasks, event);
+    const targetStatus = targetStatusFromEntity(event.operation.target);
+
+    if (isSortable(source) && targetStatus && targetStatus !== source.initialGroup) {
+        finalTasks = moveTaskToStatusEnd(startTasks, String(source.id), targetStatus);
+    }
+
+    if (sameTaskOrder(startTasks, finalTasks)) {
       clearDragState();
       return;
     }
 
-    setBoard((current) => ({ ...current, tasks: finalTasks }));
-    persistCurrentOrder(finalTasks);
+    if (!sameTaskOrder(board.tasks, finalTasks)) {
+      setBoard((current) => ({ ...current, tasks: finalTasks }));
+    }
+
+    void persistCurrentOrder(finalTasks);
     clearDragState();
   }
 
   async function persistCurrentOrder(tasksToPersist = board.tasks) {
-    const origin = dragOriginRef.current;
-    const currentTask = origin
-      ? tasksToPersist.find((task) => task.id === origin.taskId)
-      : null;
-    const statusChanged = Boolean(origin && currentTask && currentTask.status !== origin.status);
-
     setSyncState("syncing");
     if (isLocalPreview) {
-      if (statusChanged && currentTask && origin) {
-        appendLocalActivity(
-          `移动任务「${currentTask.title}」：${statusLabels[origin.status]} → ${statusLabels[currentTask.status]}。`,
-          "task"
-        );
-      }
       setSyncState("local");
       return;
     }
@@ -1188,12 +1186,6 @@ export default function KanbanApp({
         updates: taskUpdates(tasksToPersist),
       });
     } catch {
-      if (statusChanged && currentTask && origin) {
-        appendLocalActivity(
-          `移动任务「${currentTask.title}」：${statusLabels[origin.status]} → ${statusLabels[currentTask.status]}。`,
-          "task"
-        );
-      }
       setSyncState("local");
     }
   }
@@ -1354,7 +1346,7 @@ export default function KanbanApp({
     }
   }
 
-  const activeProjectChoices = activeProjects.length ? activeProjects : board.projects;
+  const activeProjectChoices = activeProjects.length ? activeProjects : sortedProjects;
   const newTaskProjectId = newTask.projectId || firstProjectId(activeProjectChoices);
 
   return (
@@ -1366,14 +1358,26 @@ export default function KanbanApp({
               <span className="h-2 w-2 rounded-full bg-[var(--accent)]" />
               <span>Project Operations</span>
             </div>
-            <h1 className="mt-3 text-3xl font-semibold 2xl:text-5xl">项目看板</h1>
+            <h1 className="mt-3 text-3xl font-semibold 2xl:text-5xl">{boardTitle}</h1>
           </div>
           <div className="flex flex-col gap-3 2xl:items-end">
-            <div className="grid grid-cols-5 gap-2 text-right">
+            <div ref={metricRef} className="grid grid-cols-5 gap-2 text-right">
               <Metric label="项目" value={metrics.projects} />
               <Metric label="活跃" value={metrics.active} />
-              <Metric label="临期" value={metrics.dueSoon} alert={metrics.dueSoon > 0} />
-              <Metric label="阻塞" value={metrics.blocked} alert={metrics.blocked > 0} />
+              <Metric
+                label="临期"
+                value={metrics.dueSoon}
+                alert={metrics.dueSoon > 0}
+                active={metricFilter === "dueSoon"}
+                onClick={() => setMetricFilter((current) => (current === "dueSoon" ? null : "dueSoon"))}
+              />
+              <Metric
+                label="阻塞"
+                value={metrics.blocked}
+                alert={metrics.blocked > 0}
+                active={metricFilter === "blocked"}
+                onClick={() => setMetricFilter((current) => (current === "blocked" ? null : "blocked"))}
+              />
               <Metric label="完成" value={`${metrics.completion}%`} />
             </div>
             <div className="flex items-center gap-2">
@@ -1402,14 +1406,10 @@ export default function KanbanApp({
           </div>
         </header>
 
-        <DndContext
-          sensors={sensors}
-          collisionDetection={kanbanCollisionDetection}
-          measuring={{ droppable: { strategy: MeasuringStrategy.Always } }}
-          onDragStart={handleDragStart}
+        <DragDropProvider
+        onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDragEnd={(event) => void handleDragEnd(event)}
-          onDragCancel={handleDragCancel}
         >
         <section className="grid min-h-0 gap-4 lg:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)]">
           <aside className="min-h-0 space-y-4 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-4">
@@ -1464,6 +1464,16 @@ export default function KanbanApp({
                   placeholder="任务、描述、负责人"
                   className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] py-2 pl-9 pr-3 text-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
                 />
+                {search ? (
+                  <button
+                    type="button"
+                    title="清除搜索"
+                    onClick={() => setSearch("")}
+                    className="absolute right-2 top-2 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
+                  >
+                    <X size={14} />
+                  </button>
+                ) : null}
               </div>
               <div className="grid grid-cols-3 gap-1">
                 {(["all", "high", "medium", "low"] as const).map((priority) => (
@@ -1507,8 +1517,8 @@ export default function KanbanApp({
                 value={newTask.description}
                 onChange={(event) => setNewTask((current) => ({ ...current, description: event.target.value }))}
                 placeholder="任务描述"
-                rows={3}
-                className="w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                rows={5}
+                className="min-h-[132px] w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
               <div>
                 <select
@@ -1545,17 +1555,6 @@ export default function KanbanApp({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="space-y-1 text-sm text-[var(--muted)]">
-                  <span>提测日期</span>
-                  <input
-                    name="newTaskTestDueDate"
-                    type="date"
-                    placeholder="yyyy-mm-dd"
-                    value={newTask.testDueDate}
-                    onChange={(event) => setNewTask((current) => ({ ...current, testDueDate: event.target.value }))}
-                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
-                  />
-                </label>
-                <label className="space-y-1 text-sm text-[var(--muted)]">
                   <span>设计截止</span>
                   <input
                     name="newTaskDesignDueDate"
@@ -1563,6 +1562,17 @@ export default function KanbanApp({
                     placeholder="yyyy-mm-dd"
                     value={newTask.designDueDate}
                     onChange={(event) => setNewTask((current) => ({ ...current, designDueDate: event.target.value }))}
+                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                  />
+                </label>
+                <label className="space-y-1 text-sm text-[var(--muted)]">
+                  <span>提测日期</span>
+                  <input
+                    name="newTaskTestDueDate"
+                    type="date"
+                    placeholder="yyyy-mm-dd"
+                    value={newTask.testDueDate}
+                    onChange={(event) => setNewTask((current) => ({ ...current, testDueDate: event.target.value }))}
                     className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
                   />
                 </label>
@@ -1627,11 +1637,13 @@ export default function KanbanApp({
                     column={column}
                     tasks={columnTasks}
                     projects={board.projects}
+                    collapsed={backlogCollapsed}
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
-                    draggingTaskId={draggingTaskId}
-                    crossColumnTarget={dragOverColumn === column.id}
+                    dragOriginStatus={dragOriginStatus}
+                    dragOverStatus={dragOverStatus}
+                    onToggleCollapse={() => setBacklogCollapsed((current) => !current)}
                     onOpenTask={openTask}
                   />
                 );
@@ -1653,8 +1665,8 @@ export default function KanbanApp({
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
-                    draggingTaskId={draggingTaskId}
-                    crossColumnTarget={dragOverColumn === column.id}
+                    dragOriginStatus={dragOriginStatus}
+                    dragOverStatus={dragOverStatus}
                     onOpenTask={openTask}
                   />
                 );
@@ -1663,35 +1675,37 @@ export default function KanbanApp({
           </section>
 
         </section>
-
-        {draggingTaskId ? <TrashDropZone armed={trashArmed} /> : null}
         <DragOverlay>
-          {draggingTaskId ? (() => {
-            const task = board.tasks.find((t) => t.id === draggingTaskId);
-            if (!task) return null;
-            return (
-              <div style={{ boxShadow: "0 20px 50px rgba(0,0,0,0.2), 0 8px 20px rgba(0,0,0,0.12)", borderRadius: "0.5rem" }}>
-                <TaskCard
-                  task={task}
-                  todayKey={todayKey}
-                  dueSoonDays={dueSoonDays}
-                  project={projectById(board.projects, task.projectId)}
-                  selected={false}
-                  dragging={true}
-                  onSelect={() => {}}
-                />
-              </div>
-            );
-          })() : null}
+          {draggingTaskId ? (
+            (() => {
+              const draggingTask = board.tasks.find((task) => task.id === draggingTaskId);
+              if (!draggingTask) {
+                return null;
+              }
+              return (
+                <div className={draggingTask.status === "backlog" ? "w-[280px]" : "w-[300px] 2xl:w-[320px]"}>
+                  <TaskCard
+                    task={draggingTask}
+                    todayKey={todayKey}
+                    dueSoonDays={dueSoonDays}
+                    project={projectById(board.projects, draggingTask.projectId)}
+                    selected={false}
+                    dragging
+                    onSelect={() => {}}
+                  />
+                </div>
+              );
+            })()
+          ) : null}
         </DragOverlay>
-        </DndContext>
+        </DragDropProvider>
       </div>
 
       <footer className="border-t border-[var(--border)] text-sm text-[var(--muted)]">
         <div className="mx-auto flex w-full max-w-[2160px] flex-col items-center gap-3 px-5 py-5 sm:flex-row sm:justify-between 2xl:px-8">
           <div className="flex items-center gap-2">
             <Copyright size={14} />
-            <span>2026 Kanban</span>
+            <span>2026 <strong>Kanban</strong></span>
           </div>
           <div className="flex items-center gap-2">
             <Edit3 size={13} />
@@ -1779,83 +1793,123 @@ export default function KanbanApp({
   );
 }
 
-type DragBindingProps = {
-  attributes: DraggableAttributes;
-  listeners: DraggableSyntheticListeners;
-};
-
 function HorizontalBoardColumn({
   column,
   tasks,
   projects,
+  collapsed,
   selectedTaskId,
   todayKey,
   dueSoonDays,
-  draggingTaskId,
-  crossColumnTarget,
+  dragOriginStatus,
+  dragOverStatus,
+  onToggleCollapse,
   onOpenTask,
 }: {
   column: BoardData["columns"][number];
   tasks: BoardTask[];
   projects: Project[];
+  collapsed: boolean;
   selectedTaskId: string | null;
   todayKey: string;
   dueSoonDays: number;
-  draggingTaskId: string | null;
-  crossColumnTarget: boolean;
+  dragOriginStatus: BoardStatus | null;
+  dragOverStatus: BoardStatus | null;
+  onToggleCollapse: () => void;
   onOpenTask: (taskId: string) => void;
 }) {
-  const { setNodeRef } = useDroppable({
-    id: `column-${column.id}`,
+  const { ref, isDropTarget } = useDroppable({
+    id: column.id,
     data: { type: "column", status: column.id } satisfies DragTargetData,
+    accept: "task",
   });
+  const crossRegionTarget = Boolean(
+    dragOriginStatus &&
+    dragOriginStatus !== column.id &&
+    (dragOverStatus === column.id || isDropTarget)
+  );
+  const renderStaticCards = dragOriginStatus !== null && dragOriginStatus !== column.id;
 
   return (
     <div
-      ref={setNodeRef}
       role="region"
       aria-label={`${column.title}列表`}
       className={`rounded-lg border bg-[var(--column-bg)] transition ${
-        crossColumnTarget
+        crossRegionTarget
           ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]"
           : "border-[var(--border)]"
       }`}
     >
       <div className="flex items-center gap-4 px-3 py-2">
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex shrink-0 items-center gap-2">
           <span className={`h-2.5 w-2.5 rounded-full ${column.tone}`} />
-          <h2 className="text-sm font-semibold">{column.title}</h2>
+          <h2 className="text-sm font-semibold 2xl:text-base">
+            {column.title}
+            <span className="ml-2 inline-flex rounded-md bg-[var(--panel-soft)] px-2 py-1 align-middle text-xs font-medium text-[var(--muted)]">
+              {tasks.length}
+            </span>
+          </h2>
         </div>
-        <span className="rounded-md bg-[var(--panel-soft)] px-2 py-1 text-xs text-[var(--muted)]">
-          {tasks.length}
-        </span>
+        <div className="ml-auto flex items-center gap-2">
+          <span className="sr-only">
+            {tasks.length}
+          </span>
+          <button
+            type="button"
+            title={collapsed ? "展开需求池" : "折叠需求池"}
+            onClick={onToggleCollapse}
+            className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-1.5 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
+          >
+            {collapsed ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+          </button>
+        </div>
       </div>
-      <SortableContext items={tasks.map((task) => task.id)} strategy={horizontalListSortingStrategy}>
-        <div className="flex min-h-[90px] gap-3 overflow-x-auto px-3 pb-3">
-          {tasks.map((task) => (
-            <div key={task.id} className="w-[280px] shrink-0">
-              <SortableTaskCard
-                task={task}
-                todayKey={todayKey}
-                dueSoonDays={dueSoonDays}
-                project={projectById(projects, task.projectId)}
-                selected={task.id === selectedTaskId}
-                dragging={task.id === draggingTaskId}
-                onSelect={() => onOpenTask(task.id)}
-              />
-            </div>
-          ))}
-          {crossColumnTarget ? (
-            <div className="flex w-[280px] shrink-0 items-center justify-center rounded-md border-2 border-dashed border-[var(--accent)] bg-[var(--accent-soft)] text-xs font-semibold text-[var(--accent)]">
-              移至此处
-            </div>
-          ) : tasks.length === 0 ? (
-            <div className="flex w-[280px] shrink-0 items-center justify-center rounded-md border border-dashed border-[var(--border)] text-xs text-[var(--muted)] min-h-[90px]">
-              拖入任务
-            </div>
-          ) : null}
+      <div
+        className={`grid overflow-hidden transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+          collapsed ? "grid-rows-[0fr] opacity-0" : "grid-rows-[1fr] opacity-100"
+        }`}
+      >
+        <div className="min-h-0 overflow-hidden">
+          <div
+            ref={ref}
+            className="flex min-h-[110px] flex-nowrap items-stretch gap-3 overflow-x-auto overflow-y-hidden px-3 pb-3"
+          >
+            {tasks.map((task, index) =>
+              renderStaticCards ? (
+                <StaticTaskCard
+                  key={task.id}
+                  task={task}
+                  todayKey={todayKey}
+                  dueSoonDays={dueSoonDays}
+                  project={projectById(projects, task.projectId)}
+                  selected={task.id === selectedTaskId}
+                  className="w-[280px] shrink-0"
+                  onSelect={() => onOpenTask(task.id)}
+                />
+              ) : (
+                <SortableTaskCard
+                  key={task.id}
+                  task={task}
+                  index={index}
+                  todayKey={todayKey}
+                  dueSoonDays={dueSoonDays}
+                  project={projectById(projects, task.projectId)}
+                  selected={task.id === selectedTaskId}
+                  sortableEnabled
+                  className="w-[280px] shrink-0"
+                  onSelect={() => onOpenTask(task.id)}
+                />
+              )
+            )}
+            {crossRegionTarget ? (
+              <DropPlaceholderCard axis="horizontal" />
+            ) : null}
+            {tasks.length === 0 && !crossRegionTarget ? (
+              <EmptyLaneCard axis="horizontal" active={crossRegionTarget} />
+            ) : null}
+          </div>
         </div>
-      </SortableContext>
+      </div>
     </div>
   );
 }
@@ -1867,8 +1921,8 @@ function BoardColumnView({
   selectedTaskId,
   todayKey,
   dueSoonDays,
-  draggingTaskId,
-  crossColumnTarget,
+  dragOriginStatus,
+  dragOverStatus,
   onOpenTask,
 }: {
   column: BoardData["columns"][number];
@@ -1877,22 +1931,28 @@ function BoardColumnView({
   selectedTaskId: string | null;
   todayKey: string;
   dueSoonDays: number;
-  draggingTaskId: string | null;
-  crossColumnTarget: boolean;
+  dragOriginStatus: BoardStatus | null;
+  dragOverStatus: BoardStatus | null;
   onOpenTask: (taskId: string) => void;
 }) {
-  const { setNodeRef } = useDroppable({
-    id: `column-${column.id}`,
+  const { ref, isDropTarget } = useDroppable({
+    id: column.id,
     data: { type: "column", status: column.id } satisfies DragTargetData,
+    accept: "task",
   });
+  const crossRegionTarget = Boolean(
+    dragOriginStatus &&
+    dragOriginStatus !== column.id &&
+    (dragOverStatus === column.id || isDropTarget)
+  );
+  const renderStaticCards = dragOriginStatus !== null && dragOriginStatus !== column.id;
 
   return (
     <div
-      ref={setNodeRef}
       role="region"
       aria-label={`${column.title}列表`}
       className={`flex min-w-[300px] flex-[0_0_300px] flex-col rounded-lg border bg-[var(--column-bg)] transition 2xl:min-w-[320px] 2xl:flex-1 ${
-        crossColumnTarget
+        crossRegionTarget
           ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]"
           : "border-[var(--border)]"
       }`}
@@ -1901,81 +1961,111 @@ function BoardColumnView({
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className={`h-2.5 w-2.5 rounded-full ${column.tone}`} />
-            <h2 className="text-sm font-semibold 2xl:text-base">{column.title}</h2>
+            <h2 className="text-sm font-semibold 2xl:text-base">
+              {column.title}
+              <span className="ml-2 inline-flex rounded-md bg-[var(--panel-soft)] px-2 py-1 align-middle text-xs font-medium text-[var(--muted)]">
+                {tasks.length}
+              </span>
+            </h2>
           </div>
-          <span className="rounded-md bg-[var(--panel-soft)] px-2 py-1 text-xs text-[var(--muted)]">
+          <span className="sr-only">
             {tasks.length}
           </span>
         </div>
       </div>
-      <SortableContext items={tasks.map((task) => task.id)} strategy={verticalListSortingStrategy}>
-        <div className="flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto p-3">
-          {tasks.map((task) => (
-            <SortableTaskCard
+      <div ref={ref} className="flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto p-3">
+        {tasks.map((task, index) =>
+          renderStaticCards ? (
+            <StaticTaskCard
               key={task.id}
               task={task}
               todayKey={todayKey}
               dueSoonDays={dueSoonDays}
               project={projectById(projects, task.projectId)}
               selected={task.id === selectedTaskId}
-              dragging={task.id === draggingTaskId}
+              className="w-full"
               onSelect={() => onOpenTask(task.id)}
             />
-          ))}
-          {crossColumnTarget ? (
-            <div className="rounded-md border-2 border-dashed border-[var(--accent)] bg-[var(--accent-soft)] px-3 py-8 text-center text-xs font-semibold text-[var(--accent)]">
-              移至此处
-            </div>
-          ) : tasks.length === 0 ? (
-            <div className="grid min-h-[160px] place-items-center rounded-md border border-dashed border-[var(--border)] text-xs text-[var(--muted)]">
-              拖入任务
-            </div>
-          ) : null}
-        </div>
-      </SortableContext>
+          ) : (
+            <SortableTaskCard
+              key={task.id}
+              task={task}
+              index={index}
+              todayKey={todayKey}
+              dueSoonDays={dueSoonDays}
+              project={projectById(projects, task.projectId)}
+              selected={task.id === selectedTaskId}
+              sortableEnabled
+              className="w-full"
+              onSelect={() => onOpenTask(task.id)}
+            />
+          )
+        )}
+        {crossRegionTarget ? (
+          <DropPlaceholderCard axis="vertical" />
+        ) : null}
+        {tasks.length === 0 && !crossRegionTarget ? (
+          <EmptyLaneCard axis="vertical" active={crossRegionTarget} />
+        ) : null}
+      </div>
     </div>
   );
 }
 
 function SortableTaskCard({
   task,
+  index,
   todayKey,
   dueSoonDays,
   project,
   selected,
-  dragging,
+  sortableEnabled,
+  className,
   onSelect,
 }: {
   task: BoardTask;
+  index: number;
   todayKey: string;
   dueSoonDays: number;
   project: Project;
   selected: boolean;
-  dragging: boolean;
+  sortableEnabled: boolean;
+  className?: string;
   onSelect: () => void;
 }) {
   const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
+    ref,
     isDragging,
+    isDropping,
+    isDragSource,
   } = useSortable({
     id: task.id,
+    index,
+    group: task.status,
+    type: "task",
+    accept: "task",
+    disabled: !sortableEnabled,
+    sensors: [
+      PointerSensor.configure({
+        activationConstraints: [
+          new PointerActivationConstraints.Distance({
+            value: 8,
+          }),
+        ],
+      }),
+      KeyboardSensor,
+    ],
     data: { type: "task", status: task.status } satisfies DragTargetData,
+    transition: sortableTransition,
   });
+  const active = isDragging || isDropping || isDragSource;
 
   return (
     <div
-      ref={setNodeRef}
-      style={{
-        transform: SortableCSS.Transform.toString(transform),
-        transition: isDragging ? "unset" : "transform 500ms ease",
-        touchAction: "none",
-        opacity: isDragging ? 0 : 1,
-      }}
-      className="touch-none"
+      ref={ref}
+      className={`${className ?? ""} touch-none transition-opacity duration-200 ${
+        isDragSource ? "opacity-0" : active ? "relative z-30" : ""
+      }`}
     >
       <TaskCard
         task={task}
@@ -1983,32 +2073,41 @@ function SortableTaskCard({
         dueSoonDays={dueSoonDays}
         project={project}
         selected={selected}
-        dragging={dragging || isDragging}
+        dragging={active && !isDragSource}
         onSelect={onSelect}
-        dragBinding={{ attributes, listeners }}
       />
     </div>
   );
 }
 
-function TrashDropZone({ armed }: { armed: boolean }) {
-  const { setNodeRef, isOver } = useDroppable({
-    id: "trash",
-    data: { type: "trash" } satisfies DragTargetData,
-  });
-  const active = armed || isOver;
-
+function StaticTaskCard({
+  task,
+  todayKey,
+  dueSoonDays,
+  project,
+  selected,
+  className,
+  onSelect,
+}: {
+  task: BoardTask;
+  todayKey: string;
+  dueSoonDays: number;
+  project: Project;
+  selected: boolean;
+  className?: string;
+  onSelect: () => void;
+}) {
   return (
-    <div
-      ref={setNodeRef}
-      className={`fixed bottom-6 right-6 z-40 flex h-[120px] w-[280px] flex-col items-center justify-center gap-2 rounded-lg border-2 text-sm font-semibold shadow-xl transition-all duration-200 ${
-        active
-          ? "scale-105 border-[var(--danger)] bg-[var(--danger)] text-white"
-          : "border-dashed border-[var(--muted)] bg-[var(--panel)] text-[var(--muted)]"
-      }`}
-    >
-      <Trash2 size={22} />
-      <span>拖到这里删除</span>
+    <div className={className}>
+      <TaskCard
+        task={task}
+        todayKey={todayKey}
+        dueSoonDays={dueSoonDays}
+        project={project}
+        selected={selected}
+        dragging={false}
+        onSelect={onSelect}
+      />
     </div>
   );
 }
@@ -2017,21 +2116,95 @@ function Metric({
   label,
   value,
   alert,
+  active,
+  onClick,
 }: {
   label: string;
   value: number | string;
   alert?: boolean;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const className = `rounded-lg border px-3 py-2 ${
+    active
+      ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+      : alert
+        ? "border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]"
+        : "border-[var(--border)] bg-[var(--panel)]"
+  } ${onClick ? "cursor-pointer text-left transition hover:-translate-y-0.5 hover:shadow-sm" : ""}`;
+
+  if (onClick) {
+    return (
+      <button type="button" onClick={onClick} className={className}>
+        <p className="text-xs text-[var(--muted)]">{label}</p>
+        <p className="mt-1 text-lg font-semibold 2xl:text-2xl">{value}</p>
+      </button>
+    );
+  }
+
+  return (
+    <div className={className}>
+      <p className="text-xs text-[var(--muted)]">{label}</p>
+      <p className="mt-1 text-lg font-semibold 2xl:text-2xl">{value}</p>
+    </div>
+  );
+}
+
+function EmptyLaneCard({
+  axis,
+  active = false,
+}: {
+  axis: "horizontal" | "vertical";
+  active?: boolean;
 }) {
   return (
     <div
-      className={`rounded-lg border px-3 py-2 ${
-        alert
-          ? "border-[var(--danger)] bg-[var(--danger-soft)] text-[var(--danger)]"
-          : "border-[var(--border)] bg-[var(--panel)]"
+      className={`grid rounded-lg border border-dashed px-4 text-center transition ${
+        active
+          ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
+          : "border-[var(--border)] bg-[var(--panel)]/60 text-[var(--muted)]"
+      } ${
+        axis === "horizontal"
+          ? "min-h-[110px] w-[280px] shrink-0 place-items-center"
+          : "min-h-[170px] w-full place-items-center"
       }`}
     >
-      <p className="text-xs text-[var(--muted)]">{label}</p>
-      <p className="mt-1 text-lg font-semibold 2xl:text-2xl">{value}</p>
+      <div className="grid place-items-center gap-2">
+        <span
+          className={`grid h-8 w-8 place-items-center rounded-full border border-dashed ${
+            active
+              ? "border-[var(--accent)] bg-[var(--panel)] text-[var(--accent)]"
+              : "border-[var(--border)] bg-[var(--panel-soft)] text-[var(--muted)]"
+          }`}
+        >
+          <Plus size={16} />
+        </span>
+        <p className="text-xs">暂无任务</p>
+      </div>
+    </div>
+  );
+}
+
+function DropPlaceholderCard({
+  axis,
+}: {
+  axis: "horizontal" | "vertical";
+}) {
+  return (
+    <div
+      aria-hidden="true"
+      className={`grid rounded-lg border border-dashed border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ${
+        axis === "horizontal"
+          ? "min-h-[110px] w-[280px] shrink-0 place-items-center"
+          : "min-h-[170px] w-full place-items-center"
+      }`}
+    >
+      <div className="grid place-items-center gap-2">
+        <span className="grid h-8 w-8 place-items-center rounded-full border border-dashed border-[var(--accent)] bg-[var(--panel)] text-[var(--accent)]">
+          <Plus size={16} />
+        </span>
+        <p className="text-xs font-medium">拖拽到此列末尾</p>
+      </div>
     </div>
   );
 }
@@ -2138,7 +2311,6 @@ function TaskCard({
   selected,
   dragging,
   onSelect,
-  dragBinding,
 }: {
   task: BoardTask;
   todayKey: string;
@@ -2147,7 +2319,6 @@ function TaskCard({
   selected: boolean;
   dragging: boolean;
   onSelect: () => void;
-  dragBinding?: DragBindingProps;
 }) {
   const markers = deadlineMarkers(task, todayKey, dueSoonDays);
   const hasDateAlert = markers.some((marker) => marker.state !== "normal");
@@ -2157,32 +2328,24 @@ function TaskCard({
   return (
     <article
       onClick={onSelect}
-      {...dragBinding?.attributes}
-      {...dragBinding?.listeners}
-      className={`group rounded-lg border bg-[var(--card)] p-3 shadow-sm transition ${
+      className={`group rounded-lg border bg-[var(--card)] p-3 transition ${
         selected ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]" : "border-[var(--card-border)]"
       } ${hasDateAlert ? "border-[var(--danger)] bg-[var(--danger-soft)]" : ""} ${
-        dragBinding ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-      } ${dragging ? "" : "hover:-translate-y-0.5 hover:shadow-md"}`}
+        dragging
+          ? "shadow-[0_22px_50px_rgba(15,23,42,0.24),0_8px_18px_rgba(15,23,42,0.16)] ring-1 ring-[var(--accent-soft)]"
+          : "cursor-grab shadow-sm hover:-translate-y-0.5 hover:shadow-md active:cursor-grabbing"
+      }`}
     >
-      <div className="flex items-start gap-2">
-        <span
-          title="拖拽任务"
-          className="mt-0.5 shrink-0 rounded p-0.5 text-[var(--muted)] opacity-60 transition group-hover:bg-[var(--panel-soft)] group-hover:opacity-100"
-        >
-          <GripVertical size={16} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-3">
-            <h3 className="text-sm font-semibold leading-5 2xl:text-[15px]">{task.title}</h3>
-            <span className={`shrink-0 rounded-md border px-2 py-0.5 text-xs ${priorityTone[task.priority]}`}>
-              {priorityLabels[task.priority]}
-            </span>
-          </div>
-          <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--muted)]">
-            {task.description || "暂无描述"}
-          </p>
+      <div className="min-w-0">
+        <div className="flex items-start justify-between gap-3">
+          <h3 className="text-sm font-semibold leading-5 2xl:text-[15px]">{task.title}</h3>
+          <span className={`shrink-0 rounded-md border px-2 py-0.5 text-xs ${priorityTone[task.priority]}`}>
+            {priorityLabels[task.priority]}
+          </span>
         </div>
+        <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--muted)]">
+          {task.description || "暂无描述"}
+        </p>
       </div>
 
       <div className="mt-3 flex flex-wrap gap-1">
@@ -2417,20 +2580,20 @@ function TaskDrawer({
               onChange={(event) => setDraft((current) => ({ ...current, owner: event.target.value }))}
             />
           </Field>
-          <Field label="提测日期">
-            <input
-              name="taskTestDueDate"
-              type="date"
-              value={draft.testDueDate}
-              onChange={(event) => setDraft((current) => ({ ...current, testDueDate: event.target.value }))}
-            />
-          </Field>
           <Field label="设计截止">
             <input
               name="taskDesignDueDate"
               type="date"
               value={draft.designDueDate}
               onChange={(event) => setDraft((current) => ({ ...current, designDueDate: event.target.value }))}
+            />
+          </Field>
+          <Field label="提测日期">
+            <input
+              name="taskTestDueDate"
+              type="date"
+              value={draft.testDueDate}
+              onChange={(event) => setDraft((current) => ({ ...current, testDueDate: event.target.value }))}
             />
           </Field>
           <Field label="交付日期">
@@ -2448,8 +2611,8 @@ function TaskDrawer({
             name="taskDescription"
             value={draft.description}
             onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
-            rows={3}
-            className="resize-none leading-6"
+            rows={7}
+            className="min-h-[184px] resize-none leading-6"
           />
         </Field>
 
@@ -2607,15 +2770,15 @@ function TaskDrawer({
             name="newSubtaskTitle"
             onChange={(event) => setNewSubtaskTitle(event.target.value)}
             placeholder="添加新拆解项"
-            className="h-10 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+            className="h-11 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
           />
-          <button type="submit" title="添加任务拆解" className="grid h-10 place-items-center rounded-md bg-[var(--accent)] text-white transition hover:bg-[var(--accent-hover)]">
+          <button type="submit" title="添加任务拆解" className="grid h-11 place-items-center rounded-md bg-[var(--accent)] text-white transition hover:bg-[var(--accent-hover)]">
             <Plus size={16} />
           </button>
         </form>
       </section>
 
-      <div className="grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-4">
+      <div className="mt-2 grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-5">
         <button
           type="submit"
           form="task-edit-form"
@@ -3049,6 +3212,16 @@ function TagMultiSelect({
                 className="w-full rounded border border-[var(--border)] bg-[var(--input)] py-1.5 pl-8 pr-3 text-sm outline-none"
                 autoFocus
               />
+              {search ? (
+                <button
+                  type="button"
+                  title="清除标签搜索"
+                  onClick={() => onSearchChange("")}
+                  className="absolute right-1.5 top-1.5 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
+                >
+                  <X size={13} />
+                </button>
+              ) : null}
             </div>
           </div>
           <div className="max-h-[180px] overflow-y-auto p-1">
