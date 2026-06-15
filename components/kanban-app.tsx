@@ -1,16 +1,10 @@
 "use client";
 
 import {
-  DragOverlay,
   DragDropProvider,
   type DragEndEvent,
-  type DragOverEvent,
   type DragStartEvent,
-  KeyboardSensor,
-  PointerSensor,
-  useDroppable,
 } from "@dnd-kit/react";
-import { PointerActivationConstraints } from "@dnd-kit/dom";
 import {
   isSortable,
   useSortable,
@@ -75,6 +69,11 @@ type DragTargetData =
   | { type: "task"; status: BoardStatus }
   | { type: "column"; status: BoardStatus };
 
+type CrossDragSession = {
+  taskId: string;
+  sourceStatus: BoardStatus;
+};
+
 type NewTaskForm = {
   title: string;
   description: string;
@@ -101,12 +100,6 @@ type SettingsPatch = {
     key: string;
     value: string;
   }>;
-};
-
-const sortableTransition = {
-  duration: 320,
-  easing: "cubic-bezier(0.25, 1, 0.5, 1)",
-  idle: true,
 };
 
 type Toast = {
@@ -359,6 +352,31 @@ function targetStatusFromEntity(target: { id: string | number; data?: unknown } 
     : null;
 }
 
+function statusFromPoint(clientX: number, clientY: number) {
+  const dropZones = Array.from(
+    document.querySelectorAll<HTMLElement>("[data-board-drop-status]")
+  );
+
+  for (const dropZone of dropZones) {
+    const rect = dropZone.getBoundingClientRect();
+    const status = dropZone.dataset.boardDropStatus;
+
+    if (
+      rect.width > 0 &&
+      rect.height > 0 &&
+      clientX >= rect.left &&
+      clientX <= rect.right &&
+      clientY >= rect.top &&
+      clientY <= rect.bottom &&
+      isBoardStatus(status)
+    ) {
+      return status;
+    }
+  }
+
+  return null;
+}
+
 function tasksByStatus(tasks: BoardTask[]) {
   return {
     backlog: sortTasks(tasks.filter((task) => task.status === "backlog")),
@@ -385,7 +403,7 @@ function boardTasksFromGroups(currentTasks: BoardTask[], groups: Record<BoardSta
   return currentTasks.map((task) => updates.get(task.id) ?? task);
 }
 
-function tasksFromDragEvent(tasks: BoardTask[], event: DragOverEvent | DragEndEvent) {
+function tasksFromDragEvent(tasks: BoardTask[], event: DragEndEvent) {
   const groups = tasksByStatus(tasks);
   const nextGroups = move(groups, event);
   return boardTasksFromGroups(tasks, nextGroups);
@@ -396,14 +414,14 @@ function moveTaskToStatusEnd(tasks: BoardTask[], taskId: string, targetStatus: B
   let movingTask: BoardTask | null = null;
 
   (Object.keys(groups) as BoardStatus[]).forEach((status) => {
-    const nextItems = groups[status].filter((task) => {
+    groups[status] = groups[status].filter((task) => {
       if (task.id === taskId) {
         movingTask = task;
         return false;
       }
+
       return true;
     });
-    groups[status] = nextItems;
   });
 
   if (!movingTask) {
@@ -411,7 +429,14 @@ function moveTaskToStatusEnd(tasks: BoardTask[], taskId: string, targetStatus: B
   }
 
   const taskToMove: BoardTask = movingTask;
-  groups[targetStatus] = [...groups[targetStatus], { ...taskToMove, status: targetStatus }];
+  groups[targetStatus] = [
+    ...groups[targetStatus],
+    {
+      ...taskToMove,
+      status: targetStatus,
+    },
+  ];
+
   return boardTasksFromGroups(tasks, groups);
 }
 
@@ -537,14 +562,14 @@ export default function KanbanApp({
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     initialBoard.projects[0]?.id ?? null
   );
-  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
-  const [dragOriginStatus, setDragOriginStatus] = useState<BoardStatus | null>(null);
-  const [dragOverStatus, setDragOverStatus] = useState<BoardStatus | null>(null);
+  const [crossDragSession, setCrossDragSession] = useState<CrossDragSession | null>(null);
+  const [crossDragTarget, setCrossDragTarget] = useState<BoardStatus | null>(null);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const localIdCounter = useRef(0);
   const metricRef = useRef<HTMLDivElement>(null);
-  const dragStartTasksRef = useRef<BoardTask[] | null>(null);
+  const crossDropTimerRef = useRef<number | null>(null);
+  const crossDragTargetRef = useRef<BoardStatus | null>(null);
   const [newTask, setNewTask] = useState<NewTaskForm>({
     title: "",
     description: "",
@@ -604,6 +629,40 @@ export default function KanbanApp({
       active = false;
     };
   }, []);
+
+  useEffect(() => {
+    return () => {
+      if (crossDropTimerRef.current !== null) {
+        window.clearTimeout(crossDropTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!crossDragSession) {
+      crossDragTargetRef.current = null;
+      return;
+    }
+
+    const updateTarget = (event: PointerEvent) => {
+      const targetStatus = statusFromPoint(event.clientX, event.clientY);
+      const nextTarget =
+        targetStatus && targetStatus !== crossDragSession.sourceStatus
+          ? targetStatus
+          : null;
+
+      if (crossDragTargetRef.current !== nextTarget) {
+        crossDragTargetRef.current = nextTarget;
+        setCrossDragTarget(nextTarget);
+      }
+    };
+
+    window.addEventListener("pointermove", updateTarget, { capture: true, passive: true });
+
+    return () => {
+      window.removeEventListener("pointermove", updateTarget, { capture: true });
+    };
+  }, [crossDragSession]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -1118,60 +1177,74 @@ export default function KanbanApp({
   }
 
   function handleDragStart(event: DragStartEvent) {
-    const taskId = String(event.operation.source?.id ?? "");
-    const task = board.tasks.find((item) => item.id === taskId);
-    if (!task) {
+    const source = event.operation.source;
+    if (!isSortable(source) || typeof source.id !== "string" || !isBoardStatus(source.initialGroup)) {
       return;
     }
 
-    dragStartTasksRef.current = board.tasks;
-    setDraggingTaskId(taskId);
-    setDragOriginStatus(task.status);
+    setCrossDragSession({
+      taskId: source.id,
+      sourceStatus: source.initialGroup,
+    });
   }
 
-  function clearDragState() {
-    setDraggingTaskId(null);
-    setDragOriginStatus(null);
-    setDragOverStatus(null);
-    dragStartTasksRef.current = null;
-  }
-
-  function handleDragOver(event: DragOverEvent) {
+  async function handleDragEnd(event: DragEndEvent) {
     const source = event.operation.source;
+    const crossTarget = crossDragTargetRef.current;
+    const session = crossDragSession;
+
+    crossDragTargetRef.current = null;
+    setCrossDragTarget(null);
+    setCrossDragSession(null);
+
     if (!isSortable(source)) {
       return;
     }
 
-    const targetStatus = targetStatusFromEntity(event.operation.target);
-    setDragOverStatus(targetStatus);
-  }
+    if (session && crossTarget && crossTarget !== session.sourceStatus) {
+      const finalTasks = moveTaskToStatusEnd(board.tasks, session.taskId, crossTarget);
 
-  async function handleDragEnd(event: DragEndEvent) {
+      if (sameTaskOrder(board.tasks, finalTasks)) {
+        return;
+      }
+
+      if (crossDropTimerRef.current !== null) {
+        window.clearTimeout(crossDropTimerRef.current);
+      }
+
+      crossDropTimerRef.current = window.setTimeout(() => {
+        crossDropTimerRef.current = null;
+        setBoard((current) => {
+          const nextTasks = moveTaskToStatusEnd(current.tasks, session.taskId, crossTarget);
+          if (sameTaskOrder(current.tasks, nextTasks)) {
+            return current;
+          }
+
+          return { ...current, tasks: nextTasks };
+        });
+        void persistCurrentOrder(finalTasks);
+      }, 80);
+      return;
+    }
+
     if (event.canceled) {
-      clearDragState();
       return;
     }
 
-    const startTasks = dragStartTasksRef.current ?? board.tasks;
-    const source = event.operation.source;
-    let finalTasks = tasksFromDragEvent(startTasks, event);
     const targetStatus = targetStatusFromEntity(event.operation.target);
 
-    if (isSortable(source) && targetStatus && targetStatus !== source.initialGroup) {
-        finalTasks = moveTaskToStatusEnd(startTasks, String(source.id), targetStatus);
-    }
-
-    if (sameTaskOrder(startTasks, finalTasks)) {
-      clearDragState();
+    if (!targetStatus || targetStatus !== source.initialGroup) {
       return;
     }
 
-    if (!sameTaskOrder(board.tasks, finalTasks)) {
-      setBoard((current) => ({ ...current, tasks: finalTasks }));
+    const finalTasks = tasksFromDragEvent(board.tasks, event);
+
+    if (sameTaskOrder(board.tasks, finalTasks)) {
+      return;
     }
 
+    setBoard((current) => ({ ...current, tasks: finalTasks }));
     void persistCurrentOrder(finalTasks);
-    clearDragState();
   }
 
   async function persistCurrentOrder(tasksToPersist = board.tasks) {
@@ -1406,11 +1479,6 @@ export default function KanbanApp({
           </div>
         </header>
 
-        <DragDropProvider
-        onDragStart={handleDragStart}
-          onDragOver={handleDragOver}
-          onDragEnd={(event) => void handleDragEnd(event)}
-        >
         <section className="grid min-h-0 gap-4 lg:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)]">
           <aside className="min-h-0 space-y-4 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-4">
             <div className="space-y-2">
@@ -1641,8 +1709,9 @@ export default function KanbanApp({
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
-                    dragOriginStatus={dragOriginStatus}
-                    dragOverStatus={dragOverStatus}
+                    crossDragTarget={crossDragTarget}
+                    onDragStart={handleDragStart}
+                    onDragEnd={handleDragEnd}
                     onToggleCollapse={() => setBacklogCollapsed((current) => !current)}
                     onOpenTask={openTask}
                   />
@@ -1665,8 +1734,9 @@ export default function KanbanApp({
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
-                    dragOriginStatus={dragOriginStatus}
-                    dragOverStatus={dragOverStatus}
+                    crossDragTarget={crossDragTarget}
+                    onDragStart={handleDragStart}
+                    onDragEnd={handleDragEnd}
                     onOpenTask={openTask}
                   />
                 );
@@ -1675,30 +1745,6 @@ export default function KanbanApp({
           </section>
 
         </section>
-        <DragOverlay>
-          {draggingTaskId ? (
-            (() => {
-              const draggingTask = board.tasks.find((task) => task.id === draggingTaskId);
-              if (!draggingTask) {
-                return null;
-              }
-              return (
-                <div className={draggingTask.status === "backlog" ? "w-[280px]" : "w-[300px] 2xl:w-[320px]"}>
-                  <TaskCard
-                    task={draggingTask}
-                    todayKey={todayKey}
-                    dueSoonDays={dueSoonDays}
-                    project={projectById(board.projects, draggingTask.projectId)}
-                    selected={false}
-                    dragging
-                    onSelect={() => {}}
-                  />
-                </div>
-              );
-            })()
-          ) : null}
-        </DragOverlay>
-        </DragDropProvider>
       </div>
 
       <footer className="border-t border-[var(--border)] text-sm text-[var(--muted)]">
@@ -1801,8 +1847,9 @@ function HorizontalBoardColumn({
   selectedTaskId,
   todayKey,
   dueSoonDays,
-  dragOriginStatus,
-  dragOverStatus,
+  crossDragTarget,
+  onDragStart,
+  onDragEnd,
   onToggleCollapse,
   onOpenTask,
 }: {
@@ -1813,29 +1860,20 @@ function HorizontalBoardColumn({
   selectedTaskId: string | null;
   todayKey: string;
   dueSoonDays: number;
-  dragOriginStatus: BoardStatus | null;
-  dragOverStatus: BoardStatus | null;
+  crossDragTarget: BoardStatus | null;
+  onDragStart: (event: DragStartEvent) => void;
+  onDragEnd: (event: DragEndEvent) => void;
   onToggleCollapse: () => void;
   onOpenTask: (taskId: string) => void;
 }) {
-  const { ref, isDropTarget } = useDroppable({
-    id: column.id,
-    data: { type: "column", status: column.id } satisfies DragTargetData,
-    accept: "task",
-  });
-  const crossRegionTarget = Boolean(
-    dragOriginStatus &&
-    dragOriginStatus !== column.id &&
-    (dragOverStatus === column.id || isDropTarget)
-  );
-  const renderStaticCards = dragOriginStatus !== null && dragOriginStatus !== column.id;
+  const activeDropTarget = crossDragTarget === column.id;
 
   return (
     <div
       role="region"
       aria-label={`${column.title}列表`}
       className={`rounded-lg border bg-[var(--column-bg)] transition ${
-        crossRegionTarget
+        activeDropTarget
           ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]"
           : "border-[var(--border)]"
       }`}
@@ -1870,24 +1908,16 @@ function HorizontalBoardColumn({
         }`}
       >
         <div className="min-h-0 overflow-hidden">
-          <div
-            ref={ref}
-            className="flex min-h-[110px] flex-nowrap items-stretch gap-3 overflow-x-auto overflow-y-hidden px-3 pb-3"
+          <DragDropProvider
+            onDragStart={onDragStart}
+            onDragEnd={(event) => void onDragEnd(event)}
           >
-            {tasks.map((task, index) =>
-              renderStaticCards ? (
-                <StaticTaskCard
-                  key={task.id}
-                  task={task}
-                  todayKey={todayKey}
-                  dueSoonDays={dueSoonDays}
-                  project={projectById(projects, task.projectId)}
-                  selected={task.id === selectedTaskId}
-                  className="w-[280px] shrink-0"
-                  onSelect={() => onOpenTask(task.id)}
-                />
-              ) : (
-                <SortableTaskCard
+            <div
+              data-board-drop-status={column.id}
+              className="flex min-h-[110px] flex-nowrap items-stretch gap-3 overflow-x-auto overflow-y-hidden px-3 pb-3"
+            >
+              {tasks.map((task, index) => (
+                <HorizontalSortableTaskCard
                   key={task.id}
                   task={task}
                   index={index}
@@ -1895,19 +1925,17 @@ function HorizontalBoardColumn({
                   dueSoonDays={dueSoonDays}
                   project={projectById(projects, task.projectId)}
                   selected={task.id === selectedTaskId}
-                  sortableEnabled
                   className="w-[280px] shrink-0"
                   onSelect={() => onOpenTask(task.id)}
                 />
-              )
-            )}
-            {crossRegionTarget ? (
-              <DropPlaceholderCard axis="horizontal" />
-            ) : null}
-            {tasks.length === 0 && !crossRegionTarget ? (
-              <EmptyLaneCard axis="horizontal" active={crossRegionTarget} />
-            ) : null}
-          </div>
+              ))}
+              {activeDropTarget ? (
+                <DropPlaceholderCard axis="horizontal" />
+              ) : tasks.length === 0 ? (
+                <EmptyLaneCard axis="horizontal" />
+              ) : null}
+            </div>
+          </DragDropProvider>
         </div>
       </div>
     </div>
@@ -1921,8 +1949,9 @@ function BoardColumnView({
   selectedTaskId,
   todayKey,
   dueSoonDays,
-  dragOriginStatus,
-  dragOverStatus,
+  crossDragTarget,
+  onDragStart,
+  onDragEnd,
   onOpenTask,
 }: {
   column: BoardData["columns"][number];
@@ -1931,28 +1960,19 @@ function BoardColumnView({
   selectedTaskId: string | null;
   todayKey: string;
   dueSoonDays: number;
-  dragOriginStatus: BoardStatus | null;
-  dragOverStatus: BoardStatus | null;
+  crossDragTarget: BoardStatus | null;
+  onDragStart: (event: DragStartEvent) => void;
+  onDragEnd: (event: DragEndEvent) => void;
   onOpenTask: (taskId: string) => void;
 }) {
-  const { ref, isDropTarget } = useDroppable({
-    id: column.id,
-    data: { type: "column", status: column.id } satisfies DragTargetData,
-    accept: "task",
-  });
-  const crossRegionTarget = Boolean(
-    dragOriginStatus &&
-    dragOriginStatus !== column.id &&
-    (dragOverStatus === column.id || isDropTarget)
-  );
-  const renderStaticCards = dragOriginStatus !== null && dragOriginStatus !== column.id;
+  const activeDropTarget = crossDragTarget === column.id;
 
   return (
     <div
       role="region"
       aria-label={`${column.title}列表`}
       className={`flex min-w-[300px] flex-[0_0_300px] flex-col rounded-lg border bg-[var(--column-bg)] transition 2xl:min-w-[320px] 2xl:flex-1 ${
-        crossRegionTarget
+        activeDropTarget
           ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]"
           : "border-[var(--border)]"
       }`}
@@ -1973,21 +1993,13 @@ function BoardColumnView({
           </span>
         </div>
       </div>
-      <div ref={ref} className="flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto p-3">
-        {tasks.map((task, index) =>
-          renderStaticCards ? (
-            <StaticTaskCard
-              key={task.id}
-              task={task}
-              todayKey={todayKey}
-              dueSoonDays={dueSoonDays}
-              project={projectById(projects, task.projectId)}
-              selected={task.id === selectedTaskId}
-              className="w-full"
-              onSelect={() => onOpenTask(task.id)}
-            />
-          ) : (
-            <SortableTaskCard
+      <DragDropProvider
+        onDragStart={onDragStart}
+        onDragEnd={(event) => void onDragEnd(event)}
+      >
+        <div data-board-drop-status={column.id} className="flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto p-3">
+          {tasks.map((task, index) => (
+            <VerticalSortableTaskCard
               key={task.id}
               task={task}
               index={index}
@@ -1995,31 +2007,28 @@ function BoardColumnView({
               dueSoonDays={dueSoonDays}
               project={projectById(projects, task.projectId)}
               selected={task.id === selectedTaskId}
-              sortableEnabled
               className="w-full"
               onSelect={() => onOpenTask(task.id)}
             />
-          )
-        )}
-        {crossRegionTarget ? (
-          <DropPlaceholderCard axis="vertical" />
-        ) : null}
-        {tasks.length === 0 && !crossRegionTarget ? (
-          <EmptyLaneCard axis="vertical" active={crossRegionTarget} />
-        ) : null}
-      </div>
+          ))}
+          {activeDropTarget ? (
+            <DropPlaceholderCard axis="vertical" />
+          ) : tasks.length === 0 ? (
+            <EmptyLaneCard axis="vertical" />
+          ) : null}
+        </div>
+      </DragDropProvider>
     </div>
   );
 }
 
-function SortableTaskCard({
+function HorizontalSortableTaskCard({
   task,
   index,
   todayKey,
   dueSoonDays,
   project,
   selected,
-  sortableEnabled,
   className,
   onSelect,
 }: {
@@ -2029,43 +2038,22 @@ function SortableTaskCard({
   dueSoonDays: number;
   project: Project;
   selected: boolean;
-  sortableEnabled: boolean;
   className?: string;
   onSelect: () => void;
 }) {
-  const {
-    ref,
-    isDragging,
-    isDropping,
-    isDragSource,
-  } = useSortable({
+  const { ref, isDragging } = useSortable({
     id: task.id,
     index,
     group: task.status,
     type: "task",
-    accept: "task",
-    disabled: !sortableEnabled,
-    sensors: [
-      PointerSensor.configure({
-        activationConstraints: [
-          new PointerActivationConstraints.Distance({
-            value: 8,
-          }),
-        ],
-      }),
-      KeyboardSensor,
-    ],
     data: { type: "task", status: task.status } satisfies DragTargetData,
-    transition: sortableTransition,
   });
-  const active = isDragging || isDropping || isDragSource;
 
   return (
     <div
       ref={ref}
-      className={`${className ?? ""} touch-none transition-opacity duration-200 ${
-        isDragSource ? "opacity-0" : active ? "relative z-30" : ""
-      }`}
+      className={`${className ?? ""} touch-none ${isDragging ? "pointer-events-none relative z-30" : ""}`}
+      data-shadow={isDragging || undefined}
     >
       <TaskCard
         task={task}
@@ -2073,15 +2061,16 @@ function SortableTaskCard({
         dueSoonDays={dueSoonDays}
         project={project}
         selected={selected}
-        dragging={active && !isDragSource}
+        dragging={isDragging}
         onSelect={onSelect}
       />
     </div>
   );
 }
 
-function StaticTaskCard({
+function VerticalSortableTaskCard({
   task,
+  index,
   todayKey,
   dueSoonDays,
   project,
@@ -2090,6 +2079,7 @@ function StaticTaskCard({
   onSelect,
 }: {
   task: BoardTask;
+  index: number;
   todayKey: string;
   dueSoonDays: number;
   project: Project;
@@ -2097,17 +2087,48 @@ function StaticTaskCard({
   className?: string;
   onSelect: () => void;
 }) {
+  const { ref, isDragging } = useSortable({
+    id: task.id,
+    index,
+    group: task.status,
+    type: "task",
+    data: { type: "task", status: task.status } satisfies DragTargetData,
+  });
+
   return (
-    <div className={className}>
+    <div
+      ref={ref}
+      className={`${className ?? ""} touch-none ${isDragging ? "pointer-events-none relative z-30" : ""}`}
+      data-shadow={isDragging || undefined}
+    >
       <TaskCard
         task={task}
         todayKey={todayKey}
         dueSoonDays={dueSoonDays}
         project={project}
         selected={selected}
-        dragging={false}
+        dragging={isDragging}
         onSelect={onSelect}
       />
+    </div>
+  );
+}
+
+function DropPlaceholderCard({ axis }: { axis: "horizontal" | "vertical" }) {
+  return (
+    <div
+      className={`grid rounded-lg border border-dashed border-[var(--accent)] bg-[var(--accent-soft)] px-4 text-center text-[var(--accent)] transition ${
+        axis === "horizontal"
+          ? "min-h-[110px] w-[280px] shrink-0 place-items-center"
+          : "min-h-[170px] w-full place-items-center"
+      }`}
+    >
+      <div className="grid place-items-center gap-2">
+        <span className="grid h-8 w-8 place-items-center rounded-full border border-dashed border-[var(--accent)] bg-[var(--panel)]">
+          <Plus size={16} />
+        </span>
+        <p className="text-xs font-medium">松手移入</p>
+      </div>
     </div>
   );
 }
@@ -2180,30 +2201,6 @@ function EmptyLaneCard({
           <Plus size={16} />
         </span>
         <p className="text-xs">暂无任务</p>
-      </div>
-    </div>
-  );
-}
-
-function DropPlaceholderCard({
-  axis,
-}: {
-  axis: "horizontal" | "vertical";
-}) {
-  return (
-    <div
-      aria-hidden="true"
-      className={`grid rounded-lg border border-dashed border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)] ${
-        axis === "horizontal"
-          ? "min-h-[110px] w-[280px] shrink-0 place-items-center"
-          : "min-h-[170px] w-full place-items-center"
-      }`}
-    >
-      <div className="grid place-items-center gap-2">
-        <span className="grid h-8 w-8 place-items-center rounded-full border border-dashed border-[var(--accent)] bg-[var(--panel)] text-[var(--accent)]">
-          <Plus size={16} />
-        </span>
-        <p className="text-xs font-medium">拖拽到此列末尾</p>
       </div>
     </div>
   );
