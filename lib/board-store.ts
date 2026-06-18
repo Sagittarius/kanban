@@ -53,6 +53,7 @@ export type CreateTaskInput = {
   status?: unknown;
   priority?: unknown;
   owner?: unknown;
+  tester?: unknown;
   testDueDate?: unknown;
   designDueDate?: unknown;
   dueDate?: unknown;
@@ -66,6 +67,7 @@ export type UpdateTaskInput = Partial<{
   status: unknown;
   priority: unknown;
   owner: unknown;
+  tester: unknown;
   startDate: unknown;
   testDueDate: unknown;
   designDueDate: unknown;
@@ -201,6 +203,7 @@ function rowToTask(row: TaskRow, taskSubtasks: Subtask[]): BoardTask {
     status: normalizeBoardStatus(row.status),
     priority,
     owner: row.owner,
+    tester: row.tester,
     startDate: row.startDate,
     testDueDate: row.testDueDate,
     designDueDate: row.designDueDate,
@@ -673,6 +676,7 @@ export async function createTask(input: CreateTaskInput): Promise<BoardTask> {
     status,
     priority,
     owner: asText(input.owner, "未分配"),
+    tester: optionalText(input.tester, ""),
     startDate: "",
     testDueDate: optionalText(input.testDueDate, ""),
     designDueDate: optionalText(input.designDueDate, ""),
@@ -740,6 +744,7 @@ export async function updateTask(
     status: nextStatus,
     priority: nextPriority,
     owner: asText(input.owner, current.owner),
+    tester: optionalText(input.tester, current.tester),
     startDate: optionalText(input.startDate, current.startDate),
     testDueDate: optionalText(input.testDueDate, current.testDueDate),
     designDueDate: optionalText(input.designDueDate, current.designDueDate),
@@ -765,6 +770,7 @@ export async function updateTask(
     status: patch.status !== current.status,
     priority: patch.priority !== current.priority,
     owner: patch.owner !== current.owner,
+    tester: patch.tester !== current.tester,
     startDate: patch.startDate !== current.startDate,
     testDueDate: patch.testDueDate !== current.testDueDate,
     designDueDate: patch.designDueDate !== current.designDueDate,

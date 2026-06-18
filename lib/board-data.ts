@@ -42,6 +42,7 @@ export type BoardTask = {
   status: BoardStatus;
   priority: Priority;
   owner: string;
+  tester: string;
   startDate: string;
   testDueDate: string;
   designDueDate: string;
@@ -377,6 +378,7 @@ export const seedTasks: BoardTask[] = [
     status: "dev",
     priority: "high",
     owner: "Vincent",
+    tester: "QA",
     startDate: "2026-06-08",
     designDueDate: "2026-06-09",
     testDueDate: "2026-06-10",
@@ -401,6 +403,7 @@ export const seedTasks: BoardTask[] = [
     status: "dev",
     priority: "high",
     owner: "后端组",
+    tester: "QA",
     startDate: "2026-06-03",
     designDueDate: "2026-06-06",
     testDueDate: "2026-06-08",
@@ -425,6 +428,7 @@ export const seedTasks: BoardTask[] = [
     status: "test",
     priority: "medium",
     owner: "前端组",
+    tester: "测试组",
     startDate: "2026-06-01",
     designDueDate: "2026-06-03",
     testDueDate: "2026-06-05",
@@ -449,6 +453,7 @@ export const seedTasks: BoardTask[] = [
     status: "backlog",
     priority: "medium",
     owner: "运营组",
+    tester: "",
     startDate: "",
     designDueDate: "",
     testDueDate: "",
@@ -473,6 +478,7 @@ export const seedTasks: BoardTask[] = [
     status: "done",
     priority: "low",
     owner: "数据组",
+    tester: "QA",
     startDate: "2026-05-28",
     designDueDate: "2026-05-31",
     testDueDate: "2026-06-03",
@@ -497,6 +503,7 @@ export const seedTasks: BoardTask[] = [
     status: "dev",
     priority: "high",
     owner: "QA",
+    tester: "QA",
     startDate: "2026-06-04",
     designDueDate: "2026-06-05",
     testDueDate: "2026-06-07",
@@ -521,6 +528,7 @@ export const seedTasks: BoardTask[] = [
     status: "backlog",
     priority: "low",
     owner: "市场组",
+    tester: "",
     startDate: "2026-06-11",
     designDueDate: "2026-06-15",
     testDueDate: "2026-06-17",

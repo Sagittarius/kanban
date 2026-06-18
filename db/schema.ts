@@ -24,6 +24,7 @@ export const tasks = sqliteTable("tasks", {
   status: text("status").notNull().default("backlog"),
   priority: text("priority").notNull().default("medium"),
   owner: text("owner").notNull().default("未分配"),
+  tester: text("tester").notNull().default(""),
   startDate: text("start_date").notNull().default(""),
   testDueDate: text("test_due_date").notNull().default(""),
   designDueDate: text("design_due_date").notNull().default(""),
