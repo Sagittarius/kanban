@@ -1797,9 +1797,6 @@ export default function KanbanApp({
             <span className="h-3 w-px bg-[var(--border)]" />
             <span className="font-medium text-[var(--text)]">kfzx-chenwh4</span>
             <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--accent)]">0000959918</span>
-            <span className="hidden rounded bg-[var(--card-section)] px-1.5 py-0.5 text-xs text-[var(--muted)] 2xl:inline-flex">
-              {imageTag}
-            </span>
           </div>
         </div>
       </footer>
