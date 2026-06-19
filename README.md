@@ -17,6 +17,44 @@
 - 独立全局活动记录面板，记录项目、任务、任务拆解和跨阶段移动，并按保留天数自动清理
 - SQLite/D1 持久化项目、任务、任务拆解、系统参数和活动记录
 
+## 版本维护
+
+版本信息分两层维护：
+
+- 应用版本：维护在 `package.json` 的 `version`
+- 镜像标识：维护在部署时传入的 `KANBAN_IMAGE_TAG`
+
+发布时的推荐规则：
+
+1. 只手工维护 `package.json.version`
+2. 不手工修改 `Dockerfile` 里的 `ARG` 默认值
+3. 构建镜像时通过 `--build-arg` 传入真实版本和真实镜像标识
+
+当前升级机制里：
+
+- 数据库是否需要升级，只看 `drizzle/` 中是否存在未应用迁移
+- 不根据 `snapshot`、`beta`、`release` 之类的 tag 后缀判断升级
+- `KANBAN_IMAGE_TAG` 只用于维护页和 footer 展示当前运行镜像
+
+因此未来发正式版时，不需要改代码逻辑，只需要：
+
+1. 更新 `package.json.version`
+2. 构建镜像时传入正式镜像 tag，例如 `kanban:1.1.0` 或 `halfroom/kanban:1.1.0`
+
+`Dockerfile` 中的：
+
+- `ARG KANBAN_APP_VERSION`
+- `ARG KANBAN_IMAGE_TAG`
+
+现在只是兜底占位值，避免“不传参数时无法构建”，不是正式发布值来源。
+
+如果当前生产正在跑的镜像名是：
+
+- `kanban:arm64`
+- `kanban:amd64`
+
+建议在部署环境里显式传入对应的 `KANBAN_IMAGE_TAG`，这样维护页里显示的镜像名才会和线上真实镜像一致。
+
 ## 本地开发
 
 vinext dev 使用 Miniflare 模拟 Cloudflare Workers 运行时，需要同时执行本地 SQLite 迁移和 Miniflare D1 迁移：
@@ -281,9 +319,8 @@ docker compose -f docker-compose.sqlite.yml up -d
 ```
 
 - 数据持久化在 Docker volume `kanban-data` 中
-- 容器启动时自动执行 SQLite 迁移
+- 容器启动时自动执行安全升级：先备份旧库，再对副本迁移，成功后替换
 - 访问 `http://服务器IP:3000`
-- 默认管理员：`admin` / `admin@123`
 
 指定宿主机目录存放数据库：
 
@@ -291,12 +328,34 @@ docker compose -f docker-compose.sqlite.yml up -d
 KANBAN_DATA_DIR=/opt/kanban-data docker compose -f docker-compose.sqlite.yml up -d
 ```
 
+如果你像下面这样直接挂载宿主机目录和 SQLite 文件，也支持从旧版本容器安全升级：
+
+```yaml
+services:
+  kanban:
+    container_name: kanban
+    pull_policy: never
+    ports:
+      - 3001:3000
+    volumes:
+      - /data/docker/kanban/data:/data
+    environment:
+      - KANBAN_SQLITE_PATH=/data/kanban.sqlite
+      - KANBAN_SQLITE_BACKUP_DIR=/data/backups
+      - KANBAN_AUTO_UPGRADE=true
+      - KANBAN_MAINTENANCE_TOKEN=change-this-token
+      - KANBAN_IMAGE_TAG=kanban:arm64
+    image: kanban:arm64
+networks: {}
+```
+
+如果你的服务器是 x86_64，请单独构建并使用对应的 amd64 镜像标签。
+
 ### PostgreSQL 部署
 
 ```bash
 # 设置 PostgreSQL 密码
 export POSTGRES_PASSWORD=your_secure_password
-export KANBAN_AUTH_SECRET=your_random_secret
 docker compose -f docker-compose.postgres.yml up -d
 ```
 
@@ -312,20 +371,24 @@ docker compose -f docker-compose.postgres.yml up -d
 
 ```bash
 # 构建镜像（指定目标服务器架构，如 ARM64）
-docker build --platform linux/arm64 -t project-kanban-board:v1.0 .
+docker build \
+  --platform linux/arm64 \
+  --build-arg KANBAN_APP_VERSION=1.1.0 \
+  --build-arg KANBAN_IMAGE_TAG=halfroom/kanban:arm64-snapshot-1.1.0 \
+  -t halfroom/kanban:arm64-snapshot-1.1.0 .
 
 # 导出镜像为 tar
-docker save -o project-kanban-board-v1.0.tar project-kanban-board:v1.0
+docker save -o kanban-arm64-snapshot-1.1.0.tar halfroom/kanban:arm64-snapshot-1.1.0
 
 # 压缩（可选）
-gzip project-kanban-board-v1.0.tar
+gzip kanban-arm64-snapshot-1.1.0.tar
 ```
 
 如果目标服务器是 x86_64：
 
 ```bash
-docker build --platform linux/amd64 -t project-kanban-board:v1.0 .
-docker save -o project-kanban-board-v1.0-amd64.tar project-kanban-board:v1.0
+docker build --platform linux/amd64 -t halfroom/kanban:amd64-snapshot-1.1.0 .
+docker save -o kanban-amd64-snapshot-1.1.0.tar halfroom/kanban:amd64-snapshot-1.1.0
 ```
 
 导出多架构镜像包（同时支持 amd64 和 arm64）：
@@ -333,14 +396,14 @@ docker save -o project-kanban-board-v1.0-amd64.tar project-kanban-board:v1.0
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t project-kanban-board:v1.0 \
-  --output type=oci,dest=kanban-v1.0-oci.tar .
+  -t halfroom/kanban:multiarch-snapshot-1.1.0 \
+  --output type=oci,dest=kanban-1.1.0-oci.tar .
 ```
 
 #### 2. 传输到内网服务器
 
 ```bash
-scp project-kanban-board-v1.0.tar.gz user@内网服务器:/opt/
+scp kanban-arm64-snapshot-1.1.0.tar.gz user@内网服务器:/opt/
 # 或使用 U 盘、移动硬盘等物理介质
 ```
 
@@ -348,10 +411,10 @@ scp project-kanban-board-v1.0.tar.gz user@内网服务器:/opt/
 
 ```bash
 # 解压
-gunzip project-kanban-board-v1.0.tar.gz
+gunzip kanban-arm64-snapshot-1.1.0.tar.gz
 
 # 导入镜像
-docker load -i project-kanban-board-v1.0.tar
+docker load -i kanban-arm64-snapshot-1.1.0.tar
 
 # 创建数据目录
 mkdir -p /opt/kanban-data
@@ -361,11 +424,13 @@ docker run -d \
   --name kanban \
   -p 3000:3000 \
   -v /opt/kanban-data:/data \
-  -e KANBAN_AUTH_SECRET=your-random-secret \
-  -e KANBAN_SUPER_ADMIN_USERNAME=admin \
-  -e KANBAN_SUPER_ADMIN_PASSWORD=your-secure-password \
+  -e KANBAN_SQLITE_PATH=/data/kanban.sqlite \
+  -e KANBAN_SQLITE_BACKUP_DIR=/data/backups \
+  -e KANBAN_AUTO_UPGRADE=false \
+  -e KANBAN_MAINTENANCE_TOKEN=change-this-token \
+  -e KANBAN_IMAGE_TAG=kanban:arm64 \
   --restart unless-stopped \
-  project-kanban-board:v1.0
+  kanban:arm64
 
 # 或使用 docker compose（需将镜像 tag 写入 compose 文件）
 docker compose -f docker-compose.sqlite.yml up -d
@@ -378,16 +443,72 @@ docker logs kanban
 curl http://localhost:3000
 ```
 
+## SQLite 安全升级与回滚
+
+当前版本的升级机制遵循一条规则：**升级失败时不破坏原有数据库**。
+
+容器启动时会执行：
+
+1. 检查 `drizzle/` 下是否有未应用迁移
+2. 如果有，先把当前数据库备份到 `KANBAN_SQLITE_BACKUP_DIR`
+3. 基于数据库副本执行迁移
+4. 迁移成功后再替换正式库
+5. 任一步失败，保留原库不动，并保留备份路径供人工回滚
+
+### 手动检查是否需要升级
+
+```bash
+KANBAN_SQLITE_PATH=/data/kanban.sqlite node scripts/upgrade-local-sqlite.mjs --check
+```
+
+### 手动执行安全升级
+
+```bash
+KANBAN_SQLITE_PATH=/data/kanban.sqlite \
+KANBAN_SQLITE_BACKUP_DIR=/data/backups \
+node scripts/upgrade-local-sqlite.mjs
+```
+
+### 从备份手动回滚
+
+```bash
+KANBAN_SQLITE_PATH=/data/kanban.sqlite \
+node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06-19T09-00-00-000Z.v0.1.0.sqlite
+```
+
+回滚脚本在覆盖当前库之前，也会先额外保存一份当前库快照。
+
+### 维护态升级机制
+
+- 默认 `KANBAN_AUTO_UPGRADE=true`，容器启动时自动升级
+- 如果你希望先人工确认，再升级数据库：
+
+```bash
+-e KANBAN_AUTO_UPGRADE=false
+```
+
+此时容器会：
+
+1. 启动前做迁移预检
+2. 如果数据库已是最新版本，直接进入正常业务页面
+3. 如果存在待执行迁移，服务继续启动，但全站进入维护页
+4. 业务 API 会统一返回 `503`
+5. 管理员可以在维护页输入 `KANBAN_MAINTENANCE_TOKEN` 后执行安全升级
+6. 升级成功后自动解除维护态并恢复看板
+
+维护页不会提供“一键程序回滚”或“一键数据库回滚”。程序回滚通过回退 Docker 镜像完成；数据库恢复通过备份文件人工执行。
+
 ### 环境变量说明
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `KANBAN_DB_DRIVER` | `sqlite` | 数据库驱动：`sqlite` 或 `postgres` |
 | `KANBAN_SQLITE_PATH` | `.data/kanban.sqlite` | SQLite 数据库文件路径 |
+| `KANBAN_SQLITE_BACKUP_DIR` | `<db目录>/backups` | SQLite 升级前备份目录 |
+| `KANBAN_AUTO_UPGRADE` | `true` | 是否在容器启动时自动执行安全升级 |
+| `KANBAN_MAINTENANCE_TOKEN` | - | 维护页升级口令，`KANBAN_AUTO_UPGRADE=false` 时建议必配 |
+| `KANBAN_IMAGE_TAG` | `kanban:<version>` | 当前运行镜像标签，维护页和 footer 会展示，建议显式传入真实部署 tag |
 | `POSTGRES_URL` | - | PostgreSQL 连接字符串 |
-| `KANBAN_AUTH_SECRET` | 内置占位 | Session 加密密钥，生产必须修改 |
-| `KANBAN_SUPER_ADMIN_USERNAME` | `admin` | 初始超级管理员用户名 |
-| `KANBAN_SUPER_ADMIN_PASSWORD` | `admin@123` | 初始超级管理员密码，部署后立即修改 |
 
 ## 活动记录
 
@@ -400,4 +521,12 @@ pnpm run db:generate
 pnpm run db:migrate:local
 ```
 
-schema 位于 `db/schema.ts`，生成的迁移文件位于 `drizzle/`。系统参数存放在 `system_parameters` 表，当前包含 `due_soon_days` 和 `activity_retention_days`，前端系统参数抽屉和 `/api/settings` 会读写这些值。任务完成时间存放在 `tasks.completed_at`，用于判断已完成任务是否超期完成。
+schema 位于 `db/schema.ts`，生成的迁移文件位于 `drizzle/`。系统参数存放在 `system_parameters` 表，当前包含 `due_soon_days`、`activity_retention_days`、`task_card_stripe_enabled`、看板名称和阶段名称等参数，前端系统参数抽屉和 `/api/settings` 会读写这些值。任务完成时间存放在 `tasks.completed_at`，用于判断已完成任务是否超期完成。
+
+## 镜像版本
+
+当前维护态升级方案对应的 ARM 镜像标签：
+
+```text
+halfroom/kanban:arm64-snapshot-1.1.0
+```

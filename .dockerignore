@@ -12,3 +12,4 @@ dist
 *.md
 !README.md
 offline-packages
+docker-images

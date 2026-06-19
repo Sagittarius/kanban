@@ -1,6 +1,6 @@
 {
   "name": "project-kanban-board",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -12,6 +12,10 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "node scripts/migrate-local-sqlite.mjs",
+    "db:maintenance:preflight": "node scripts/preflight-maintenance.mjs",
+    "db:upgrade:check": "node scripts/upgrade-local-sqlite.mjs --check",
+    "db:upgrade:safe": "node scripts/upgrade-local-sqlite.mjs",
+    "db:restore:sqlite": "node scripts/restore-local-sqlite-backup.mjs",
     "db:migrate:d1:local": "wrangler d1 migrations apply project-kanban-board --local",
     "local:dev": "pnpm run db:migrate:local && pnpm run db:migrate:d1:local && vinext dev --hostname 0.0.0.0",
     "local:start": "pnpm run db:migrate:local && vinext start --hostname 0.0.0.0"

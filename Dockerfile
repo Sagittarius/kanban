@@ -15,6 +15,10 @@ FROM node:22-bookworm-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
+ARG KANBAN_APP_VERSION=0.0.0
+ARG KANBAN_IMAGE_TAG=kanban:unknown
+ENV KANBAN_APP_VERSION=${KANBAN_APP_VERSION}
+ENV KANBAN_IMAGE_TAG=${KANBAN_IMAGE_TAG}
 
 RUN corepack enable && corepack prepare pnpm@10 --activate
 
@@ -28,7 +32,8 @@ COPY --from=builder /app/postcss.config.mjs ./postcss.config.mjs
 COPY --from=builder /app/node_modules ./node_modules
 
 RUN mkdir -p /data
+RUN chmod +x /app/scripts/docker-entrypoint.sh
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "node scripts/migrate-local-sqlite.mjs && node_modules/.bin/vinext start --hostname 0.0.0.0"]
+CMD ["sh", "/app/scripts/docker-entrypoint.sh"]

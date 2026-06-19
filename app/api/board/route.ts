@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import { createSeedBoard } from "@/lib/board-data";
 import { getBoard } from "@/lib/board-store";
+import { guardMaintenanceApi } from "@/lib/maintenance";
 
 export async function GET() {
+  const maintenanceResponse = await guardMaintenanceApi();
+  if (maintenanceResponse) {
+    return maintenanceResponse;
+  }
+
   try {
     return NextResponse.json(await getBoard());
   } catch (error) {

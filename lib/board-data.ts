@@ -140,6 +140,18 @@ export const defaultSystemParameters: SystemParameter[] = [
     updatedAt: seedTime,
   },
   {
+    key: "task_card_stripe_enabled",
+    value: "true",
+    label: "任务卡片色条",
+    valueType: "boolean",
+    group: "看板",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 28,
+    updatedAt: seedTime,
+  },
+  {
     key: "column_backlog_name",
     value: "需求池",
     label: "第1阶段名称",

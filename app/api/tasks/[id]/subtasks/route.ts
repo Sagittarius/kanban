@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createSubtask } from "@/lib/board-store";
+import { guardMaintenanceApi } from "@/lib/maintenance";
 
 type RouteContext = {
   params: Promise<{
@@ -8,6 +9,11 @@ type RouteContext = {
 };
 
 export async function POST(request: Request, context: RouteContext) {
+  const maintenanceResponse = await guardMaintenanceApi();
+  if (maintenanceResponse) {
+    return maintenanceResponse;
+  }
+
   try {
     const { id } = await context.params;
     const body = await request.json();

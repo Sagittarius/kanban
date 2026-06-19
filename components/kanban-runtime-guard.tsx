@@ -31,6 +31,8 @@ type ClientErrorPayload = {
 type KanbanRuntimeGuardProps = {
   initialBoard: BoardData;
   todayKey: string;
+  appVersion: string;
+  imageTag: string;
 };
 
 const reportedErrors = new Map<string, number>();
@@ -183,11 +185,18 @@ class RuntimeErrorBoundary extends Component<
 export default function KanbanRuntimeGuard({
   initialBoard,
   todayKey,
+  appVersion,
+  imageTag,
 }: KanbanRuntimeGuardProps) {
   return (
     <RuntimeErrorBoundary>
       <RuntimeErrorMonitor />
-      <KanbanApp initialBoard={initialBoard} todayKey={todayKey} />
+      <KanbanApp
+        initialBoard={initialBoard}
+        todayKey={todayKey}
+        appVersion={appVersion}
+        imageTag={imageTag}
+      />
     </RuntimeErrorBoundary>
   );
 }

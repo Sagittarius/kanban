@@ -498,6 +498,25 @@ function settingText(settings: SystemSettings, key: string, fallback: string) {
   return value || fallback;
 }
 
+function settingBoolean(settings: SystemSettings, key: string, fallback: boolean) {
+  const value = settings.parameters.find((parameter) => parameter.key === key)?.value;
+  return value === undefined ? fallback : value === "true";
+}
+
+function alphaColor(value: string, alpha: number) {
+  const hex = value.trim();
+  const match = /^#?([0-9a-f]{6})$/i.exec(hex);
+  if (!match) {
+    return value;
+  }
+
+  const raw = match[1];
+  const red = Number.parseInt(raw.slice(0, 2), 16);
+  const green = Number.parseInt(raw.slice(2, 4), 16);
+  const blue = Number.parseInt(raw.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
+
 function sortProjects(projects: Project[]) {
   return [...projects].sort((left, right) => {
     if (left.status !== right.status) {
@@ -554,9 +573,13 @@ async function apiRequest<T>(url: string, method: string, body?: unknown) {
 export default function KanbanApp({
   initialBoard,
   todayKey,
+  appVersion,
+  imageTag,
 }: {
   initialBoard: BoardData;
   todayKey: string;
+  appVersion: string;
+  imageTag: string;
 }) {
   const [board, setBoard] = useState(initialBoard);
   const [, setSyncState] = useState<SyncState>("syncing");
@@ -663,6 +686,7 @@ export default function KanbanApp({
   const isLocalPreview = board.storageMode === "local";
   const settings = board.settings ?? defaultSystemSettings;
   const dueSoonDays = settings.dueSoonDays;
+  const taskCardStripeEnabled = settingBoolean(settings, "task_card_stripe_enabled", true);
   const archivedProjects = useMemo(
     () => sortedProjects.filter((project) => project.status === "archived"),
     [sortedProjects]
@@ -1722,6 +1746,7 @@ export default function KanbanApp({
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
+                    taskCardStripeEnabled={taskCardStripeEnabled}
                     crossDragTarget={crossDragTarget}
                     onToggleCollapse={() => setBacklogCollapsed((current) => !current)}
                     onOpenTask={openTask}
@@ -1745,6 +1770,7 @@ export default function KanbanApp({
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
+                    taskCardStripeEnabled={taskCardStripeEnabled}
                     crossDragTarget={crossDragTarget}
                     onOpenTask={openTask}
                   />
@@ -1762,12 +1788,18 @@ export default function KanbanApp({
           <div className="flex items-center gap-2">
             <Copyright size={14} />
             <span>2026 <strong>Kanban</strong></span>
+            <span className="rounded bg-[var(--card-section)] px-1.5 py-0.5 text-xs text-[var(--muted)]">
+              v{appVersion}
+            </span>
           </div>
           <div className="flex items-center gap-2">
             <Edit3 size={13} />
             <span className="h-3 w-px bg-[var(--border)]" />
             <span className="font-medium text-[var(--text)]">kfzx-chenwh4</span>
             <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--accent)]">0000959918</span>
+            <span className="hidden rounded bg-[var(--card-section)] px-1.5 py-0.5 text-xs text-[var(--muted)] 2xl:inline-flex">
+              {imageTag}
+            </span>
           </div>
         </div>
       </footer>
@@ -1857,6 +1889,7 @@ function HorizontalBoardColumn({
   selectedTaskId,
   todayKey,
   dueSoonDays,
+  taskCardStripeEnabled,
   crossDragTarget,
   onToggleCollapse,
   onOpenTask,
@@ -1868,6 +1901,7 @@ function HorizontalBoardColumn({
   selectedTaskId: string | null;
   todayKey: string;
   dueSoonDays: number;
+  taskCardStripeEnabled: boolean;
   crossDragTarget: BoardStatus | null;
   onToggleCollapse: () => void;
   onOpenTask: (taskId: string) => void;
@@ -1922,7 +1956,7 @@ function HorizontalBoardColumn({
             <div
               ref={ref}
               data-board-drop-status={column.id}
-              className="flex min-h-[110px] flex-nowrap items-stretch gap-3 overflow-x-auto overflow-y-hidden px-3 pb-3"
+              className="flex min-h-[118px] flex-nowrap items-stretch gap-3.5 overflow-x-auto overflow-y-hidden rounded-b-lg bg-[var(--lane-bg)] px-3.5 py-3"
             >
               {tasks.map((task, index) => (
                 <HorizontalSortableTaskCard
@@ -1933,6 +1967,7 @@ function HorizontalBoardColumn({
                   dueSoonDays={dueSoonDays}
                   project={projectById(projects, task.projectId)}
                   selected={task.id === selectedTaskId}
+                  stripeEnabled={taskCardStripeEnabled}
                   className="w-[280px] shrink-0"
                   onSelect={() => onOpenTask(task.id)}
                 />
@@ -1954,6 +1989,7 @@ function BoardColumnView({
   selectedTaskId,
   todayKey,
   dueSoonDays,
+  taskCardStripeEnabled,
   crossDragTarget,
   onOpenTask,
 }: {
@@ -1963,6 +1999,7 @@ function BoardColumnView({
   selectedTaskId: string | null;
   todayKey: string;
   dueSoonDays: number;
+  taskCardStripeEnabled: boolean;
   crossDragTarget: BoardStatus | null;
   onOpenTask: (taskId: string) => void;
 }) {
@@ -1977,7 +2014,7 @@ function BoardColumnView({
     <div
       role="region"
       aria-label={`${column.title}列表`}
-      className={`flex min-w-[300px] flex-[0_0_300px] flex-col rounded-lg border bg-[var(--column-bg)] transition 2xl:min-w-[320px] 2xl:flex-1 ${
+      className={`flex min-w-[300px] flex-[0_0_300px] flex-col overflow-hidden rounded-lg border bg-[var(--column-bg)] transition 2xl:min-w-[320px] 2xl:flex-1 ${
         activeDropTarget
           ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]"
           : "border-[var(--border)]"
@@ -1999,7 +2036,7 @@ function BoardColumnView({
           </span>
         </div>
       </div>
-        <div ref={ref} data-board-drop-status={column.id} className="flex min-h-[220px] flex-1 flex-col gap-3 overflow-y-auto p-3">
+        <div ref={ref} data-board-drop-status={column.id} className="flex min-h-[220px] flex-1 flex-col gap-3.5 overflow-y-auto bg-[var(--lane-bg)] p-3.5">
           {tasks.map((task, index) => (
             <VerticalSortableTaskCard
               key={task.id}
@@ -2009,6 +2046,7 @@ function BoardColumnView({
               dueSoonDays={dueSoonDays}
               project={projectById(projects, task.projectId)}
               selected={task.id === selectedTaskId}
+              stripeEnabled={taskCardStripeEnabled}
               className="w-full"
               onSelect={() => onOpenTask(task.id)}
             />
@@ -2028,6 +2066,7 @@ function HorizontalSortableTaskCard({
   dueSoonDays,
   project,
   selected,
+  stripeEnabled,
   className,
   onSelect,
 }: {
@@ -2037,6 +2076,7 @@ function HorizontalSortableTaskCard({
   dueSoonDays: number;
   project: Project;
   selected: boolean;
+  stripeEnabled: boolean;
   className?: string;
   onSelect: () => void;
 }) {
@@ -2060,6 +2100,7 @@ function HorizontalSortableTaskCard({
         dueSoonDays={dueSoonDays}
         project={project}
         selected={selected}
+        stripeEnabled={stripeEnabled}
         dragging={isDragging}
         onSelect={onSelect}
       />
@@ -2074,6 +2115,7 @@ function VerticalSortableTaskCard({
   dueSoonDays,
   project,
   selected,
+  stripeEnabled,
   className,
   onSelect,
 }: {
@@ -2083,6 +2125,7 @@ function VerticalSortableTaskCard({
   dueSoonDays: number;
   project: Project;
   selected: boolean;
+  stripeEnabled: boolean;
   className?: string;
   onSelect: () => void;
 }) {
@@ -2106,6 +2149,7 @@ function VerticalSortableTaskCard({
         dueSoonDays={dueSoonDays}
         project={project}
         selected={selected}
+        stripeEnabled={stripeEnabled}
         dragging={isDragging}
         onSelect={onSelect}
       />
@@ -2286,6 +2330,7 @@ function TaskCard({
   dueSoonDays,
   project,
   selected,
+  stripeEnabled,
   dragging,
   onSelect,
 }: {
@@ -2294,6 +2339,7 @@ function TaskCard({
   dueSoonDays: number;
   project: Project;
   selected: boolean;
+  stripeEnabled: boolean;
   dragging: boolean;
   onSelect: () => void;
 }) {
@@ -2301,22 +2347,43 @@ function TaskCard({
   const hasDateAlert = markers.some((marker) => marker.state !== "normal");
   const subtaskDone = task.subtasks.filter((step) => step.done).length;
   const progress = progressFromSubtasks(task.subtasks, task.progress);
+  const visibleTags = task.tags.slice(0, 3);
+  const hiddenTagCount = Math.max(0, task.tags.length - visibleTags.length);
+  const progressLabel = task.subtasks.length
+    ? `${subtaskDone}/${task.subtasks.length}`
+    : `${progress}%`;
+  const stripeColor = alphaColor(project.color, 0.42);
 
   return (
     <article
       onClick={onSelect}
-      className={`group rounded-lg border bg-[var(--card)] p-3 transition ${
-        selected ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]" : "border-[var(--card-border)]"
+      className={`group relative overflow-hidden rounded-lg border bg-[var(--card)] p-3.5 pl-4 transition ${
+        selected ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]" : "border-[var(--card-border-strong)]"
       } ${hasDateAlert ? "border-[var(--danger)] bg-[var(--danger-soft)]" : ""} ${
         dragging
           ? "shadow-[0_22px_50px_rgba(15,23,42,0.24),0_8px_18px_rgba(15,23,42,0.16)] ring-1 ring-[var(--accent-soft)]"
-          : "cursor-grab shadow-sm hover:-translate-y-0.5 hover:shadow-md active:cursor-grabbing"
+          : "cursor-grab shadow-[var(--card-shadow)] hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--card-shadow-hover)] active:cursor-grabbing"
       }`}
     >
+      {stripeEnabled ? (
+        <span
+          aria-hidden="true"
+          className="absolute inset-y-0 left-0 w-1"
+          style={{ backgroundColor: stripeColor }}
+        />
+      ) : null}
       <div className="min-w-0">
-        <div className="flex items-start justify-between gap-3">
-          <h3 className="text-sm font-semibold leading-5 2xl:text-[15px]">{task.title}</h3>
-          <span className={`shrink-0 rounded-md border px-2 py-0.5 text-xs ${priorityTone[task.priority]}`}>
+        <div className="flex items-start gap-3">
+          <div className="min-w-0 flex-1">
+            <h3 className="line-clamp-2 text-sm font-semibold leading-5 text-[var(--text)] 2xl:text-[15px]">
+              {task.title}
+            </h3>
+            <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--muted)]">
+              <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: project.color }} />
+              <span className="truncate">{project.name}</span>
+            </div>
+          </div>
+          <span className={`shrink-0 rounded-md border px-2 py-0.5 text-[11px] ${priorityTone[task.priority]}`}>
             {priorityLabels[task.priority]}
           </span>
         </div>
@@ -2325,66 +2392,86 @@ function TaskCard({
         </p>
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-1">
-        {task.tags.slice(0, 4).map((tag) => (
-          <span key={tag} className="inline-flex items-center gap-1 rounded-md bg-[var(--tag-bg)] px-2 py-0.5 text-[11px] text-[var(--muted)]">
-            <Tag size={10} />
-            {tag}
-          </span>
-        ))}
-      </div>
-
-      <div className="mt-3 flex items-center gap-2 text-xs text-[var(--muted)]">
-        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: project.color }} />
-        <span className="truncate">{project.name}</span>
-        <span>·</span>
-        <OwnerTag name={task.owner} />
-        {task.tester ? (
-          <>
-            <span>测</span>
-            <OwnerTag name={task.tester} />
-          </>
-        ) : null}
-      </div>
-
-      <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-[var(--panel-soft)]">
-        <div
-          className="h-full rounded-full bg-[var(--accent)] transition-all"
-          style={{ width: `${progress}%` }}
-        />
-      </div>
-
-      <div className="mt-3 flex flex-wrap gap-1.5 text-xs text-[var(--muted)]">
-        {markers.length ? (
-          markers.map((marker) => (
-            <span
-              key={`${marker.label}-${marker.date}`}
-              className={`rounded-md border px-2 py-0.5 ${
-                marker.state === "normal"
-                  ? "border-[var(--border)] bg-[var(--panel-soft)]"
-                  : "border-[var(--danger)] bg-white/55 font-semibold text-[var(--danger)]"
-              }`}
-            >
-              {marker.label}: {marker.date}
-              {marker.note ? ` · ${marker.note}` : ""}
+      {visibleTags.length ? (
+        <div className="mt-3 flex flex-wrap gap-1">
+          {visibleTags.map((tag) => (
+            <span key={tag} className="inline-flex items-center gap-1 rounded-md bg-[var(--tag-bg)] px-2 py-0.5 text-[11px] text-[var(--muted)]">
+              <Tag size={10} />
+              {tag}
             </span>
-          ))
+          ))}
+          {hiddenTagCount > 0 ? (
+            <span className="rounded-md bg-[var(--panel-soft)] px-2 py-0.5 text-[11px] text-[var(--muted)]">
+              +{hiddenTagCount}
+            </span>
+          ) : null}
+        </div>
+      ) : null}
+
+      <div className="mt-3 grid grid-cols-2 gap-2 border-t border-[var(--border)] pt-3 text-xs">
+        <TaskCardInfo label="负责">
+          <OwnerTag name={task.owner} />
+        </TaskCardInfo>
+        {task.tester ? (
+          <TaskCardInfo label="测试">
+            <OwnerTag name={task.tester} />
+          </TaskCardInfo>
         ) : (
-          <span className="rounded-md border border-[var(--border)] bg-[var(--panel-soft)] px-2 py-0.5">未排期</span>
+          <TaskCardInfo label="测试">
+            <span className="text-[var(--muted)]">-</span>
+          </TaskCardInfo>
         )}
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs text-[var(--muted)]">
-        <span>{progress}%</span>
-        <span className={task.blockers > 0 ? "font-semibold text-[var(--danger)]" : ""}>
+      <div className="mt-3 grid gap-1.5 text-[11px] text-[var(--muted)]">
+        {markers.length ? (
+          markers.map((marker) => (
+            <div
+              key={`${marker.label}-${marker.date}`}
+              className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1 ${
+                marker.state === "normal"
+                  ? "border-[var(--card-border)] bg-[var(--card-section)]"
+                  : "border-[var(--danger)] bg-white/55 font-semibold text-[var(--danger)]"
+              }`}
+            >
+              <span>{marker.label}</span>
+              <span className="shrink-0 tabular-nums">
+                {marker.date}
+                {marker.note ? ` ${marker.note}` : ""}
+              </span>
+            </div>
+          ))
+        ) : (
+          <div className="rounded-md border border-[var(--card-border)] bg-[var(--card-section)] px-2 py-1">未排期</div>
+        )}
+      </div>
+
+      <div className="mt-3 flex items-center gap-3 text-xs text-[var(--muted)]">
+        <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--card-section)]">
+          <div
+            className="h-full rounded-full bg-[var(--accent)] transition-all"
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <span className="shrink-0 tabular-nums">{progressLabel}</span>
+        <span className={`shrink-0 ${task.blockers > 0 ? "font-semibold text-[var(--danger)]" : ""}`}>
           {task.blockers > 0
             ? `${task.blockers} 个阻塞`
             : task.subtasks.length
-              ? `${subtaskDone}/${task.subtasks.length} 步`
-              : "无拆解"}
+              ? "进度"
+              : "进度"}
         </span>
       </div>
     </article>
+  );
+}
+
+function TaskCardInfo({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-[var(--card-border)] bg-[var(--card-section)] px-2 py-1.5 text-left">
+      <div className="shrink-0 text-xs text-[var(--muted)]">{label}</div>
+      <div className="flex min-w-0 items-center justify-end text-right">{children}</div>
+    </div>
   );
 }
 

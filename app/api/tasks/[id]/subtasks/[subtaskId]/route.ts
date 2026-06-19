@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { deleteSubtask, updateSubtask } from "@/lib/board-store";
+import { guardMaintenanceApi } from "@/lib/maintenance";
 
 type RouteContext = {
   params: Promise<{
@@ -9,6 +10,11 @@ type RouteContext = {
 };
 
 export async function PATCH(request: Request, context: RouteContext) {
+  const maintenanceResponse = await guardMaintenanceApi();
+  if (maintenanceResponse) {
+    return maintenanceResponse;
+  }
+
   try {
     const { id, subtaskId } = await context.params;
     const body = await request.json();
@@ -25,6 +31,11 @@ export async function PATCH(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_request: Request, context: RouteContext) {
+  const maintenanceResponse = await guardMaintenanceApi();
+  if (maintenanceResponse) {
+    return maintenanceResponse;
+  }
+
   try {
     const { id, subtaskId } = await context.params;
     return NextResponse.json(await deleteSubtask(id, subtaskId));

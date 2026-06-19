@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server";
 import { getSystemSettings, updateSystemSettings } from "@/lib/board-store";
+import { guardMaintenanceApi } from "@/lib/maintenance";
 
 export async function GET() {
+  const maintenanceResponse = await guardMaintenanceApi();
+  if (maintenanceResponse) {
+    return maintenanceResponse;
+  }
+
   try {
     return NextResponse.json(await getSystemSettings());
   } catch (error) {
@@ -16,6 +22,11 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  const maintenanceResponse = await guardMaintenanceApi();
+  if (maintenanceResponse) {
+    return maintenanceResponse;
+  }
+
   try {
     const body = await request.json();
     return NextResponse.json(await updateSystemSettings(body));
