@@ -240,6 +240,18 @@ select {
   font: inherit;
 }
 
+button:not(:disabled),
+[role="button"],
+a[href],
+select:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
+}
+
 * {
   box-sizing: border-box;
 }
