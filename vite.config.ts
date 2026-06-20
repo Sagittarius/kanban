@@ -4,22 +4,11 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
-const SITE_CREATOR_PLACEHOLDER_DATABASE_ID =
-  "00000000-0000-4000-8000-000000000000";
-
-const { d1, r2 } = hostingConfig;
+const { r2 } = hostingConfig;
 
 const localBindingConfig = {
   main: "./worker/index.ts",
-  d1_databases: d1
-    ? [
-        {
-          binding: d1,
-          database_name: "project-kanban-board",
-          database_id: SITE_CREATOR_PLACEHOLDER_DATABASE_ID,
-        },
-      ]
-    : [],
+  d1_databases: [],
   r2_buckets: r2
     ? [
         {
@@ -30,13 +19,17 @@ const localBindingConfig = {
     : [],
 };
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [
     vinext(),
     sites(),
-    cloudflare({
-      viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-      config: localBindingConfig,
-    }),
+    ...(command === "build"
+      ? [
+          cloudflare({
+            viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
+            config: localBindingConfig,
+          }),
+        ]
+      : []),
   ],
-});
+}));

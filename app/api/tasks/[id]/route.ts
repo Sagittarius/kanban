@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { deleteTask, updateTask } from "@/lib/board-store";
 import { guardMaintenanceApi } from "@/lib/maintenance";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { errorMessage, errorStatus, requireActiveBoardContext } from "@/lib/server-session";
 
 type RouteContext = {
   params: Promise<{
@@ -17,14 +18,13 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
     const body = await request.json();
-    return NextResponse.json(await updateTask(id, body));
+    const { user, board } = await requireActiveBoardContext();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.updateTask(user, board.id, id, body));
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to update task";
-
     return NextResponse.json(
-      { error: message },
-      { status: message === "Task not found" ? 404 : 500 }
+      { error: errorMessage(error, "保存任务失败") },
+      { status: errorStatus(error) }
     );
   }
 }
@@ -37,14 +37,13 @@ export async function DELETE(_request: Request, context: RouteContext) {
 
   try {
     const { id } = await context.params;
-    return NextResponse.json(await deleteTask(id));
+    const { user, board } = await requireActiveBoardContext();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.deleteTask(user, board.id, id));
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to delete task";
-
     return NextResponse.json(
-      { error: message },
-      { status: message === "Task not found" ? 404 : 500 }
+      { error: errorMessage(error, "删除任务失败") },
+      { status: errorStatus(error) }
     );
   }
 }

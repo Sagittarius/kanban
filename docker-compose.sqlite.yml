@@ -3,10 +3,15 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: kanban
     ports:
       - "3000:3000"
     environment:
-      - KANBAN_SQLITE_PATH=/data/kanban.sqlite
+      KANBAN_DB_DRIVER: sqlite
+      KANBAN_SQLITE_PATH: /data/kanban.sqlite
+      KANBAN_SQLITE_BACKUP_DIR: /data/backups
+      KANBAN_AUTO_UPGRADE: "true"
+      KANBAN_IMAGE_TAG: kanban:sqlite-{version}
     volumes:
       - kanban-data:/data
     restart: unless-stopped

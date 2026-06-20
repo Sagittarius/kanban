@@ -13,5 +13,12 @@ export function getAppVersion() {
 }
 
 export function getImageTag() {
-  return process.env.KANBAN_IMAGE_TAG ?? `kanban:${getAppVersion()}`;
+  const configuredTag = process.env.KANBAN_IMAGE_TAG;
+  const appVersion = getAppVersion();
+
+  if (!configuredTag) {
+    return `kanban:${appVersion}`;
+  }
+
+  return configuredTag.replaceAll("{version}", appVersion);
 }

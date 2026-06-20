@@ -72,7 +72,12 @@ export function readAppVersion() {
 }
 
 export function readImageTag() {
-  return process.env.KANBAN_IMAGE_TAG ?? `kanban:${readAppVersion()}`;
+  const configuredTag = process.env.KANBAN_IMAGE_TAG;
+  const appVersion = readAppVersion();
+  if (!configuredTag) {
+    return `kanban:${appVersion}`;
+  }
+  return configuredTag.replaceAll("{version}", appVersion);
 }
 
 export function ensureUpgradeMetadataTables(database) {

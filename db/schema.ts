@@ -1,8 +1,57 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    role: text("role").notNull().default("user"),
+    displayName: text("display_name").notNull().default(""),
+    avatarKey: text("avatar_key").notNull().default(""),
+    timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    usernameIdx: uniqueIndex("users_username_unique").on(table.username),
+  })
+);
+
+export const boards = sqliteTable(
+  "boards",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    ownerUserId: text("owner_user_id").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    ownerIdx: index("boards_owner_user_id_idx").on(table.ownerUserId),
+  })
+);
+
+export const boardMembers = sqliteTable(
+  "board_members",
+  {
+    boardId: text("board_id").notNull(),
+    userId: text("user_id").notNull(),
+    role: text("role").notNull().default("viewer"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("board_members_board_user_unique").on(table.boardId, table.userId),
+    userIdx: index("board_members_user_id_idx").on(table.userId),
+  })
+);
 
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
+  boardId: text("board_id").notNull().default("default-board"),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   owner: text("owner").notNull(),
@@ -14,7 +63,9 @@ export const projects = sqliteTable("projects", {
   orderIndex: integer("order_index").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+}, (table) => ({
+  boardIdx: index("projects_board_id_idx").on(table.boardId),
+}));
 
 export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
@@ -53,6 +104,7 @@ export const subtasks = sqliteTable("subtasks", {
 
 export const activityLog = sqliteTable("task_activity", {
   id: text("id").primaryKey(),
+  boardId: text("board_id").notNull().default("default-board"),
   entityType: text("entity_type").notNull(),
   entityId: text("entity_id").notNull(),
   projectId: text("project_id"),
@@ -61,7 +113,9 @@ export const activityLog = sqliteTable("task_activity", {
   message: text("message").notNull(),
   meta: text("meta").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+}, (table) => ({
+  boardIdx: index("task_activity_board_id_idx").on(table.boardId),
+}));
 
 export const systemParameters = sqliteTable("system_parameters", {
   key: text("key").primaryKey(),

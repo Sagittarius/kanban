@@ -1,0 +1,35 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: kanban-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kanban}
+      POSTGRES_USER: ${POSTGRES_USER:-kanban}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-this-password}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  kanban:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kanban
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      KANBAN_DB_DRIVER: postgres
+      POSTGRES_URL: postgres://${POSTGRES_USER:-kanban}:${POSTGRES_PASSWORD:-change-this-password}@postgres:5432/${POSTGRES_DB:-kanban}
+      KANBAN_IMAGE_TAG: kanban:postgres-{version}
+    restart: unless-stopped
+
+volumes:
+  pgdata:

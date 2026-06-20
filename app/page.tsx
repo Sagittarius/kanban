@@ -1,8 +1,12 @@
+import AuthenticatedShell from "@/components/authenticated-shell";
 import MaintenancePage from "@/components/maintenance-page";
 import KanbanRuntimeGuard from "@/components/kanban-runtime-guard";
+import LoginPage from "@/components/login-page";
+import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import { getAppVersion, getImageTag } from "@/lib/app-meta";
-import { createSeedBoard } from "@/lib/board-data";
 import { readMaintenanceState } from "@/lib/maintenance";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { getOptionalSessionUser, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
 
 export const dynamic = "force-dynamic";
 
@@ -36,12 +40,35 @@ export default async function Home() {
     );
   }
 
-  return (
+  const optionalUser = await getOptionalSessionUser();
+  if (isAuthFeatureEnabled() && !optionalUser) {
+    return <LoginPage />;
+  }
+
+  const user = optionalUser ?? (await requireSessionUser());
+  const activeBoard = await resolveActiveBoard(user);
+  const repo = await getKanbanRepository();
+  const board = await repo.getBoard(user, activeBoard.id);
+
+  const runtime = (
     <KanbanRuntimeGuard
-      initialBoard={createSeedBoard()}
-      todayKey={todayKeyInChina()}
+      initialBoard={board}
+      todayKey={board.todayKey ?? todayKeyInChina()}
       appVersion={appVersion}
-      imageTag={imageTag}
     />
+  );
+
+  if (!isAuthFeatureEnabled()) {
+    return runtime;
+  }
+
+  return (
+    <AuthenticatedShell
+      user={user}
+      boards={board.boards ?? []}
+      activeBoardId={board.activeBoardId ?? activeBoard.id}
+    >
+      {runtime}
+    </AuthenticatedShell>
   );
 }

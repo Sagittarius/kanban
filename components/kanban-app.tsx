@@ -574,12 +574,10 @@ export default function KanbanApp({
   initialBoard,
   todayKey,
   appVersion,
-  imageTag,
 }: {
   initialBoard: BoardData;
   todayKey: string;
   appVersion: string;
-  imageTag: string;
 }) {
   const [board, setBoard] = useState(initialBoard);
   const [, setSyncState] = useState<SyncState>("syncing");
@@ -691,7 +689,7 @@ export default function KanbanApp({
     () => sortedProjects.filter((project) => project.status === "archived"),
     [sortedProjects]
   );
-  const boardTitle = settingText(settings, "board_title", "项目看板");
+  const boardTitle = board.boardName?.trim() || settingText(settings, "board_title", "项目看板");
   const selectedTask = selectedTaskId
     ? board.tasks.find((task) => task.id === selectedTaskId) ?? null
     : null;
