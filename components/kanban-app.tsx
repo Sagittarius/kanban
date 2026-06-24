@@ -25,6 +25,7 @@ import {
   FolderPlus,
   PanelRightOpen,
   Plus,
+  RotateCcw,
   Search,
   SlidersHorizontal,
   Tag,
@@ -69,7 +70,8 @@ type ThemeId =
 type MetricFilter = "dueSoon" | "blocked" | null;
 type DragTargetData =
   | { type: "task"; status: BoardStatus }
-  | { type: "column"; status: BoardStatus };
+  | { type: "column"; status: BoardStatus }
+  | { type: "delete-zone" };
 
 type NewTaskForm = {
   title: string;
@@ -337,17 +339,28 @@ function isDragTargetData(value: unknown): value is DragTargetData {
   }
 
   const data = value as { type?: unknown; status?: unknown };
+  if (data.type === "delete-zone") {
+    return true;
+  }
+
   return (data.type === "task" || data.type === "column") && isBoardStatus(data.status);
 }
 
 function targetStatusFromEntity(target: { id: string | number; data?: unknown } | null | undefined) {
   if (isDragTargetData(target?.data)) {
+    if (target.data.type === "delete-zone") {
+      return null;
+    }
     return target.data.status;
   }
 
   return typeof target?.id === "string" && isBoardStatus(target.id)
     ? target.id
     : null;
+}
+
+function isDeleteDropTarget(target: { id: string | number; data?: unknown } | null | undefined) {
+  return target?.id === "delete-zone";
 }
 
 function tasksByStatus(tasks: BoardTask[]) {
@@ -595,6 +608,7 @@ export default function KanbanApp({
     initialBoard.projects[0]?.id ?? null
   );
   const [crossDragTarget, setCrossDragTarget] = useState<BoardStatus | null>(null);
+  const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const localIdCounter = useRef(0);
@@ -1025,6 +1039,7 @@ export default function KanbanApp({
 
   async function persistTask(taskId: string, patch: Partial<BoardTask>) {
     const previous = board.tasks.find((task) => task.id === taskId);
+    const previousTasks = board.tasks;
     setBoard((current) => ({
       ...current,
       tasks: current.tasks.map((task) =>
@@ -1053,12 +1068,10 @@ export default function KanbanApp({
       await refreshBoard();
       notify("任务已保存");
       return true;
-    } catch {
-      appendLocalActivity(
-        `更新任务「${patch.title ?? previous?.title ?? "未命名任务"}」。`
-      );
+    } catch (error) {
+      setBoard((current) => ({ ...current, tasks: previousTasks }));
       setSyncState("local");
-      notify("任务保存失败", "error");
+      notify(error instanceof Error ? error.message : "任务保存失败", "error");
       return false;
     }
   }
@@ -1183,6 +1196,26 @@ export default function KanbanApp({
     }
   }
 
+  async function reworkTask(taskId: string) {
+    setSyncState("syncing");
+
+    if (isLocalPreview) {
+      notify("本地预览模式不支持发起返工", "error");
+      setSyncState("local");
+      return;
+    }
+
+    try {
+      const created = await apiRequest<BoardTask>(`/api/tasks/${taskId}/rework`, "POST");
+      await refreshBoard(false);
+      openTask(created.id);
+      notify("已发起返工");
+    } catch {
+      setSyncState("local");
+      notify("发起返工失败", "error");
+    }
+  }
+
   function handleDragStart(event: DragStartEvent) {
     const source = event.operation.source;
     if (!isSortable(source) || typeof source.id !== "string" || !isBoardStatus(source.initialGroup)) {
@@ -1191,6 +1224,7 @@ export default function KanbanApp({
 
     dragStartTasksRef.current = board.tasks;
     latestTasksRef.current = board.tasks;
+    setDraggingTaskId(source.id);
     setCrossDragTarget(source.initialGroup);
   }
 
@@ -1202,6 +1236,11 @@ export default function KanbanApp({
 
     const targetStatus = targetStatusFromEntity(event.operation.target);
     if (!targetStatus) {
+      return;
+    }
+
+    if (!isBoardStatus(source.initialGroup)) {
+      setCrossDragTarget(null);
       return;
     }
 
@@ -1225,7 +1264,9 @@ export default function KanbanApp({
   async function handleDragEnd(event: DragEndEvent) {
     const source = event.operation.source;
     setCrossDragTarget(null);
+    setDraggingTaskId(null);
     const targetStatus = targetStatusFromEntity(event.operation.target);
+    const deleteDrop = isDeleteDropTarget(event.operation.target);
 
     if (!isSortable(source)) {
       dragStartTasksRef.current = null;
@@ -1249,6 +1290,14 @@ export default function KanbanApp({
       return;
     }
 
+    if (deleteDrop && typeof source.id === "string") {
+      latestTasksRef.current = startTasks;
+      setBoard((current) => ({ ...current, tasks: startTasks }));
+      dragStartTasksRef.current = null;
+      await removeTask(source.id);
+      return;
+    }
+
     const finalTasks = sameTaskOrder(startTasks, liveTasks)
       ? targetStatus && shouldMoveTasks(event, targetStatus)
         ? tasksFromDragTarget(liveTasks, event, targetStatus)
@@ -1264,11 +1313,11 @@ export default function KanbanApp({
     setBoard((current) =>
       sameTaskOrder(current.tasks, finalTasks) ? current : { ...current, tasks: finalTasks }
     );
-    void persistCurrentOrder(finalTasks);
+    void persistCurrentOrder(finalTasks, startTasks);
     dragStartTasksRef.current = null;
   }
 
-  async function persistCurrentOrder(tasksToPersist = board.tasks) {
+  async function persistCurrentOrder(tasksToPersist = board.tasks, rollbackTasks?: BoardTask[]) {
     setSyncState("syncing");
     if (isLocalPreview) {
       setSyncState("local");
@@ -1279,8 +1328,14 @@ export default function KanbanApp({
       await apiRequest("/api/tasks/reorder", "POST", {
         updates: taskUpdates(tasksToPersist),
       });
+      await refreshBoard(false);
     } catch {
+      if (rollbackTasks) {
+        latestTasksRef.current = rollbackTasks;
+        setBoard((current) => ({ ...current, tasks: rollbackTasks }));
+      }
       setSyncState("local");
+      notify("拖拽保存失败", "error");
     }
   }
 
@@ -1776,6 +1831,7 @@ export default function KanbanApp({
               })}
             </div>
           </section>
+          <DeleteDropZone visible={draggingTaskId !== null} />
           </DragDropProvider>
 
         </section>
@@ -1822,6 +1878,7 @@ export default function KanbanApp({
               setNewSubtaskTitle={setNewSubtaskTitle}
               columns={board.columns}
               onSave={(patch) => persistTask(selectedTask.id, patch)}
+              onRework={() => reworkTask(selectedTask.id)}
               onDelete={() => void removeTask(selectedTask.id)}
               onCreateSubtask={createSubtask}
               onToggleSubtask={(subtask) => void toggleSubtask(selectedTask.id, subtask)}
@@ -2031,7 +2088,7 @@ function BoardColumnView({
           </span>
         </div>
       </div>
-        <div ref={ref} data-board-drop-status={column.id} className="flex min-h-[220px] flex-1 flex-col gap-3.5 overflow-y-auto bg-[var(--lane-bg)] p-3.5">
+      <div ref={ref} data-board-drop-status={column.id} className="flex min-h-[220px] flex-1 flex-col gap-3.5 overflow-y-auto bg-[var(--lane-bg)] p-3.5">
           {tasks.map((task, index) => (
             <VerticalSortableTaskCard
               key={task.id}
@@ -2049,7 +2106,7 @@ function BoardColumnView({
           {tasks.length === 0 ? (
             <EmptyLaneCard axis="vertical" active={activeDropTarget} />
           ) : null}
-        </div>
+      </div>
     </div>
   );
 }
@@ -2319,6 +2376,42 @@ function ProjectRow({
   );
 }
 
+function DeleteDropZone({ visible }: { visible: boolean }) {
+  const { ref, isDropTarget } = useDroppable({
+    id: "delete-zone",
+    data: { type: "delete-zone" } satisfies DragTargetData,
+    accept: "task",
+  });
+
+  return (
+    <div
+      ref={ref}
+      className={`fixed bottom-8 right-6 z-40 transition-all duration-200 ${
+        visible ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none translate-y-4 opacity-0"
+      }`}
+    >
+      <div
+        className={`grid min-h-[150px] min-w-[260px] place-items-center rounded-lg border-2 border-dashed px-7 py-6 text-center shadow-xl transition ${
+          isDropTarget
+            ? "scale-[1.02] border-[var(--danger)] bg-[var(--danger)] text-white"
+            : "border-[var(--danger)] bg-[var(--panel)] text-[var(--danger)]"
+        }`}
+      >
+        <div className="flex flex-col items-center gap-3">
+          <span
+            className={`grid h-12 w-12 place-items-center rounded-full transition ${
+              isDropTarget ? "bg-white/20" : "bg-[var(--danger-soft)]"
+            }`}
+          >
+            <Trash2 size={24} />
+          </span>
+          <span className="text-base font-semibold">拖入删除</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskCard({
   task,
   todayKey,
@@ -2540,6 +2633,7 @@ function TaskDrawer({
   newSubtaskTitle,
   setNewSubtaskTitle,
   onSave,
+  onRework,
   onDelete,
   onCreateSubtask,
   onToggleSubtask,
@@ -2552,6 +2646,7 @@ function TaskDrawer({
   newSubtaskTitle: string;
   setNewSubtaskTitle: (value: string) => void;
   onSave: (patch: Partial<BoardTask>) => Promise<boolean>;
+  onRework: () => Promise<void>;
   onDelete: () => void;
   onCreateSubtask: (event: FormEvent<HTMLFormElement>) => void;
   onToggleSubtask: (subtask: Subtask) => void;
@@ -2560,6 +2655,7 @@ function TaskDrawer({
 }) {
   const [draft, setDraft] = useState<TaskDraft>(() => taskDraftFromTask(task));
   const [saving, setSaving] = useState(false);
+  const [reworking, setReworking] = useState(false);
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [editingSubtaskTitle, setEditingSubtaskTitle] = useState("");
 
@@ -2587,6 +2683,12 @@ function TaskDrawer({
       tags: parseTags(draft.tagsText),
     });
     setSaving(false);
+  }
+
+  async function handleRework() {
+    setReworking(true);
+    await onRework();
+    setReworking(false);
   }
 
   return (
@@ -2853,7 +2955,7 @@ function TaskDrawer({
         </form>
       </section>
 
-      <div className="mt-2 grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-5">
+      <div className={`mt-2 grid gap-3 border-t border-[var(--border)] pt-5 ${task.status === "done" ? "grid-cols-3" : "grid-cols-2"}`}>
         <button
           type="submit"
           form="task-edit-form"
@@ -2863,6 +2965,17 @@ function TaskDrawer({
           <CheckCircle2 size={16} />
           {saving ? "保存中" : "保存任务"}
         </button>
+        {task.status === "done" ? (
+          <button
+            type="button"
+            onClick={() => void handleRework()}
+            disabled={reworking}
+            className="flex items-center justify-center gap-2 rounded-md border border-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-[var(--accent)] transition hover:bg-[var(--accent-soft)] disabled:opacity-60"
+          >
+            <RotateCcw size={16} />
+            {reworking ? "发起中" : "发起返工"}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onDelete}

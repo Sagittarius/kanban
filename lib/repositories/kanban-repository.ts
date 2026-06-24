@@ -1,6 +1,6 @@
 import { getDbAdapter, getStorageMode, type DatabaseAdapter, type SqlValue } from "@/db/sql-adapter";
 import type { BoardSummary, CurrentUser, ManagedUser } from "@/lib/auth-models";
-import { columnsFromSettings, defaultSystemParameters, defaultSystemSettings, isPriority, isProjectHealth, isProjectStatus, normalizeBoardStatus, type ActivityLog, type Subtask, type SystemParameter, type SystemSettings } from "@/lib/board-data";
+import { columnsFromSettings, defaultSystemParameters, defaultSystemSettings, isPriority, isProjectHealth, isProjectStatus, normalizeBoardStatus, type ActivityLog, type BoardStatus, type Subtask, type SystemParameter, type SystemSettings } from "@/lib/board-data";
 import { hashPassword } from "@/lib/password";
 import { DEFAULT_TIMEZONE, normalizeTimeZone, todayKeyInTimeZone } from "@/lib/timezone";
 
@@ -20,6 +20,18 @@ export type UpdateSystemSettingsInput = Partial<{ dueSoonDays: unknown; activity
 export const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
 export const DEFAULT_BOARD_ID = "default-board";
 let repositoryPromise: Promise<KanbanRepository> | null = null;
+
+function statusLabel(status: BoardStatus) {
+  return (
+    {
+      backlog: "需求池",
+      design: "设计中",
+      dev: "开发中",
+      test: "测试中",
+      done: "已完成",
+    } satisfies Record<BoardStatus, string>
+  )[status];
+}
 
 export async function getKanbanRepository(): Promise<KanbanRepository> {
   if (!repositoryPromise) {
@@ -120,9 +132,77 @@ export class KanbanRepository {
   async deleteProject(u: CurrentUser, boardId: string, id: string) { await this.requireBoardWrite(u, boardId); const old = await this.getProjectRow(boardId, id); if (!old) throw new Error("Project not found"); await this.x("UPDATE tasks SET deleted_at=?,updated_at=? WHERE project_id=?", [iso(), iso(), id]); await this.x("DELETE FROM projects WHERE id=? AND board_id=?", [id,boardId]); await this.recordActivity(boardId,{entityType:"project",entityId:id,projectId:id,action:"project.delete",message:`删除项目「${old.name}」及其任务。`}); return { id }; }
 
   async createTask(u: CurrentUser, boardId: string, input: CreateTaskInput) { await this.requireBoardWrite(u, boardId); const p = text(input.projectId) ? await this.getProjectRow(boardId, text(input.projectId)) : await this.firstProjectRow(boardId); if (!p) throw new Error("Project not found"); const projectId = String(p.id); const now = iso(); const row = { id: crypto.randomUUID(), project_id: projectId, title: text(input.title, "未命名任务"), description: opt(input.description), status: "backlog", priority: isPriority(input.priority) ? input.priority : "medium", owner: text(input.owner, "未分配"), tester: opt(input.tester), start_date: "", test_due_date: opt(input.testDueDate), design_due_date: opt(input.designDueDate), due_date: opt(input.dueDate), estimate: 1, progress: 0, blockers: 0, blocked_reason: "", tags: JSON.stringify(tags(input.tags, [])), order_index: await this.nextTaskOrderIndex("backlog", projectId), deleted_at: null, completed_at: null, created_at: now, updated_at: now }; await this.x("INSERT INTO tasks (id,project_id,title,description,status,priority,owner,tester,start_date,test_due_date,design_due_date,due_date,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [row.id,row.project_id,row.title,row.description,row.status,row.priority,row.owner,row.tester,row.start_date,row.test_due_date,row.design_due_date,row.due_date,row.estimate,row.progress,row.blockers,row.blocked_reason,row.tags,row.order_index,row.deleted_at,row.completed_at,row.created_at,row.updated_at]); await this.recordActivity(boardId,{entityType:"task",entityId:row.id,projectId:projectId,taskId:row.id,action:"task.create",message:`创建任务「${row.title}」。`,meta:{status:row.status}}); return task(row, []); }
-  async updateTask(u: CurrentUser, boardId: string, id: string, input: UpdateTaskInput) { await this.requireBoardWrite(u, boardId); const old = await this.getTaskRow(boardId, id); if (!old || old.deleted_at) throw new Error("Task not found"); const cur = task(old, await this.getSubtasks(id).then((rows) => rows.map(subtask))); const status = input.status === undefined ? cur.status : normalizeBoardStatus(input.status); const p = text(input.projectId, cur.projectId); if (!(await this.getProjectRow(boardId,p))) throw new Error("Project not found"); const nextTags = JSON.stringify(tags(input.tags, cur.tags)); const completed = status === "done" ? (cur.status === "done" ? cur.completedAt : iso()) : null; const order = status !== cur.status ? await this.nextTaskOrderIndex(status, p) : cur.orderIndex; await this.x("UPDATE tasks SET title=?,description=?,project_id=?,status=?,priority=?,owner=?,tester=?,start_date=?,test_due_date=?,design_due_date=?,due_date=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,completed_at=?,updated_at=? WHERE id=?", [text(input.title,cur.title),opt(input.description,cur.description),p,status,isPriority(input.priority)?input.priority:cur.priority,text(input.owner,cur.owner),opt(input.tester,cur.tester),opt(input.startDate,cur.startDate),opt(input.testDueDate,cur.testDueDate),opt(input.designDueDate,cur.designDueDate),opt(input.dueDate,cur.dueDate),num(input.estimate,cur.estimate,1,99),num(input.progress,cur.progress,0,100),num(input.blockers,cur.blockers,0,99),opt(input.blockedReason,cur.blockedReason),nextTags,order,completed,iso(),id]); await this.recordActivity(boardId,{entityType:"task",entityId:id,projectId:p,taskId:id,action:status!==cur.status?"task.status":"task.update",message:`更新任务「${text(input.title,cur.title)}」。`,meta:{beforeStatus:cur.status,afterStatus:status}}); return task(await this.getTaskRow(boardId,id), (await this.getSubtasks(id)).map(subtask)); }
+  async createReworkTask(u: CurrentUser, boardId: string, id: string) {
+    await this.requireBoardWrite(u, boardId);
+    const old = await this.getTaskRow(boardId, id);
+    if (!old || old.deleted_at) throw new Error("Task not found");
+
+    const current = task(old, (await this.getSubtasks(id)).map(subtask));
+    if (current.status !== "done") {
+      throw new Error("Only completed tasks can be reworked");
+    }
+
+    const now = iso();
+    const newTaskId = crypto.randomUUID();
+    const nextTitle = current.title.endsWith("（返工）") ? current.title : `${current.title}（返工）`;
+    const nextTags = Array.from(new Set([...current.tags, "返工"]));
+
+    await this.x("INSERT INTO tasks (id,project_id,title,description,status,priority,owner,tester,start_date,test_due_date,design_due_date,due_date,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", [
+      newTaskId,
+      current.projectId,
+      nextTitle,
+      current.description,
+      "backlog",
+      current.priority,
+      current.owner,
+      current.tester,
+      "",
+      current.testDueDate,
+      current.designDueDate,
+      current.dueDate,
+      current.estimate,
+      0,
+      0,
+      "",
+      JSON.stringify(nextTags),
+      await this.nextTaskOrderIndex("backlog", current.projectId),
+      null,
+      null,
+      now,
+      now,
+    ]);
+
+    for (const [index, step] of current.subtasks.entries()) {
+      await this.x("INSERT INTO subtasks (id,task_id,title,done,order_index,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", [
+        crypto.randomUUID(),
+        newTaskId,
+        step.title,
+        0,
+        (index + 1) * 10,
+        now,
+        now,
+      ]);
+    }
+
+    await this.recordActivity(boardId, {
+      entityType: "task",
+      entityId: newTaskId,
+      projectId: current.projectId,
+      taskId: newTaskId,
+      action: "task.rework",
+      message: `基于已完成任务「${current.title}」发起返工，新任务「${nextTitle}」已进入${statusLabel("backlog")}。`,
+      meta: {
+        sourceTaskId: current.id,
+        sourceStatus: current.status,
+        afterStatus: "backlog",
+      },
+    });
+
+    return task(await this.getTaskRow(boardId, newTaskId), (await this.getSubtasks(newTaskId)).map(subtask));
+  }
+  async updateTask(u: CurrentUser, boardId: string, id: string, input: UpdateTaskInput) { await this.requireBoardWrite(u, boardId); const old = await this.getTaskRow(boardId, id); if (!old || old.deleted_at) throw new Error("Task not found"); const cur = task(old, await this.getSubtasks(id).then((rows) => rows.map(subtask))); const status = input.status === undefined ? cur.status : normalizeBoardStatus(input.status); const p = text(input.projectId, cur.projectId); if (!(await this.getProjectRow(boardId,p))) throw new Error("Project not found"); const nextTags = JSON.stringify(tags(input.tags, cur.tags)); const completed = status === "done" ? (cur.status === "done" ? cur.completedAt : iso()) : null; const order = status !== cur.status ? await this.nextTaskOrderIndex(status, p) : cur.orderIndex; await this.x("UPDATE tasks SET title=?,description=?,project_id=?,status=?,priority=?,owner=?,tester=?,start_date=?,test_due_date=?,design_due_date=?,due_date=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,completed_at=?,updated_at=? WHERE id=?", [text(input.title,cur.title),opt(input.description,cur.description),p,status,isPriority(input.priority)?input.priority:cur.priority,text(input.owner,cur.owner),opt(input.tester,cur.tester),opt(input.startDate,cur.startDate),opt(input.testDueDate,cur.testDueDate),opt(input.designDueDate,cur.designDueDate),opt(input.dueDate,cur.dueDate),num(input.estimate,cur.estimate,1,99),num(input.progress,cur.progress,0,100),num(input.blockers,cur.blockers,0,99),opt(input.blockedReason,cur.blockedReason),nextTags,order,completed,iso(),id]); await this.recordActivity(boardId,{entityType:"task",entityId:id,projectId:p,taskId:id,action:status!==cur.status?"task.status":"task.update",message:status!==cur.status?`移动任务「${text(input.title,cur.title)}」：${statusLabel(cur.status)} -> ${statusLabel(status)}。`:`更新任务「${text(input.title,cur.title)}」。`,meta:{beforeStatus:cur.status,afterStatus:status}}); return task(await this.getTaskRow(boardId,id), (await this.getSubtasks(id)).map(subtask)); }
   async deleteTask(u: CurrentUser, boardId: string, id: string) { await this.requireBoardWrite(u, boardId); const old = await this.getTaskRow(boardId,id); if (!old || old.deleted_at) throw new Error("Task not found"); await this.x("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=?", [iso(),iso(),id]); await this.recordActivity(boardId,{entityType:"task",entityId:id,projectId:old.project_id,taskId:id,action:"task.delete",message:`删除任务「${old.title}」。`}); return { id }; }
-  async reorderTasks(u: CurrentUser, boardId: string, input: ReorderTaskInput) { await this.requireBoardWrite(u, boardId); const items = Array.isArray(input.updates) ? input.updates.map(reorderItem).filter(isReorderItem) : []; if (!items.length) return { ok: true as const }; const rows = await this.getTaskRowsByIds(boardId, items.map((i) => i.id)); const byId = new Map(rows.map((r) => [r.id,r])); for (const it of items) { const old = byId.get(it.id); const completed = it.status === "done" ? (normalizeBoardStatus(old?.status) === "done" ? old?.completed_at ?? iso() : iso()) : null; await this.x("UPDATE tasks SET status=?,order_index=?,completed_at=?,updated_at=? WHERE id=?", [it.status,it.orderIndex,completed as string | null,iso(),it.id]); } return { ok: true as const }; }
+  async reorderTasks(u: CurrentUser, boardId: string, input: ReorderTaskInput) { await this.requireBoardWrite(u, boardId); const items = Array.isArray(input.updates) ? input.updates.map(reorderItem).filter(isReorderItem) : []; if (!items.length) return { ok: true as const }; const rows = await this.getTaskRowsByIds(boardId, items.map((i) => i.id)); const byId = new Map(rows.map((r) => [r.id,r])); for (const it of items) { const old = byId.get(it.id); const oldStatus = normalizeBoardStatus(old?.status); const completed = it.status === "done" ? (oldStatus === "done" ? old?.completed_at ?? iso() : iso()) : null; await this.x("UPDATE tasks SET status=?,order_index=?,completed_at=?,updated_at=? WHERE id=?", [it.status,it.orderIndex,completed as string | null,iso(),it.id]); if (old && oldStatus !== it.status) { await this.recordActivity(boardId,{entityType:"task",entityId:it.id,projectId:old.project_id as string,taskId:it.id,action:"task.status",message:`移动任务「${old.title as string}」：${statusLabel(oldStatus)} -> ${statusLabel(it.status)}。`,meta:{beforeStatus:oldStatus,afterStatus:it.status}}); } } return { ok: true as const }; }
   async createSubtask(u: CurrentUser, boardId: string, taskId: string, input: CreateSubtaskInput) { await this.requireBoardWrite(u, boardId); const t = await this.getTaskRow(boardId,taskId); if (!t || t.deleted_at) throw new Error("Task not found"); const now=iso(); const row={id:crypto.randomUUID(),task_id:taskId,title:text(input.title,"新拆解项"),done:0,order_index:await this.nextSubtaskOrderIndex(taskId),created_at:now,updated_at:now}; await this.x("INSERT INTO subtasks (id,task_id,title,done,order_index,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", [row.id,row.task_id,row.title,row.done,row.order_index,row.created_at,row.updated_at]); await this.recalculateTaskProgress(taskId); await this.recordActivity(boardId,{entityType:"subtask",entityId:row.id,projectId:t.project_id,taskId,action:"subtask.create",message:`为「${t.title}」添加任务拆解「${row.title}」。`}); return subtask(row); }
   async updateSubtask(u: CurrentUser, boardId: string, taskId: string, subtaskId: string, input: UpdateSubtaskInput) { await this.requireBoardWrite(u, boardId); const t=await this.getTaskRow(boardId,taskId), old=await this.getSubtask(taskId,subtaskId); if (!t || t.deleted_at || !old) throw new Error("Subtask not found"); const oldTitle = String(old.title ?? ""); const done=typeof input.done==="boolean"?(input.done?1:0):old.done; await this.x("UPDATE subtasks SET title=?,done=?,updated_at=? WHERE id=? AND task_id=?", [text(input.title,oldTitle),done as SqlValue,iso(),subtaskId,taskId]); await this.recalculateTaskProgress(taskId); await this.recordActivity(boardId,{entityType:"subtask",entityId:subtaskId,projectId:t.project_id,taskId,action:done!==old.done?"subtask.toggle":"subtask.update",message:`更新任务拆解「${text(input.title,oldTitle)}」。`,meta:{done:Boolean(done)}}); return subtask(await this.getSubtask(taskId,subtaskId)); }
   async deleteSubtask(u: CurrentUser, boardId: string, taskId: string, subtaskId: string) { await this.requireBoardWrite(u, boardId); const t=await this.getTaskRow(boardId,taskId), old=await this.getSubtask(taskId,subtaskId); if (!t || t.deleted_at || !old) throw new Error("Subtask not found"); await this.x("DELETE FROM subtasks WHERE id=? AND task_id=?", [subtaskId,taskId]); await this.recalculateTaskProgress(taskId); await this.recordActivity(boardId,{entityType:"subtask",entityId:subtaskId,projectId:t.project_id,taskId,action:"subtask.delete",message:`删除任务拆解「${old.title}」。`}); return { id: subtaskId }; }
