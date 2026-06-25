@@ -1,12 +1,12 @@
 import { NextResponse } from "next/server";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
-import { errorMessage, errorStatus, requireSuperAdminUser } from "@/lib/server-session";
+import { errorMessage, errorStatus, requireAdminUser } from "@/lib/server-session";
 
 export async function GET() {
   try {
-    await requireSuperAdminUser();
+    const user = await requireAdminUser();
     const repo = await getKanbanRepository();
-    const boards = await repo.listBoardsForAdmin();
+    const boards = await repo.listBoardsForAdmin(user);
     const withMembers = await Promise.all(
       boards.map(async (board) => ({ ...board, members: await repo.listBoardMembers(board.id) }))
     );

@@ -36,6 +36,14 @@ export async function requireSuperAdminUser(): Promise<CurrentUser> {
   return user;
 }
 
+export async function requireAdminUser(): Promise<CurrentUser> {
+  const user = await requireSessionUser();
+  if (user.role !== "super_admin" && user.role !== "project_manager") {
+    throw new Error("Forbidden");
+  }
+  return user;
+}
+
 export async function resolveActiveBoard(user: CurrentUser): Promise<BoardSummary> {
   const repo = await getKanbanRepository();
   if (!isAuthFeatureEnabled()) {
@@ -57,7 +65,14 @@ export function errorStatus(error: unknown) {
   if (message === "Unauthorized") return 401;
   if (message === "Forbidden") return 403;
   if (message.endsWith("not found") || message.endsWith("Not found")) return 404;
-  if (message === "Username already exists" || message.includes("Username must contain")) return 400;
+  if (
+    message === "Username already exists" ||
+    message.includes("Username must contain") ||
+    message.includes("required") ||
+    message.includes("At least one")
+  ) {
+    return 400;
+  }
   return 500;
 }
 

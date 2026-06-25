@@ -49,6 +49,8 @@ import {
   type BoardData,
   type BoardStatus,
   type BoardTask,
+  type BoardTeamOption,
+  type BoardUserOption,
   type Priority,
   type Project,
   type ProjectHealth,
@@ -77,7 +79,9 @@ type NewTaskForm = {
   title: string;
   description: string;
   projectId: string;
+  ownerUserId: string;
   owner: string;
+  testerUserId: string;
   tester: string;
   priority: Priority;
   testDueDate: string;
@@ -89,6 +93,7 @@ type NewTaskForm = {
 type ProjectForm = {
   name: string;
   description: string;
+  teamId: string;
   owner: string;
   color: string;
   health: ProjectHealth;
@@ -106,6 +111,12 @@ type Toast = {
   id: string;
   type: "success" | "error";
   message: string;
+};
+
+type SelectOption = {
+  value: string;
+  label: string;
+  meta?: string;
 };
 
 const priorityTone: Record<Priority, string> = {
@@ -133,6 +144,7 @@ const themePresets: Array<{ id: ThemeId; label: string }> = [
 
 const fallbackProject: Project = {
   id: "unassigned",
+  teamId: "",
   name: "未归属",
   description: "",
   owner: "未分配",
@@ -363,6 +375,18 @@ function isDeleteDropTarget(target: { id: string | number; data?: unknown } | nu
   return target?.id === "delete-zone";
 }
 
+function taskStatusFromDragSource(source: DragStartEvent["operation"]["source"], tasks: BoardTask[]) {
+  if (!isSortable(source) || typeof source.id !== "string") {
+    return null;
+  }
+
+  if (isBoardStatus(source.initialGroup)) {
+    return source.initialGroup;
+  }
+
+  return tasks.find((task) => task.id === source.id)?.status ?? null;
+}
+
 function tasksByStatus(tasks: BoardTask[]) {
   return {
     backlog: sortTasks(tasks.filter((task) => task.status === "backlog")),
@@ -472,8 +496,18 @@ function projectById(projects: Project[], projectId: string) {
   );
 }
 
-function firstProjectId(projects: Project[]) {
-  return projects.find((project) => project.status === "active")?.id ?? projects[0]?.id ?? "";
+function teamForProject(teams: BoardTeamOption[], project: Project | null | undefined) {
+  if (!project?.teamId) return null;
+  return teams.find((team) => team.id === project.teamId) ?? null;
+}
+
+function membersForProject(projects: Project[], teams: BoardTeamOption[], projectId: string) {
+  const project = projects.find((item) => item.id === projectId);
+  return teamForProject(teams, project)?.members ?? [];
+}
+
+function userName(user: BoardUserOption | null | undefined) {
+  return user ? user.displayName || user.username : "";
 }
 
 function sortTasks(tasks: BoardTask[]) {
@@ -619,7 +653,9 @@ export default function KanbanApp({
     title: "",
     description: "",
     projectId: initialBoard.projects.find((project) => project.status === "active")?.id ?? "",
+    ownerUserId: "",
     owner: "",
+    testerUserId: "",
     tester: "",
     priority: "medium",
     testDueDate: "",
@@ -630,6 +666,7 @@ export default function KanbanApp({
   const [projectDraft, setProjectDraft] = useState<ProjectForm>({
     name: "",
     description: "",
+    teamId: "",
     owner: "",
     color: "#1f6f68",
     health: "normal",
@@ -690,6 +727,7 @@ export default function KanbanApp({
     return () => window.clearTimeout(timeoutId);
   }, []);
 
+  const boardTeams = useMemo(() => board.teams ?? [], [board.teams]);
   const sortedProjects = useMemo(() => sortProjects(board.projects), [board.projects]);
   const activeProjects = useMemo(
     () => sortedProjects.filter((project) => project.status === "active"),
@@ -865,6 +903,7 @@ export default function KanbanApp({
       name: project?.name ?? "",
       description: project?.description ?? "",
       owner: project?.owner ?? "",
+      teamId: project?.teamId ?? "",
       color: project?.color ?? "#1f6f68",
       health: project?.health ?? "normal",
       summary: project?.summary ?? "",
@@ -950,6 +989,10 @@ export default function KanbanApp({
     if (!projectDraft.name.trim()) {
       return;
     }
+    if (!projectDraft.teamId) {
+      notify("请选择团队", "error");
+      return;
+    }
 
     if (selectedProject) {
       await persistProject(selectedProject.id, projectDraft, "项目已保存");
@@ -958,6 +1001,7 @@ export default function KanbanApp({
 
     const optimistic: Project = {
       id: nextLocalId("local-project"),
+      teamId: projectDraft.teamId,
       name: projectDraft.name.trim(),
       description: projectDraft.description.trim(),
       owner: projectDraft.owner.trim() || "未分配",
@@ -1079,8 +1123,16 @@ export default function KanbanApp({
   async function createTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const projectId = newTask.projectId || firstProjectId(activeProjectChoices);
+    const projectId = newTask.projectId;
+    const projectMembers = membersForProject(board.projects, boardTeams, projectId);
+    const owner = projectMembers.find((member) => member.id === newTask.ownerUserId);
+    const tester = projectMembers.find((member) => member.id === newTask.testerUserId);
     if (!newTask.title.trim() || !projectId) {
+      notify(!projectId ? "请选择项目" : "请输入任务名称", "error");
+      return;
+    }
+    if (!owner) {
+      notify("请选择负责人", "error");
       return;
     }
 
@@ -1091,8 +1143,10 @@ export default function KanbanApp({
       description: newTask.description.trim(),
       status: "backlog",
       priority: newTask.priority,
-      owner: newTask.owner.trim() || "未分配",
-      tester: newTask.tester.trim(),
+      ownerUserId: newTask.ownerUserId,
+      owner: userName(owner),
+      testerUserId: newTask.testerUserId,
+      tester: userName(tester),
       startDate: "",
       testDueDate: newTask.testDueDate,
       designDueDate: newTask.designDueDate,
@@ -1117,7 +1171,9 @@ export default function KanbanApp({
       title: "",
       description: "",
       owner: "",
+      ownerUserId: "",
       tester: "",
+      testerUserId: "",
       testDueDate: "",
       designDueDate: "",
       dueDate: "",
@@ -1138,8 +1194,8 @@ export default function KanbanApp({
         title: newTask.title,
         description: newTask.description,
         projectId,
-        owner: newTask.owner,
-        tester: newTask.tester,
+        ownerUserId: newTask.ownerUserId,
+        testerUserId: newTask.testerUserId,
         priority: newTask.priority,
         testDueDate: newTask.testDueDate,
         designDueDate: newTask.designDueDate,
@@ -1218,14 +1274,15 @@ export default function KanbanApp({
 
   function handleDragStart(event: DragStartEvent) {
     const source = event.operation.source;
-    if (!isSortable(source) || typeof source.id !== "string" || !isBoardStatus(source.initialGroup)) {
+    const sourceStatus = taskStatusFromDragSource(source, board.tasks);
+    if (!isSortable(source) || typeof source.id !== "string" || !sourceStatus) {
       return;
     }
 
     dragStartTasksRef.current = board.tasks;
     latestTasksRef.current = board.tasks;
     setDraggingTaskId(source.id);
-    setCrossDragTarget(source.initialGroup);
+    setCrossDragTarget(sourceStatus);
   }
 
   function handleDragOver(event: DragOverEvent) {
@@ -1496,7 +1553,24 @@ export default function KanbanApp({
   }
 
   const activeProjectChoices = activeProjects.length ? activeProjects : sortedProjects;
-  const newTaskProjectId = newTask.projectId || firstProjectId(activeProjectChoices);
+  const newTaskProjectId = newTask.projectId;
+  const newTaskMembers = membersForProject(board.projects, boardTeams, newTaskProjectId);
+  const themeOptions = themePresets.map((theme) => ({ value: theme.id, label: theme.label }));
+  const activeProjectOptions = activeProjectChoices.map((project) => ({
+    value: project.id,
+    label: project.name,
+    meta: project.owner,
+  }));
+  const newTaskMemberOptions = newTaskMembers.map((member) => ({
+    value: member.id,
+    label: userName(member),
+    meta: `@${member.username}`,
+  }));
+  const priorityOptions: SelectOption[] = [
+    { value: "high", label: "高优先级" },
+    { value: "medium", label: "中优先级" },
+    { value: "low", label: "低优先级" },
+  ];
 
   return (
     <main data-theme={themeId} className="kanban-theme flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--text)]">
@@ -1531,18 +1605,13 @@ export default function KanbanApp({
             </div>
             <div className="flex items-center gap-2">
               <span className="shrink-0 text-sm text-[var(--muted)]">配色方案</span>
-              <select
-                name="themeId"
+              <SearchableSelect
                 value={themeId}
-                onChange={(event) => changeTheme(event.target.value as ThemeId)}
-                className="min-w-0 flex-1 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)] outline-none 2xl:w-[180px]"
-              >
-                {themePresets.map((theme) => (
-                  <option key={theme.id} value={theme.id}>
-                    {theme.label}
-                  </option>
-                ))}
-              </select>
+                options={themeOptions}
+                onChange={(value) => changeTheme(value as ThemeId)}
+                placeholder="选择配色"
+                className="min-w-0 flex-1 2xl:w-[180px]"
+              />
               <button
                 type="button"
                 title="系统参数"
@@ -1665,46 +1734,52 @@ export default function KanbanApp({
                 className="min-h-[132px] w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
               <div>
-                <select
-                  name="newTaskProjectId"
+                <SearchableSelect
                   value={newTaskProjectId}
-                  onChange={(event) => setNewTask((current) => ({ ...current, projectId: event.target.value }))}
-                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-2 py-2 text-sm"
-                >
-                  {activeProjectChoices.map((project) => (
-                    <option key={project.id} value={project.id}>
-                      {project.name}
-                    </option>
-                  ))}
-                </select>
+                  options={activeProjectOptions}
+                  onChange={(value) =>
+                    setNewTask((current) => ({
+                      ...current,
+                      projectId: value,
+                      ownerUserId: "",
+                      owner: "",
+                      testerUserId: "",
+                      tester: "",
+                    }))
+                  }
+                  placeholder="选择项目"
+                  clearable
+                />
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <input
-                  name="newTaskOwner"
-                  value={newTask.owner}
-                  onChange={(event) => setNewTask((current) => ({ ...current, owner: event.target.value }))}
+                <SearchableSelect
+                  value={newTask.ownerUserId}
+                  options={newTaskMemberOptions}
+                  onChange={(value) => {
+                    const member = newTaskMembers.find((item) => item.id === value);
+                    setNewTask((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
+                  }}
                   placeholder="负责人"
-                  className="rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm"
+                  clearable
                 />
-                <input
-                  name="newTaskTester"
-                  value={newTask.tester}
-                  onChange={(event) => setNewTask((current) => ({ ...current, tester: event.target.value }))}
+                <SearchableSelect
+                  value={newTask.testerUserId}
+                  options={newTaskMemberOptions}
+                  onChange={(value) => {
+                    const member = newTaskMembers.find((item) => item.id === value);
+                    setNewTask((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
+                  }}
                   placeholder="测试员"
-                  className="rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm"
+                  clearable
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
-                <select
-                  name="newTaskPriority"
+                <SearchableSelect
                   value={newTask.priority}
-                  onChange={(event) => setNewTask((current) => ({ ...current, priority: event.target.value as Priority }))}
-                  className="rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm"
-                >
-                  <option value="high">高优先级</option>
-                  <option value="medium">中优先级</option>
-                  <option value="low">低优先级</option>
-                </select>
+                  options={priorityOptions}
+                  onChange={(value) => setNewTask((current) => ({ ...current, priority: value as Priority }))}
+                  placeholder="优先级"
+                />
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <label className="space-y-1 text-sm text-[var(--muted)]">
@@ -1874,6 +1949,7 @@ export default function KanbanApp({
               key={selectedTask.id}
               task={selectedTask}
               projects={activeProjectChoices}
+              teams={boardTeams}
               newSubtaskTitle={newSubtaskTitle}
               setNewSubtaskTitle={setNewSubtaskTitle}
               columns={board.columns}
@@ -1889,6 +1965,7 @@ export default function KanbanApp({
           {drawerMode === "project" ? (
             <ProjectDrawer
               project={selectedProject}
+              teams={boardTeams}
               draft={projectDraft}
               setDraft={setProjectDraft}
               onSubmit={saveProject}
@@ -2599,7 +2676,9 @@ type TaskDraft = {
   testDueDate: string;
   designDueDate: string;
   dueDate: string;
+  ownerUserId: string;
   owner: string;
+  testerUserId: string;
   tester: string;
   progress: number;
   blockers: number;
@@ -2617,7 +2696,9 @@ function taskDraftFromTask(task: BoardTask): TaskDraft {
     testDueDate: task.testDueDate,
     designDueDate: task.designDueDate,
     dueDate: task.dueDate,
+    ownerUserId: task.ownerUserId,
     owner: task.owner,
+    testerUserId: task.testerUserId,
     tester: task.tester,
     progress: task.progress,
     blockers: task.blockers,
@@ -2629,6 +2710,7 @@ function taskDraftFromTask(task: BoardTask): TaskDraft {
 function TaskDrawer({
   task,
   projects,
+  teams,
   columns,
   newSubtaskTitle,
   setNewSubtaskTitle,
@@ -2642,6 +2724,7 @@ function TaskDrawer({
 }: {
   task: BoardTask;
   projects: Project[];
+  teams: BoardTeamOption[];
   columns: BoardData["columns"];
   newSubtaskTitle: string;
   setNewSubtaskTitle: (value: string) => void;
@@ -2659,9 +2742,31 @@ function TaskDrawer({
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [editingSubtaskTitle, setEditingSubtaskTitle] = useState("");
 
+  const taskMembers = membersForProject(projects, teams, draft.projectId);
+  const taskProjectOptions = projects.map((project) => ({
+    value: project.id,
+    label: project.name,
+    meta: project.owner,
+  }));
+  const taskColumnOptions = columns.map((column) => ({ value: column.id, label: column.title }));
+  const taskPriorityOptions: SelectOption[] = [
+    { value: "high", label: "高" },
+    { value: "medium", label: "中" },
+    { value: "low", label: "低" },
+  ];
+  const taskMemberOptions = taskMembers.map((member) => ({
+    value: member.id,
+    label: userName(member),
+    meta: `@${member.username}`,
+  }));
+
   async function saveTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft.title.trim()) {
+      return;
+    }
+    if (!draft.projectId || !draft.ownerUserId) {
+      window.alert(!draft.projectId ? "请选择项目" : "请选择负责人");
       return;
     }
 
@@ -2675,7 +2780,9 @@ function TaskDrawer({
       testDueDate: draft.testDueDate,
       designDueDate: draft.designDueDate,
       dueDate: draft.dueDate,
+      ownerUserId: draft.ownerUserId,
       owner: draft.owner,
+      testerUserId: draft.testerUserId,
       tester: draft.tester,
       progress: draft.progress,
       blockers: draft.blockers,
@@ -2707,54 +2814,60 @@ function TaskDrawer({
         </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="项目">
-            <select
-              name="taskProjectId"
+            <SearchableSelect
               value={draft.projectId}
-              onChange={(event) => setDraft((current) => ({ ...current, projectId: event.target.value }))}
-            >
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
+              options={taskProjectOptions}
+              onChange={(value) =>
+                setDraft((current) => ({
+                  ...current,
+                  projectId: value,
+                  ownerUserId: "",
+                  owner: "",
+                  testerUserId: "",
+                  tester: "",
+                }))
+              }
+              placeholder="选择项目"
+            />
           </Field>
           <Field label="状态">
-            <select
-              name="taskStatus"
+            <SearchableSelect
               value={draft.status}
-              onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value as BoardStatus }))}
-            >
-              {columns.map((column) => (
-                <option key={column.id} value={column.id}>
-                  {column.title}
-                </option>
-              ))}
-            </select>
+              options={taskColumnOptions}
+              onChange={(value) => setDraft((current) => ({ ...current, status: value as BoardStatus }))}
+              placeholder="选择状态"
+            />
           </Field>
           <Field label="优先级">
-            <select
-              name="taskPriority"
+            <SearchableSelect
               value={draft.priority}
-              onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value as Priority }))}
-            >
-              <option value="high">高</option>
-              <option value="medium">中</option>
-              <option value="low">低</option>
-            </select>
+              options={taskPriorityOptions}
+              onChange={(value) => setDraft((current) => ({ ...current, priority: value as Priority }))}
+              placeholder="选择优先级"
+            />
           </Field>
           <Field label="负责人">
-            <input
-              name="taskOwner"
-              value={draft.owner}
-              onChange={(event) => setDraft((current) => ({ ...current, owner: event.target.value }))}
+            <SearchableSelect
+              value={draft.ownerUserId}
+              options={taskMemberOptions}
+              onChange={(value) => {
+                const member = taskMembers.find((item) => item.id === value);
+                setDraft((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
+              }}
+              placeholder="选择负责人"
+              clearable
             />
           </Field>
           <Field label="测试员">
-            <input
-              name="taskTester"
-              value={draft.tester}
-              onChange={(event) => setDraft((current) => ({ ...current, tester: event.target.value }))}
+            <SearchableSelect
+              value={draft.testerUserId}
+              options={taskMemberOptions}
+              onChange={(value) => {
+                const member = taskMembers.find((item) => item.id === value);
+                setDraft((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
+              }}
+              placeholder="选择测试员"
+              clearable
             />
           </Field>
           <Field label="设计截止">
@@ -2991,6 +3104,7 @@ function TaskDrawer({
 
 function ProjectDrawer({
   project,
+  teams,
   draft,
   setDraft,
   onSubmit,
@@ -2999,6 +3113,7 @@ function ProjectDrawer({
   onDelete,
 }: {
   project: Project | null;
+  teams: BoardTeamOption[];
   draft: ProjectForm;
   setDraft: (draft: ProjectForm) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -3006,6 +3121,17 @@ function ProjectDrawer({
   onRestore: () => void;
   onDelete: () => void;
 }) {
+  const teamOptions = teams.map((team) => ({
+    value: team.id,
+    label: team.name,
+    meta: `${team.members.length} 人`,
+  }));
+  const healthOptions: SelectOption[] = [
+    { value: "good", label: healthLabels.good },
+    { value: "normal", label: healthLabels.normal },
+    { value: "risk", label: healthLabels.risk },
+  ];
+
   return (
     <section className="space-y-5 pr-10">
       <div>
@@ -3025,16 +3151,32 @@ function ProjectDrawer({
             className="resize-none leading-6"
           />
         </Field>
+        <Field label="团队">
+          {teams.length > 0 ? (
+            <SearchableSelect
+              value={draft.teamId}
+              options={teamOptions}
+              onChange={(value) => setDraft({ ...draft, teamId: value })}
+              placeholder="选择团队"
+              clearable
+            />
+          ) : (
+            <button type="button" onClick={() => window.location.assign("/admin")} className="h-10 w-full rounded-md border border-dashed border-[var(--border)] text-sm text-[var(--muted)]">
+              创建团队
+            </button>
+          )}
+        </Field>
         <div className="grid grid-cols-2 gap-4">
           <Field label="负责人">
             <input name="projectOwner" value={draft.owner} onChange={(event) => setDraft({ ...draft, owner: event.target.value })} />
           </Field>
           <Field label="健康度">
-            <select name="projectHealth" value={draft.health} onChange={(event) => setDraft({ ...draft, health: event.target.value as ProjectHealth })}>
-              <option value="good">正常</option>
-              <option value="normal">关注</option>
-              <option value="risk">风险</option>
-            </select>
+            <SearchableSelect
+              value={draft.health}
+              options={healthOptions}
+              onChange={(value) => setDraft({ ...draft, health: value as ProjectHealth })}
+              placeholder="选择健康度"
+            />
           </Field>
         </div>
         <Field label="颜色">
@@ -3312,6 +3454,107 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
       <span>{label}</span>
       {children}
     </label>
+  );
+}
+
+function SearchableSelect({
+  value,
+  options,
+  onChange,
+  placeholder,
+  clearable = false,
+  className = "",
+}: {
+  value: string;
+  options: SelectOption[];
+  onChange: (value: string) => void;
+  placeholder: string;
+  clearable?: boolean;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement>(null);
+  const selected = options.find((option) => option.value === value);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = normalizedQuery
+    ? options.filter((option) =>
+        [option.label, option.meta ?? "", option.value].some((item) => item.toLowerCase().includes(normalizedQuery))
+      )
+    : options;
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      document.addEventListener("mousedown", handleClickOutside);
+      return () => document.removeEventListener("mousedown", handleClickOutside);
+    }
+  }, [open]);
+
+  function pick(nextValue: string) {
+    onChange(nextValue);
+    setOpen(false);
+    setQuery("");
+  }
+
+  return (
+    <div ref={containerRef} className={`relative ${className}`}>
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 py-2 text-left text-sm text-[var(--text)] outline-none transition hover:bg-[var(--panel-soft)]"
+      >
+        <span className={`min-w-0 truncate ${selected ? "" : "text-[var(--muted)]"}`}>
+          {selected?.label ?? placeholder}
+        </span>
+        <ChevronDown size={14} className="shrink-0 text-[var(--muted)]" />
+      </button>
+      {open ? (
+        <div className="absolute left-0 top-full z-40 mt-1 w-full min-w-[220px] rounded-md border border-[var(--border)] bg-[var(--panel)] shadow-lg">
+          <div className="flex gap-2 border-b border-[var(--border)] p-2">
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索"
+              className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 text-sm outline-none focus:border-[var(--accent)]"
+              autoFocus
+            />
+            {clearable && value ? (
+              <button
+                type="button"
+                onClick={() => pick("")}
+                className="rounded border border-[var(--border)] px-2 text-xs text-[var(--muted)] transition hover:bg-[var(--panel-soft)]"
+              >
+                清除
+              </button>
+            ) : null}
+          </div>
+          <div className="max-h-[220px] overflow-y-auto p-1">
+            {filtered.length === 0 ? (
+              <p className="px-3 py-3 text-center text-sm text-[var(--muted)]">无匹配项</p>
+            ) : (
+              filtered.map((option) => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => pick(option.value)}
+                  className={`block w-full rounded px-3 py-2 text-left text-sm transition ${
+                    option.value === value ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "hover:bg-[var(--panel-soft)]"
+                  }`}
+                >
+                  <span className="font-medium">{option.label}</span>
+                  {option.meta ? <span className="ml-2 text-xs text-[var(--muted)]">{option.meta}</span> : null}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      ) : null}
+    </div>
   );
 }
 

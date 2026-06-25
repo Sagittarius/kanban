@@ -7,12 +7,12 @@ export async function GET() {
     const user = await requireAdminUser();
     const repo = await getKanbanRepository();
     return NextResponse.json({
-      users: await repo.listUsers(),
+      teams: await repo.listTeamsForAdmin(user),
       assignableUsers: await repo.listAssignableUsers(),
       permissions: await repo.adminPermissions(user),
     });
   } catch (error) {
-    return NextResponse.json({ error: errorMessage(error, "加载用户失败") }, { status: errorStatus(error) });
+    return NextResponse.json({ error: errorMessage(error, "加载团队失败") }, { status: errorStatus(error) });
   }
 }
 
@@ -21,8 +21,8 @@ export async function POST(request: Request) {
     const user = await requireAdminUser();
     const body = await request.json().catch(() => ({}));
     const repo = await getKanbanRepository();
-    return NextResponse.json(await repo.createUser(body, user), { status: 201 });
+    return NextResponse.json(await repo.createTeam(user, body), { status: 201 });
   } catch (error) {
-    return NextResponse.json({ error: errorMessage(error, "创建用户失败") }, { status: errorStatus(error) });
+    return NextResponse.json({ error: errorMessage(error, "创建团队失败") }, { status: errorStatus(error) });
   }
 }

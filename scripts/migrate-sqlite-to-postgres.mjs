@@ -35,11 +35,27 @@ const TABLES = [
     columns: ["board_id", "user_id", "role", "created_at"],
   },
   {
+    name: "teams",
+    keyColumns: ["id"],
+    columns: ["id", "name", "description", "owner_user_id", "color", "created_at", "updated_at"],
+  },
+  {
+    name: "team_members",
+    keyColumns: ["team_id", "user_id"],
+    columns: ["team_id", "user_id", "created_at"],
+  },
+  {
+    name: "board_teams",
+    keyColumns: ["board_id", "team_id"],
+    columns: ["board_id", "team_id", "created_at"],
+  },
+  {
     name: "projects",
     keyColumns: ["id"],
     columns: [
       "id",
       "board_id",
+      "team_id",
       "name",
       "description",
       "owner",
@@ -63,7 +79,9 @@ const TABLES = [
       "description",
       "status",
       "priority",
+      "owner_user_id",
       "owner",
+      "tester_user_id",
       "tester",
       "start_date",
       "test_due_date",
@@ -260,11 +278,32 @@ function openSourceDatabase(sourcePath) {
 }
 
 function countSqliteRows(database, tableName) {
+  if (!sqliteTableExists(database, tableName)) {
+    return 0;
+  }
   return Number(database.prepare(`SELECT COUNT(*) AS count FROM ${tableName}`).get().count ?? 0);
 }
 
 function readSqliteRows(database, table) {
-  return database.prepare(`SELECT ${table.columns.join(", ")} FROM ${table.name}`).all();
+  if (!sqliteTableExists(database, table.name)) {
+    return [];
+  }
+  const availableColumns = sqliteColumns(database, table.name);
+  const selectedColumns = table.columns.filter((column) => availableColumns.has(column));
+  if (selectedColumns.length === 0) {
+    return [];
+  }
+  return database
+    .prepare(`SELECT ${selectedColumns.join(", ")} FROM ${table.name}`)
+    .all()
+    .map((row) =>
+      Object.fromEntries(
+        table.columns.map((column) => [
+          column,
+          availableColumns.has(column) ? row[column] : defaultSqliteValue(table.name, column),
+        ])
+      )
+    );
 }
 
 async function insertBatch(client, table, rows) {
@@ -343,10 +382,39 @@ async function verifyMigration(source, pool) {
 }
 
 function readSqliteKeySet(database, table) {
+  if (!sqliteTableExists(database, table.name)) {
+    return new Set();
+  }
+  const availableColumns = sqliteColumns(database, table.name);
+  if (table.keyColumns.some((column) => !availableColumns.has(column))) {
+    return new Set();
+  }
   const rows = database
     .prepare(`SELECT ${table.keyColumns.join(", ")} FROM ${table.name}`)
     .all();
   return new Set(rows.map((row) => keyOf(row, table.keyColumns)));
+}
+
+function sqliteTableExists(database, tableName) {
+  return Boolean(
+    database
+      .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=? LIMIT 1")
+      .get(tableName)
+  );
+}
+
+function sqliteColumns(database, tableName) {
+  return new Set(database.prepare(`PRAGMA table_info(${tableName})`).all().map((row) => String(row.name)));
+}
+
+function defaultSqliteValue(tableName, column) {
+  if (tableName === "projects" && column === "team_id") {
+    return "";
+  }
+  if (tableName === "tasks" && (column === "owner_user_id" || column === "tester_user_id")) {
+    return "";
+  }
+  return null;
 }
 
 async function readPostgresKeySet(pool, table) {

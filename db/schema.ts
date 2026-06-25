@@ -7,7 +7,7 @@ export const users = sqliteTable(
     id: text("id").primaryKey(),
     username: text("username").notNull(),
     passwordHash: text("password_hash").notNull(),
-    role: text("role").notNull().default("user"),
+    role: text("role").notNull().default("team_member"),
     displayName: text("display_name").notNull().default(""),
     avatarKey: text("avatar_key").notNull().default(""),
     timezone: text("timezone").notNull().default("Asia/Shanghai"),
@@ -49,9 +49,52 @@ export const boardMembers = sqliteTable(
   })
 );
 
+export const teams = sqliteTable(
+  "teams",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    ownerUserId: text("owner_user_id").notNull(),
+    color: text("color").notNull().default("#0f766e"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    ownerIdx: index("teams_owner_user_id_idx").on(table.ownerUserId),
+  })
+);
+
+export const teamMembers = sqliteTable(
+  "team_members",
+  {
+    teamId: text("team_id").notNull(),
+    userId: text("user_id").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("team_members_team_user_unique").on(table.teamId, table.userId),
+    userIdx: index("team_members_user_id_idx").on(table.userId),
+  })
+);
+
+export const boardTeams = sqliteTable(
+  "board_teams",
+  {
+    boardId: text("board_id").notNull(),
+    teamId: text("team_id").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("board_teams_board_team_unique").on(table.boardId, table.teamId),
+    teamIdx: index("board_teams_team_id_idx").on(table.teamId),
+  })
+);
+
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   boardId: text("board_id").notNull().default("default-board"),
+  teamId: text("team_id").notNull().default(""),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   owner: text("owner").notNull(),
@@ -74,7 +117,9 @@ export const tasks = sqliteTable("tasks", {
   description: text("description").notNull().default(""),
   status: text("status").notNull().default("backlog"),
   priority: text("priority").notNull().default("medium"),
+  ownerUserId: text("owner_user_id").notNull().default(""),
   owner: text("owner").notNull().default("未分配"),
+  testerUserId: text("tester_user_id").notNull().default(""),
   tester: text("tester").notNull().default(""),
   startDate: text("start_date").notNull().default(""),
   testDueDate: text("test_due_date").notNull().default(""),

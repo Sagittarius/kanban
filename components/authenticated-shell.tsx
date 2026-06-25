@@ -3,11 +3,22 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import { avatarOptions, timezoneOptions } from "@/lib/ui-options";
-import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
+import type { BoardSummary, CurrentUser, TeamSummary } from "@/lib/auth-models";
 
 type BoardDraft = {
   name: string;
   description: string;
+  teamIds: string[];
+};
+
+type TeamsResponse = {
+  teams: TeamSummary[];
+};
+
+type ShellSelectOption = {
+  value: string;
+  label: string;
+  meta?: string;
 };
 
 export default function AuthenticatedShell({
@@ -29,6 +40,8 @@ export default function AuthenticatedShell({
   const [editBoardOpen, setEditBoardOpen] = useState(false);
   const [boardPickerOpen, setBoardPickerOpen] = useState(false);
   const [boardQuery, setBoardQuery] = useState("");
+  const [teamQuery, setTeamQuery] = useState("");
+  const [teamOptions, setTeamOptions] = useState<TeamSummary[]>([]);
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingBoard, setSavingBoard] = useState(false);
   const [passwordDraft, setPasswordDraft] = useState({
@@ -40,18 +53,21 @@ export default function AuthenticatedShell({
   const activeBoard = boardList.find((board) => board.id === activeBoardId);
   const readOnly = activeBoard?.role === "viewer";
   const canManageBoard = activeBoard?.role !== "viewer";
+  const canUseAdmin = currentUser.role === "super_admin" || currentUser.role === "project_manager";
+  const canCreateBoard = canUseAdmin;
   const [profileDraft, setProfileDraft] = useState({
-    displayName: user.displayName,
     timezone: user.timezone || "Asia/Shanghai",
     avatarKey: user.avatarKey || avatarOptions[0].key,
   });
   const [boardDraft, setBoardDraft] = useState<BoardDraft>({
     name: activeBoard?.name ?? "",
     description: activeBoard?.description ?? "",
+    teamIds: activeBoard?.teamIds ?? [],
   });
   const [newBoardDraft, setNewBoardDraft] = useState<BoardDraft>({
     name: "",
     description: "",
+    teamIds: [],
   });
 
   const filteredBoards = boardList.filter((board) => {
@@ -63,6 +79,7 @@ export default function AuthenticatedShell({
       board.ownerUsername.toLowerCase().includes(query)
     );
   });
+  const timezoneSelectOptions: ShellSelectOption[] = timezoneOptions.map(([value, label]) => ({ value, label }));
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -77,6 +94,14 @@ export default function AuthenticatedShell({
     window.addEventListener("mousedown", handlePointerDown);
     return () => window.removeEventListener("mousedown", handlePointerDown);
   }, [menuOpen]);
+
+  useEffect(() => {
+    if (!canUseAdmin) return;
+    fetch("/api/admin/teams")
+      .then((response) => response.json() as Promise<TeamsResponse>)
+      .then((payload) => setTeamOptions(payload.teams ?? []))
+      .catch(() => setTeamOptions([]));
+  }, [canUseAdmin]);
 
   async function switchBoard(boardId: string) {
     await fetch(`/api/boards/${boardId}/select`, { method: "POST" });
@@ -100,7 +125,7 @@ export default function AuthenticatedShell({
       return;
     }
     setCreateBoardOpen(false);
-    setNewBoardDraft({ name: "", description: "" });
+    setNewBoardDraft({ name: "", description: "", teamIds: [] });
     await switchBoard(payload.id);
   }
 
@@ -117,7 +142,8 @@ export default function AuthenticatedShell({
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...profileDraft,
+        timezone: profileDraft.timezone,
+        avatarKey: profileDraft.avatarKey,
         currentPassword: passwordDraft.currentPassword,
         newPassword: passwordDraft.newPassword,
       }),
@@ -255,15 +281,18 @@ export default function AuthenticatedShell({
                   <MenuButton onClick={() => { setProfileOpen(true); setMenuOpen(false); }}>
                     个人设置
                   </MenuButton>
-                  <MenuButton onClick={() => { setCreateBoardOpen(true); setMenuOpen(false); }}>
-                    创建看板
-                  </MenuButton>
+                  {canCreateBoard ? (
+                    <MenuButton onClick={() => { setCreateBoardOpen(true); setMenuOpen(false); }}>
+                      创建看板
+                    </MenuButton>
+                  ) : null}
                   {canManageBoard ? (
                     <MenuButton
                       onClick={() => {
                         setBoardDraft({
                           name: activeBoard?.name ?? "",
                           description: activeBoard?.description ?? "",
+                          teamIds: activeBoard?.teamIds ?? [],
                         });
                         setEditBoardOpen(true);
                         setMenuOpen(false);
@@ -272,7 +301,10 @@ export default function AuthenticatedShell({
                       看板设置
                     </MenuButton>
                   ) : null}
-                  {currentUser.role === "super_admin" ? (
+                  {canUseAdmin ? (
+                    <MenuButton onClick={() => window.location.assign("/dashboard")}>工作饱和度</MenuButton>
+                  ) : null}
+                  {canUseAdmin ? (
                     <MenuButton onClick={() => window.location.assign("/admin")}>后台管理</MenuButton>
                   ) : null}
                   <MenuButton onClick={() => void logout()}>退出登录</MenuButton>
@@ -297,27 +329,17 @@ export default function AuthenticatedShell({
               <input value={currentUser.username} disabled className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-500" />
             </label>
             <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">昵称</span>
-              <input
-                value={profileDraft.displayName}
-                onChange={(event) => setProfileDraft((current) => ({ ...current, displayName: event.target.value }))}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
-                placeholder="输入昵称"
-              />
+              <span className="font-medium text-slate-700">姓名</span>
+              <input value={currentUser.displayName || "-"} disabled className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-500" />
             </label>
             <label className="block space-y-2 text-sm">
               <span className="font-medium text-slate-700">时区</span>
-              <select
+              <ShellSearchSelect
                 value={profileDraft.timezone}
-                onChange={(event) => setProfileDraft((current) => ({ ...current, timezone: event.target.value }))}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
-              >
-                {timezoneOptions.map(([value, label]) => (
-                  <option key={`${value}-${label}`} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
+                options={timezoneSelectOptions}
+                onChange={(value) => setProfileDraft((current) => ({ ...current, timezone: value }))}
+                placeholder="选择时区"
+              />
             </label>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="block space-y-2 text-sm">
@@ -400,6 +422,22 @@ export default function AuthenticatedShell({
                 placeholder="输入看板说明"
               />
             </label>
+            <div className="space-y-2 text-sm">
+              <span className="font-medium text-slate-700">团队</span>
+              {teamOptions.length > 0 ? (
+                <ShellTeamMultiSelect
+                  teams={teamOptions}
+                  value={newBoardDraft.teamIds}
+                  query={teamQuery}
+                  onQueryChange={setTeamQuery}
+                  onChange={(teamIds) => setNewBoardDraft((current) => ({ ...current, teamIds }))}
+                />
+              ) : (
+                <button type="button" onClick={() => window.location.assign("/admin")} className="h-11 w-full rounded-xl border border-dashed border-slate-200 text-sm text-slate-500">
+                  创建团队
+                </button>
+              )}
+            </div>
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={() => setCreateBoardOpen(false)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
                 取消
@@ -433,6 +471,22 @@ export default function AuthenticatedShell({
                 placeholder="输入看板说明"
               />
             </label>
+            <div className="space-y-2 text-sm">
+              <span className="font-medium text-slate-700">团队</span>
+              {teamOptions.length > 0 ? (
+                <ShellTeamMultiSelect
+                  teams={teamOptions}
+                  value={boardDraft.teamIds}
+                  query={teamQuery}
+                  onQueryChange={setTeamQuery}
+                  onChange={(teamIds) => setBoardDraft((current) => ({ ...current, teamIds }))}
+                />
+              ) : (
+                <button type="button" onClick={() => window.location.assign("/admin")} className="h-11 w-full rounded-xl border border-dashed border-slate-200 text-sm text-slate-500">
+                  创建团队
+                </button>
+              )}
+            </div>
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={() => setEditBoardOpen(false)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
                 取消
@@ -457,6 +511,157 @@ function MenuButton({ children, onClick }: { children: ReactNode; onClick: () =>
     >
       {children}
     </button>
+  );
+}
+
+function ShellSearchSelect({
+  value,
+  options,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  options: ShellSelectOption[];
+  onChange: (value: string) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const selected = options.find((option) => option.value === value);
+  const normalizedQuery = query.trim().toLowerCase();
+  const filtered = normalizedQuery
+    ? options.filter((option) =>
+        [option.label, option.meta ?? "", option.value].some((text) => text.toLowerCase().includes(normalizedQuery))
+      )
+    : options;
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      window.addEventListener("mousedown", handlePointerDown);
+      return () => window.removeEventListener("mousedown", handlePointerDown);
+    }
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className="flex h-11 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-left text-sm outline-none transition hover:border-[#0f766e]/40"
+      >
+        <span className={selected ? "text-slate-900" : "text-slate-500"}>{selected?.label ?? placeholder}</span>
+        <span className="text-slate-400">⌄</span>
+      </button>
+      {open ? (
+        <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-40 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索"
+            className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-[#0f766e]"
+            autoFocus
+          />
+          <div className="mt-2 max-h-[220px] overflow-y-auto">
+            {filtered.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                  setQuery("");
+                }}
+                className={`block w-full rounded-xl px-3 py-2 text-left text-sm transition ${
+                  option.value === value ? "bg-[#e7f5f2] text-[#0f766e]" : "text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <span className="font-medium">{option.label}</span>
+                {option.meta ? <span className="ml-2 text-xs text-slate-500">{option.meta}</span> : null}
+              </button>
+            ))}
+            {filtered.length === 0 ? <div className="px-3 py-4 text-center text-sm text-slate-500">无匹配项</div> : null}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function ShellTeamMultiSelect({
+  teams,
+  value,
+  query,
+  onQueryChange,
+  onChange,
+}: {
+  teams: TeamSummary[];
+  value: string[];
+  query: string;
+  onQueryChange: (value: string) => void;
+  onChange: (value: string[]) => void;
+}) {
+  const selected = teams.filter((team) => value.includes(team.id));
+  const filtered = teams.filter((team) => {
+    const normalized = query.trim().toLowerCase();
+    if (!normalized) return true;
+    return [team.name, team.description, team.ownerUsername].some((text) => text.toLowerCase().includes(normalized));
+  });
+
+  function toggle(teamId: string) {
+    onChange(value.includes(teamId) ? value.filter((item) => item !== teamId) : [...value, teamId]);
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-2">
+      <div className="flex flex-wrap gap-2">
+        {selected.map((team) => (
+          <button
+            key={team.id}
+            type="button"
+            onClick={() => toggle(team.id)}
+            className="rounded-lg bg-[#e7f5f2] px-2.5 py-1 text-xs font-semibold text-[#0f766e]"
+          >
+            {team.name} ×
+          </button>
+        ))}
+        {selected.length > 0 ? (
+          <button type="button" onClick={() => onChange([])} className="rounded-lg px-2.5 py-1 text-xs text-slate-500 hover:bg-white">
+            清空
+          </button>
+        ) : null}
+      </div>
+      <input
+        value={query}
+        onChange={(event) => onQueryChange(event.target.value)}
+        placeholder="搜索团队"
+        className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-[#0f766e]"
+      />
+      <div className="mt-2 max-h-[200px] overflow-y-auto">
+        {filtered.map((team) => {
+          const active = value.includes(team.id);
+          return (
+            <button
+              key={team.id}
+              type="button"
+              onClick={() => toggle(team.id)}
+              className={`block w-full rounded-lg px-3 py-2 text-left text-sm transition ${
+                active ? "bg-[#e7f5f2] text-[#0f766e]" : "hover:bg-white"
+              }`}
+            >
+              <span className="font-medium">{team.name}</span>
+              <span className="ml-2 text-xs text-slate-500">{team.memberCount} 人</span>
+            </button>
+          );
+        })}
+        {filtered.length === 0 ? <div className="px-3 py-4 text-center text-sm text-slate-500">无匹配团队</div> : null}
+      </div>
+    </div>
   );
 }
 

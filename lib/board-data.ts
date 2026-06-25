@@ -11,6 +11,7 @@ export type BoardColumn = {
 
 export type Project = {
   id: string;
+  teamId: string;
   name: string;
   description: string;
   owner: string;
@@ -41,7 +42,9 @@ export type BoardTask = {
   description: string;
   status: BoardStatus;
   priority: Priority;
+  ownerUserId: string;
   owner: string;
+  testerUserId: string;
   tester: string;
   startDate: string;
   testDueDate: string;
@@ -91,10 +94,31 @@ export type SystemSettings = {
   parameters: SystemParameter[];
 };
 
+export type BoardUserOption = {
+  id: string;
+  username: string;
+  displayName: string;
+  role: "super_admin" | "project_manager" | "team_member";
+  avatarKey: string;
+};
+
+export type BoardTeamOption = {
+  id: string;
+  name: string;
+  description: string;
+  ownerUserId: string;
+  ownerUsername: string;
+  color: string;
+  memberIds: string[];
+  members: BoardUserOption[];
+};
+
 export type BoardData = {
   columns: BoardColumn[];
   projects: Project[];
   tasks: BoardTask[];
+  teams?: BoardTeamOption[];
+  users?: BoardUserOption[];
   activity: ActivityLog[];
   settings: SystemSettings;
   storageMode?: "sqlite" | "local" | "postgres";
@@ -114,6 +138,30 @@ export const defaultSystemParameters: SystemParameter[] = [
     minValue: 0,
     maxValue: 30,
     orderIndex: 10,
+    updatedAt: seedTime,
+  },
+  {
+    key: "project_manager_user_management_enabled",
+    value: "true",
+    label: "项目经理用户管理",
+    valueType: "boolean",
+    group: "权限",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 15,
+    updatedAt: seedTime,
+  },
+  {
+    key: "workload_dashboard_public_enabled",
+    value: "false",
+    label: "工作饱和度公开访问",
+    valueType: "boolean",
+    group: "权限",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 16,
     updatedAt: seedTime,
   },
   {
@@ -283,6 +331,7 @@ export const healthLabels: Record<ProjectHealth, string> = {
 export const seedProjects: Project[] = [
   {
     id: "core-platform",
+    teamId: "",
     name: "核心平台",
     description: "平台能力、接口稳定性、数据出口和部署质量。",
     owner: "Vincent",
@@ -297,6 +346,7 @@ export const seedProjects: Project[] = [
   },
   {
     id: "mobile-delivery",
+    teamId: "",
     name: "移动端交付",
     description: "移动端页面、验收流程、缺陷分级和交互体验。",
     owner: "产品组",
@@ -311,6 +361,7 @@ export const seedProjects: Project[] = [
   },
   {
     id: "growth-ops",
+    teamId: "",
     name: "增长运营",
     description: "运营活动、案例素材、发布复盘和增长资产沉淀。",
     owner: "运营组",
@@ -390,7 +441,9 @@ export const seedTasks: BoardTask[] = [
     description: "确认平台、数据、客户端三条线的关键依赖，形成可执行排期。",
     status: "dev",
     priority: "high",
+    ownerUserId: "",
     owner: "Vincent",
+    testerUserId: "",
     tester: "QA",
     startDate: "2026-06-08",
     designDueDate: "2026-06-09",
@@ -415,7 +468,9 @@ export const seedTasks: BoardTask[] = [
     description: "把异常率、延迟和最近部署事件放到同一个视图里。",
     status: "dev",
     priority: "high",
+    ownerUserId: "",
     owner: "后端组",
+    testerUserId: "",
     tester: "QA",
     startDate: "2026-06-03",
     designDueDate: "2026-06-06",
@@ -440,7 +495,9 @@ export const seedTasks: BoardTask[] = [
     description: "把负责人、截止时间和阻塞原因放到首屏可见区域。",
     status: "test",
     priority: "medium",
+    ownerUserId: "",
     owner: "前端组",
+    testerUserId: "",
     tester: "测试组",
     startDate: "2026-06-01",
     designDueDate: "2026-06-03",
@@ -465,7 +522,9 @@ export const seedTasks: BoardTask[] = [
     description: "整理最近四次发布中延期、返工和审批卡点。",
     status: "backlog",
     priority: "medium",
+    ownerUserId: "",
     owner: "运营组",
+    testerUserId: "",
     tester: "",
     startDate: "",
     designDueDate: "",
@@ -490,7 +549,9 @@ export const seedTasks: BoardTask[] = [
     description: "明确字段口径、权限边界和异常数据处理方式。",
     status: "done",
     priority: "low",
+    ownerUserId: "",
     owner: "数据组",
+    testerUserId: "",
     tester: "QA",
     startDate: "2026-05-28",
     designDueDate: "2026-05-31",
@@ -515,7 +576,9 @@ export const seedTasks: BoardTask[] = [
     description: "补齐线上阻断、普通缺陷和体验问题的处理时限。",
     status: "dev",
     priority: "high",
+    ownerUserId: "",
     owner: "QA",
+    testerUserId: "",
     tester: "QA",
     startDate: "2026-06-04",
     designDueDate: "2026-06-05",
@@ -540,7 +603,9 @@ export const seedTasks: BoardTask[] = [
     description: "沉淀可复用案例、截图和行业标签，支持后续活动页面。",
     status: "backlog",
     priority: "low",
+    ownerUserId: "",
     owner: "市场组",
+    testerUserId: "",
     tester: "",
     startDate: "2026-06-11",
     designDueDate: "2026-06-15",
