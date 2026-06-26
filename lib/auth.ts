@@ -57,7 +57,7 @@ export function sessionCookieOptions() {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecureEnabled(),
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
   };
@@ -67,10 +67,17 @@ export function expiredCookieOptions() {
   return {
     httpOnly: true,
     sameSite: "lax" as const,
-    secure: process.env.NODE_ENV === "production",
+    secure: cookieSecureEnabled(),
     path: "/",
     maxAge: 0,
   };
+}
+
+function cookieSecureEnabled() {
+  const value = process.env.KANBAN_COOKIE_SECURE;
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return false;
 }
 
 async function sign(value: string) {
