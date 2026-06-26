@@ -51,7 +51,15 @@ export function applyMigrations(database, migrationsDir = resolveMigrationsDir()
     for (const statement of splitStatements(sql)) {
       const trimmed = statement.trim();
       if (trimmed) {
-        database.exec(trimmed);
+        try {
+          database.exec(trimmed);
+        } catch (error) {
+          if (isIgnorableSchemaConflict(trimmed, error)) {
+            console.log(`[kanban-migrate] skipped already-applied statement in ${migration}: ${summarizeStatement(trimmed)}`);
+            continue;
+          }
+          throw error;
+        }
       }
     }
     database.prepare("INSERT INTO d1_migrations (name) VALUES (?)").run(migration);
@@ -78,6 +86,25 @@ export function readImageTag() {
     return `kanban:${appVersion}`;
   }
   return configuredTag.replaceAll("{version}", appVersion);
+}
+
+function isIgnorableSchemaConflict(statement, error) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const normalized = statement.toLowerCase();
+  if (normalized.includes("alter table") && normalized.includes("add") && message.includes("duplicate column name")) {
+    return true;
+  }
+  if (normalized.includes("create index") && message.includes("already exists")) {
+    return true;
+  }
+  if (normalized.includes("create table") && message.includes("already exists")) {
+    return true;
+  }
+  return false;
+}
+
+function summarizeStatement(statement) {
+  return statement.replace(/\s+/g, " ").trim().slice(0, 120);
 }
 
 export function ensureUpgradeMetadataTables(database) {
