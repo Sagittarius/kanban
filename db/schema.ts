@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const users = sqliteTable(
   "users",
@@ -9,7 +9,10 @@ export const users = sqliteTable(
     passwordHash: text("password_hash").notNull(),
     role: text("role").notNull().default("team_member"),
     displayName: text("display_name").notNull().default(""),
+    phone: text("phone").notNull().default(""),
     avatarKey: text("avatar_key").notNull().default(""),
+    jobTitle: text("job_title").notNull().default(""),
+    techStacks: text("tech_stacks").notNull().default("[]"),
     timezone: text("timezone").notNull().default("Asia/Shanghai"),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
     createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
@@ -121,6 +124,7 @@ export const tasks = sqliteTable("tasks", {
   owner: text("owner").notNull().default("未分配"),
   testerUserId: text("tester_user_id").notNull().default(""),
   tester: text("tester").notNull().default(""),
+  workloadDays: real("workload_days"),
   startDate: text("start_date").notNull().default(""),
   testDueDate: text("test_due_date").notNull().default(""),
   designDueDate: text("design_due_date").notNull().default(""),

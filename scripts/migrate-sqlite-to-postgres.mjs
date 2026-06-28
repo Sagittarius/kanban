@@ -17,7 +17,10 @@ const TABLES = [
       "password_hash",
       "role",
       "display_name",
+      "phone",
       "avatar_key",
+      "job_title",
+      "tech_stacks",
       "timezone",
       "is_active",
       "created_at",
@@ -83,6 +86,7 @@ const TABLES = [
       "owner",
       "tester_user_id",
       "tester",
+      "workload_days",
       "start_date",
       "test_due_date",
       "design_due_date",
@@ -413,6 +417,18 @@ function defaultSqliteValue(tableName, column) {
   }
   if (tableName === "tasks" && (column === "owner_user_id" || column === "tester_user_id")) {
     return "";
+  }
+  if (tableName === "users" && column === "tech_stacks") {
+    return "[]";
+  }
+  if (tableName === "users" && column === "job_title") {
+    return "";
+  }
+  if (tableName === "users" && column === "phone") {
+    return "";
+  }
+  if (tableName === "tasks" && column === "workload_days") {
+    return null;
   }
   return null;
 }

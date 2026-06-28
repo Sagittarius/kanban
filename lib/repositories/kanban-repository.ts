@@ -1,4 +1,5 @@
 import { getDbAdapter, getStorageMode, type DatabaseAdapter, type SqlValue } from "@/db/sql-adapter";
+import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import type {
   AdminPermissions,
   BoardSummary,
@@ -20,6 +21,9 @@ import {
   type BoardStatus,
   type BoardTeamOption,
   type BoardUserOption,
+  type Priority,
+  type ProjectHealth,
+  type ProjectStatus,
   type Subtask,
   type SystemParameter,
   type SystemSettings,
@@ -33,6 +37,9 @@ export type CreateUserInput = {
   timezone?: unknown;
   role?: unknown;
   displayName?: unknown;
+  phone?: unknown;
+  jobTitle?: unknown;
+  techStacks?: unknown;
   isActive?: unknown;
 };
 export type UpdateManagedUserInput = Partial<CreateUserInput>;
@@ -45,7 +52,7 @@ export type CreateTeamInput = {
 export type UpdateTeamInput = Partial<CreateTeamInput>;
 export type CreateBoardInput = { name?: unknown; description?: unknown; teamIds?: unknown };
 export type UpdateBoardInput = Partial<CreateBoardInput>;
-export type UpdateUserProfileInput = Partial<{ displayName: unknown; timezone: unknown; avatarKey: unknown }>;
+export type UpdateUserProfileInput = Partial<{ displayName: unknown; phone: unknown; timezone: unknown; avatarKey: unknown; jobTitle: unknown; techStacks: unknown }>;
 export type CreateProjectInput = {
   name?: unknown;
   description?: unknown;
@@ -64,6 +71,7 @@ export type CreateTaskInput = {
   ownerUserId?: unknown;
   tester?: unknown;
   testerUserId?: unknown;
+  workloadDays?: unknown;
   testDueDate?: unknown;
   designDueDate?: unknown;
   dueDate?: unknown;
@@ -74,6 +82,7 @@ export type UpdateTaskInput = Partial<
     status: unknown;
     startDate: unknown;
     estimate: unknown;
+    workloadDays: unknown;
     progress: unknown;
     blockers: unknown;
     blockedReason: unknown;
@@ -83,10 +92,10 @@ export type ReorderTaskInput = { updates?: unknown };
 export type CreateSubtaskInput = { title?: unknown };
 export type UpdateSubtaskInput = Partial<{ title: unknown; done: unknown }>;
 export type UpdateSystemSettingsInput = Partial<{ dueSoonDays: unknown; activityRetentionDays: unknown; parameters: unknown }>;
-export type WorkloadDashboardInput = Partial<{ teamId: unknown; projectId: unknown }>;
+export type WorkloadDashboardInput = Partial<{ teamId: unknown; projectId: unknown; teamIds: unknown; projectIds: unknown }>;
 
-export const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
-export const DEFAULT_BOARD_ID = "default-board";
+export const USERNAME_PATTERN = /^[A-Za-z0-9_]+$/;
+export const DEFAULT_BOARD_ID = process.env.KANBAN_DEFAULT_BOARD_ID?.trim() || "default-board";
 let repositoryPromise: Promise<KanbanRepository> | null = null;
 
 function statusLabel(status: BoardStatus) {
@@ -122,8 +131,8 @@ export class KanbanRepository {
   async ensureBootstrapData() {
     await this.ensureSuperAdmin();
     await this.ensureRoleCompatibility();
-    await this.ensureDefaultBoardForLegacyData();
     await this.ensureSystemParameters();
+    await this.ensureDefaultBoardForLegacyData();
   }
 
   async getBootstrapUser(): Promise<CurrentUser> {
@@ -144,8 +153,11 @@ export class KanbanRepository {
     return row ? user(row) : null;
   }
 
-  async listUsers(): Promise<ManagedUser[]> {
+  async listUsers(actor?: CurrentUser): Promise<ManagedUser[]> {
     await this.ensureBootstrapData();
+    if (actor?.role === "project_manager") {
+      return (await this.q("SELECT * FROM users WHERE role='team_member' ORDER BY username ASC")).map(managedUser);
+    }
     return (await this.q("SELECT * FROM users ORDER BY role ASC, username ASC")).map(managedUser);
   }
 
@@ -178,21 +190,27 @@ export class KanbanRepository {
       password_hash: await hashPassword(text(input.password, `${username}@123`)),
       role: desiredRole,
       display_name: opt(input.displayName),
+      phone: opt(input.phone),
       avatar_key: "",
+      job_title: normalizeJobTitle(input.jobTitle, defaultJobTitleForRole(desiredRole)),
+      tech_stacks: JSON.stringify(techStacks(input.techStacks, [])),
       timezone: normalizeTimeZone(input.timezone),
       is_active: input.isActive === false ? 0 : 1,
       created_at: now,
       updated_at: now,
     };
     await this.x(
-      "INSERT INTO users (id,username,password_hash,role,display_name,avatar_key,timezone,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO users (id,username,password_hash,role,display_name,phone,avatar_key,job_title,tech_stacks,timezone,is_active,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         row.id,
         row.username,
         row.password_hash,
         row.role,
         row.display_name,
+        row.phone,
         row.avatar_key,
+        row.job_title,
+        row.tech_stacks,
         row.timezone,
         row.is_active,
         row.created_at,
@@ -227,11 +245,14 @@ export class KanbanRepository {
     if (!nextActive && currentRole === "super_admin") await this.ensureAnotherActiveSuperAdmin(userId);
 
     await this.x(
-      "UPDATE users SET username=?,role=?,display_name=?,timezone=?,is_active=?,updated_at=? WHERE id=?",
+      "UPDATE users SET username=?,role=?,display_name=?,phone=?,job_title=?,tech_stacks=?,timezone=?,is_active=?,updated_at=? WHERE id=?",
       [
         nextUsername,
         nextRole,
         opt(input.displayName, String(current.display_name ?? "")),
+        opt(input.phone, String(current.phone ?? "")),
+        normalizeJobTitle(input.jobTitle, String(current.job_title ?? defaultJobTitleForRole(nextRole))),
+        JSON.stringify(techStacks(input.techStacks, parseJsonStringArray(current.tech_stacks))),
         normalizeTimeZone(input.timezone ?? current.timezone),
         nextActive,
         iso(),
@@ -265,8 +286,12 @@ export class KanbanRepository {
     await this.ensureBootstrapData();
     const current = await this.getUserById(userId);
     if (!current) throw new Error("User not found");
-    await this.x("UPDATE users SET avatar_key=?,timezone=?,updated_at=? WHERE id=?", [
+    await this.x("UPDATE users SET display_name=?,phone=?,avatar_key=?,job_title=?,tech_stacks=?,timezone=?,updated_at=? WHERE id=?", [
+      current.displayName,
+      opt(input.phone, current.phone),
       opt(input.avatarKey, current.avatarKey),
+      normalizeJobTitle(input.jobTitle, current.jobTitle),
+      JSON.stringify(techStacks(input.techStacks, current.techStacks)),
       normalizeTimeZone(input.timezone ?? current.timezone),
       iso(),
       userId,
@@ -311,6 +336,14 @@ export class KanbanRepository {
     throw new Error("Board not found");
   }
 
+  async resolvePublicBoard(actor: CurrentUser) {
+    await this.ensureBootstrapData();
+    const selected = await this.firstBoardSummary(actor);
+    if (selected) return selected;
+    if (canCreateBoards(actor)) return this.createBoard(actor, { name: await this.defaultBoardTitle() });
+    throw new Error("Board not found");
+  }
+
   async createBoard(actor: CurrentUser, input: CreateBoardInput): Promise<BoardSummary> {
     await this.ensureBootstrapData();
     requireBoardCreator(actor);
@@ -343,7 +376,7 @@ export class KanbanRepository {
   }
 
   async updateBoard(actor: CurrentUser, boardId: string, input: UpdateBoardInput): Promise<BoardSummary> {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardAdmin(actor, boardId);
     const current = await this.getBoardSummaryById(actor, boardId);
     if (!current) throw new Error("Board not found");
     await this.x("UPDATE boards SET name=?,description=?,updated_at=? WHERE id=?", [
@@ -358,6 +391,36 @@ export class KanbanRepository {
     const updated = await this.getBoardSummaryById(actor, boardId);
     if (!updated) throw new Error("Board not found");
     return updated;
+  }
+
+  async deleteBoard(actor: CurrentUser, boardId: string) {
+    await this.requireBoardAdmin(actor, boardId);
+    if (boardId === DEFAULT_BOARD_ID) {
+      throw new Error("Default board cannot be deleted");
+    }
+    const existing = await this.getBoardSummaryById(actor, boardId);
+    if (!existing) {
+      throw new Error("Board not found");
+    }
+
+    const projectRows = await this.q("SELECT id FROM projects WHERE board_id=?", [boardId]);
+    const projectIds = projectRows.map((row) => String(row.id));
+    if (projectIds.length > 0) {
+      const placeholders = projectIds.map(() => "?").join(",");
+      const taskRows = await this.q(`SELECT id FROM tasks WHERE project_id IN (${placeholders})`, projectIds);
+      const taskIds = taskRows.map((row) => String(row.id));
+      if (taskIds.length > 0) {
+        const taskPlaceholders = taskIds.map(() => "?").join(",");
+        await this.x(`DELETE FROM subtasks WHERE task_id IN (${taskPlaceholders})`, taskIds);
+      }
+      await this.x(`DELETE FROM tasks WHERE project_id IN (${placeholders})`, projectIds);
+      await this.x(`DELETE FROM projects WHERE id IN (${placeholders})`, projectIds);
+    }
+    await this.x("DELETE FROM task_activity WHERE board_id=?", [boardId]);
+    await this.x("DELETE FROM board_members WHERE board_id=?", [boardId]);
+    await this.x("DELETE FROM board_teams WHERE board_id=?", [boardId]);
+    await this.x("DELETE FROM boards WHERE id=?", [boardId]);
+    return { id: boardId };
   }
 
   async listBoardsForAdmin(actor: CurrentUser) {
@@ -380,7 +443,8 @@ export class KanbanRepository {
   }
 
   async grantBoardViewer(actor: CurrentUser, boardId: string, userId: string) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardAdmin(actor, boardId);
+    if (!(await this.getUserById(userId))) throw new Error("User not found");
     await this.x(
       "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'viewer',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='viewer'",
       [boardId, userId, iso()]
@@ -389,7 +453,7 @@ export class KanbanRepository {
   }
 
   async revokeBoardViewer(actor: CurrentUser, boardId: string, userId: string) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardAdmin(actor, boardId);
     await this.x("DELETE FROM board_members WHERE board_id=? AND user_id=? AND role='viewer'", [boardId, userId]);
     return { ok: true as const };
   }
@@ -407,9 +471,27 @@ export class KanbanRepository {
     return rows.map((row) => team(row, memberIds.get(String(row.id)) ?? []));
   }
 
+  async listTeamsForDashboard(actor: CurrentUser): Promise<TeamSummary[]> {
+    this.requireDashboardAccess(actor);
+    const rows =
+      actor.role === "super_admin"
+        ? await this.q("SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id ORDER BY t.updated_at DESC,t.created_at DESC")
+        : actor.role === "project_manager"
+          ? await this.q(
+              "SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id WHERE t.owner_user_id=? ORDER BY t.updated_at DESC,t.created_at DESC",
+              [actor.id]
+            )
+          : await this.q(
+              "SELECT DISTINCT t.*,u.username AS owner_username FROM teams t JOIN team_members tm ON tm.team_id=t.id LEFT JOIN users u ON u.id=t.owner_user_id WHERE tm.user_id=? ORDER BY t.updated_at DESC,t.created_at DESC",
+              [actor.id]
+            );
+    const memberIds = await this.teamMemberIds(rows.map((row) => String(row.id)));
+    return rows.map((row) => team(row, memberIds.get(String(row.id)) ?? []));
+  }
+
   async listAssignableUsers(): Promise<TeamMemberSummary[]> {
     await this.ensureBootstrapData();
-    return (await this.q("SELECT * FROM users WHERE is_active=1 AND role IN ('project_manager','team_member') ORDER BY role ASC,username ASC")).map(
+    return (await this.q("SELECT * FROM users WHERE is_active=1 AND role IN ('project_manager','development_manager','team_member') ORDER BY role ASC,username ASC")).map(
       teamMember
     );
   }
@@ -496,6 +578,7 @@ export class KanbanRepository {
     const activeBoard = boards.find((item) => item.id === boardId);
     const teams = await this.listBoardTeamOptions(boardId);
     const users = uniqueUsers(teams.flatMap((teamItem) => teamItem.members));
+    const configuredBoardTitle = parameterText(settings, "board_title");
     return {
       columns: columnsFromSettings(settings),
       projects,
@@ -505,7 +588,7 @@ export class KanbanRepository {
       activity,
       settings,
       storageMode: getStorageMode(),
-      boardName: activeBoard?.name ?? "",
+      boardName: !isAuthFeatureEnabled() && configuredBoardTitle ? configuredBoardTitle : activeBoard?.name ?? "",
       currentUser: actor,
       boards,
       activeBoardId: boardId,
@@ -639,13 +722,29 @@ export class KanbanRepository {
         boardId,
       ]
     );
+    const currentTeam = current.teamId ? await this.getTeamRow(current.teamId) : null;
+    const nextTeam = teamId === current.teamId ? currentTeam : await this.getTeamRow(teamId);
+    const changes = compactChanges([
+      changeEntry("团队", currentTeam ? String(currentTeam.name ?? current.teamId) : current.teamId || "空", nextTeam ? String(nextTeam.name ?? teamId) : teamId || "空"),
+      changeEntry("项目名称", current.name, row.name),
+      changeEntry("项目说明", current.description, row.description),
+      changeEntry("负责人", current.owner, row.owner),
+      changeEntry("颜色", current.color, row.color),
+      changeEntry("健康度", healthLabel(current.health), healthLabel(row.health)),
+      changeEntry("状态", projectStatusLabel(current.status), projectStatusLabel(row.status)),
+      changeEntry("归档总结", current.summary, row.summary),
+    ]);
     await this.recordActivity(boardId, {
       entityType: "project",
       entityId: id,
       projectId: id,
       action: status !== current.status ? (status === "archived" ? "project.archive" : "project.restore") : "project.update",
-      message: `更新项目「${row.name}」。`,
-      meta: { before: current.status, after: status },
+      message: changes.length ? `更新项目「${row.name}」：${summarizeChanges(changes)}。` : `更新项目「${row.name}」。`,
+      meta: {
+        before: { status: current.status, teamId: current.teamId },
+        after: { status, teamId },
+        changes,
+      },
     });
     return project(await this.getProjectRow(boardId, id));
   }
@@ -667,12 +766,16 @@ export class KanbanRepository {
   }
 
   async createTask(actor: CurrentUser, boardId: string, input: CreateTaskInput) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardRead(actor, boardId);
+    if (!canCreateTasks(actor)) throw new Error("Forbidden");
     const projectId = text(input.projectId);
     if (!projectId) throw new Error("Project is required");
     const projectRow = await this.getProjectRow(boardId, projectId);
     if (!projectRow) throw new Error("Project not found");
     const assignees = await this.resolveTaskAssignees(project(projectRow), input);
+    if (actor.role === "team_member" && assignees.ownerUserId !== actor.id && assignees.testerUserId !== actor.id) {
+      throw new Error("Forbidden");
+    }
     const now = iso();
     const row = {
       id: crypto.randomUUID(),
@@ -685,6 +788,7 @@ export class KanbanRepository {
       owner: assignees.ownerName,
       tester_user_id: assignees.testerUserId,
       tester: assignees.testerName,
+      workload_days: workloadDays(input.workloadDays),
       start_date: "",
       test_due_date: opt(input.testDueDate),
       design_due_date: opt(input.designDueDate),
@@ -701,7 +805,7 @@ export class KanbanRepository {
       updated_at: now,
     };
     await this.x(
-      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,start_date,test_due_date,design_due_date,due_date,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,test_due_date,design_due_date,due_date,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         row.id,
         row.project_id,
@@ -713,6 +817,7 @@ export class KanbanRepository {
         row.owner,
         row.tester_user_id,
         row.tester,
+        row.workload_days,
         row.start_date,
         row.test_due_date,
         row.design_due_date,
@@ -752,7 +857,7 @@ export class KanbanRepository {
     const nextTitle = current.title.endsWith("（返工）") ? current.title : `${current.title}（返工）`;
     const nextTags = Array.from(new Set([...current.tags, "返工"]));
     await this.x(
-      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,start_date,test_due_date,design_due_date,due_date,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,test_due_date,design_due_date,due_date,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         newTaskId,
         current.projectId,
@@ -764,6 +869,7 @@ export class KanbanRepository {
         current.owner,
         current.testerUserId,
         current.tester,
+        current.workloadDays,
         "",
         current.testDueDate,
         current.designDueDate,
@@ -804,20 +910,28 @@ export class KanbanRepository {
   }
 
   async updateTask(actor: CurrentUser, boardId: string, id: string, input: UpdateTaskInput) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardRead(actor, boardId);
     const old = await this.getTaskRow(boardId, id);
     if (!old || old.deleted_at) throw new Error("Task not found");
     const current = task(old, (await this.getSubtasks(id)).map(subtask));
+    if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     const status = input.status === undefined ? current.status : normalizeBoardStatus(input.status);
     const projectId = text(input.projectId, current.projectId);
     const projectRow = await this.getProjectRow(boardId, projectId);
     if (!projectRow) throw new Error("Project not found");
+    const currentProjectRow = await this.getProjectRow(boardId, current.projectId);
     const assignees = await this.resolveTaskAssignees(project(projectRow), input, current);
+    if (actor.role === "team_member" && assignees.ownerUserId !== actor.id && assignees.testerUserId !== actor.id) {
+      throw new Error("Forbidden");
+    }
     const nextTags = JSON.stringify(tags(input.tags, current.tags));
     const completed = status === "done" ? (current.status === "done" ? current.completedAt : iso()) : null;
     const order = status !== current.status ? await this.nextTaskOrderIndex(status, projectId) : current.orderIndex;
+    const nextProgress = status === "done" ? 100 : num(input.progress, current.progress, 0, 100);
+    const nextBlockers = status === "done" ? 0 : num(input.blockers, current.blockers, 0, 99);
+    const nextBlockedReason = status === "done" ? "" : opt(input.blockedReason, current.blockedReason);
     await this.x(
-      "UPDATE tasks SET title=?,description=?,project_id=?,status=?,priority=?,owner_user_id=?,owner=?,tester_user_id=?,tester=?,start_date=?,test_due_date=?,design_due_date=?,due_date=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,completed_at=?,updated_at=? WHERE id=?",
+      "UPDATE tasks SET title=?,description=?,project_id=?,status=?,priority=?,owner_user_id=?,owner=?,tester_user_id=?,tester=?,workload_days=?,start_date=?,test_due_date=?,design_due_date=?,due_date=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,completed_at=?,updated_at=? WHERE id=?",
       [
         text(input.title, current.title),
         opt(input.description, current.description),
@@ -828,14 +942,15 @@ export class KanbanRepository {
         assignees.ownerName,
         assignees.testerUserId,
         assignees.testerName,
+        input.workloadDays === undefined ? current.workloadDays : workloadDays(input.workloadDays),
         opt(input.startDate, current.startDate),
         opt(input.testDueDate, current.testDueDate),
         opt(input.designDueDate, current.designDueDate),
         opt(input.dueDate, current.dueDate),
         num(input.estimate, current.estimate, 1, 99),
-        num(input.progress, current.progress, 0, 100),
-        num(input.blockers, current.blockers, 0, 99),
-        opt(input.blockedReason, current.blockedReason),
+        nextProgress,
+        nextBlockers,
+        nextBlockedReason,
         nextTags,
         order,
         completed,
@@ -843,6 +958,26 @@ export class KanbanRepository {
         id,
       ]
     );
+    if (status === "done") {
+      await this.completeSubtasks(id);
+    }
+    const changes = compactChanges([
+      changeEntry("项目", currentProjectRow ? String(currentProjectRow.name ?? current.projectId) : current.projectId, String(projectRow.name ?? projectId)),
+      changeEntry("任务名称", current.title, text(input.title, current.title)),
+      changeEntry("任务描述", current.description, opt(input.description, current.description)),
+      changeEntry("状态", statusLabel(current.status), statusLabel(status)),
+      changeEntry("优先级", priorityLabel(current.priority), priorityLabel(isPriority(input.priority) ? input.priority : current.priority)),
+      changeEntry("负责人", current.owner || "空", assignees.ownerName || "空"),
+      changeEntry("测试员", current.tester || "空", assignees.testerName || "空"),
+      changeEntry("设计截止", current.designDueDate || "空", opt(input.designDueDate, current.designDueDate) || "空"),
+      changeEntry("提测日期", current.testDueDate || "空", opt(input.testDueDate, current.testDueDate) || "空"),
+      changeEntry("交付日期", current.dueDate || "空", opt(input.dueDate, current.dueDate) || "空"),
+      changeEntry("工作量", formatWorkload(current.workloadDays), formatWorkload(input.workloadDays === undefined ? current.workloadDays : workloadDays(input.workloadDays))),
+      changeEntry("进度", `${current.progress}%`, `${nextProgress}%`),
+      changeEntry("阻塞", String(current.blockers), String(nextBlockers)),
+      changeEntry("阻塞说明", current.blockedReason, nextBlockedReason),
+      changeEntry("标签", current.tags.join(" / ") || "空", tags(input.tags, current.tags).join(" / ") || "空"),
+    ]);
     await this.recordActivity(boardId, {
       entityType: "task",
       entityId: id,
@@ -850,18 +985,24 @@ export class KanbanRepository {
       taskId: id,
       action: status !== current.status ? "task.status" : "task.update",
       message:
-        status !== current.status
-          ? `移动任务「${text(input.title, current.title)}」：${statusLabel(current.status)} -> ${statusLabel(status)}。`
+        changes.length > 0
+          ? `更新任务「${text(input.title, current.title)}」：${summarizeChanges(changes)}。`
           : `更新任务「${text(input.title, current.title)}」。`,
-      meta: { beforeStatus: current.status, afterStatus: status },
+      meta: {
+        beforeStatus: current.status,
+        afterStatus: status,
+        changes,
+      },
     });
     return task(await this.getTaskRow(boardId, id), (await this.getSubtasks(id)).map(subtask));
   }
 
   async deleteTask(actor: CurrentUser, boardId: string, id: string) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardRead(actor, boardId);
     const old = await this.getTaskRow(boardId, id);
     if (!old || old.deleted_at) throw new Error("Task not found");
+    const current = task(old, (await this.getSubtasks(id)).map(subtask));
+    if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     await this.x("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=?", [iso(), iso(), id]);
     await this.recordActivity(boardId, {
       entityType: "task",
@@ -875,22 +1016,36 @@ export class KanbanRepository {
   }
 
   async reorderTasks(actor: CurrentUser, boardId: string, input: ReorderTaskInput) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardRead(actor, boardId);
     const items = Array.isArray(input.updates) ? input.updates.map(reorderItem).filter(isReorderItem) : [];
     if (!items.length) return { ok: true as const };
     const rows = await this.getTaskRowsByIds(boardId, items.map((item) => item.id));
     const byId = new Map(rows.map((row) => [String(row.id), row]));
     for (const item of items) {
       const old = byId.get(item.id);
+      if (!old) continue;
+      const current = task(old, []);
+      if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) {
+        throw new Error("Forbidden");
+      }
       const oldStatus = normalizeBoardStatus(old?.status);
       const completed = item.status === "done" ? (oldStatus === "done" ? String(old?.completed_at ?? iso()) : iso()) : null;
-      await this.x("UPDATE tasks SET status=?,order_index=?,completed_at=?,updated_at=? WHERE id=?", [
+      const nextProgress = item.status === "done" ? 100 : num(old.progress, 0, 0, 100);
+      const nextBlockers = item.status === "done" ? 0 : num(old.blockers, 0, 0, 99);
+      const nextBlockedReason = item.status === "done" ? "" : String(old.blocked_reason ?? "");
+      await this.x("UPDATE tasks SET status=?,order_index=?,progress=?,blockers=?,blocked_reason=?,completed_at=?,updated_at=? WHERE id=?", [
         item.status,
         item.orderIndex,
+        nextProgress,
+        nextBlockers,
+        nextBlockedReason,
         completed,
         iso(),
         item.id,
       ]);
+      if (item.status === "done") {
+        await this.completeSubtasks(item.id);
+      }
       if (old && oldStatus !== item.status) {
         await this.recordActivity(boardId, {
           entityType: "task",
@@ -907,9 +1062,11 @@ export class KanbanRepository {
   }
 
   async createSubtask(actor: CurrentUser, boardId: string, taskId: string, input: CreateSubtaskInput) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardRead(actor, boardId);
     const taskRow = await this.getTaskRow(boardId, taskId);
     if (!taskRow || taskRow.deleted_at) throw new Error("Task not found");
+    const current = task(taskRow, []);
+    if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     const now = iso();
     const row = {
       id: crypto.randomUUID(),
@@ -942,10 +1099,12 @@ export class KanbanRepository {
   }
 
   async updateSubtask(actor: CurrentUser, boardId: string, taskId: string, subtaskId: string, input: UpdateSubtaskInput) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardRead(actor, boardId);
     const taskRow = await this.getTaskRow(boardId, taskId);
     const old = await this.getSubtask(taskId, subtaskId);
     if (!taskRow || taskRow.deleted_at || !old) throw new Error("Subtask not found");
+    const current = task(taskRow, []);
+    if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     const oldTitle = String(old.title ?? "");
     const done = typeof input.done === "boolean" ? (input.done ? 1 : 0) : old.done;
     await this.x("UPDATE subtasks SET title=?,done=?,updated_at=? WHERE id=? AND task_id=?", [
@@ -956,23 +1115,29 @@ export class KanbanRepository {
       taskId,
     ]);
     await this.recalculateTaskProgress(taskId);
+    const changes = compactChanges([
+      changeEntry("拆解标题", oldTitle, text(input.title, oldTitle)),
+      changeEntry("完成状态", old.done ? "已完成" : "未完成", done ? "已完成" : "未完成"),
+    ]);
     await this.recordActivity(boardId, {
       entityType: "subtask",
       entityId: subtaskId,
       projectId: taskRow.project_id,
       taskId,
       action: done !== old.done ? "subtask.toggle" : "subtask.update",
-      message: `更新任务拆解「${text(input.title, oldTitle)}」。`,
-      meta: { done: Boolean(done) },
+      message: changes.length ? `更新任务拆解「${text(input.title, oldTitle)}」：${summarizeChanges(changes)}。` : `更新任务拆解「${text(input.title, oldTitle)}」。`,
+      meta: { done: Boolean(done), changes },
     });
     return subtask(await this.getSubtask(taskId, subtaskId));
   }
 
   async deleteSubtask(actor: CurrentUser, boardId: string, taskId: string, subtaskId: string) {
-    await this.requireBoardWrite(actor, boardId);
+    await this.requireBoardRead(actor, boardId);
     const taskRow = await this.getTaskRow(boardId, taskId);
     const old = await this.getSubtask(taskId, subtaskId);
     if (!taskRow || taskRow.deleted_at || !old) throw new Error("Subtask not found");
+    const current = task(taskRow, []);
+    if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     await this.x("DELETE FROM subtasks WHERE id=? AND task_id=?", [subtaskId, taskId]);
     await this.recalculateTaskProgress(taskId);
     await this.recordActivity(boardId, {
@@ -987,65 +1152,237 @@ export class KanbanRepository {
   }
 
   async getWorkloadDashboard(actor: CurrentUser, input: WorkloadDashboardInput = {}) {
-    this.requireAdminAccess(actor);
-    const teamId = text(input.teamId);
-    const projectId = text(input.projectId);
-    const allowedTeams = await this.listTeamsForAdmin(actor);
+    this.requireDashboardAccess(actor);
+    const requestedTeamIds = uniqIds([input.teamId, input.teamIds]);
+    const requestedProjectIds = uniqIds([input.projectId, input.projectIds]);
+    const settings = settingsFromRows(await this.q("SELECT * FROM system_parameters ORDER BY order_index ASC,key ASC"));
+    const dueSoonDays = settings.dueSoonDays;
+    const testerDefaultWorkloadDays = settings.testerDefaultWorkloadDays;
+    const todayKey = todayKeyInTimeZone(actor.timezone);
+    const allowedTeams = await this.listTeamsForDashboard(actor);
     const allowedTeamIds = new Set(allowedTeams.map((teamItem) => teamItem.id));
-    const selectedTeamIds = teamId && allowedTeamIds.has(teamId) ? [teamId] : [...allowedTeamIds];
+    const selectedTeamIds = requestedTeamIds.length
+      ? requestedTeamIds.filter((teamId) => allowedTeamIds.has(teamId))
+      : [...allowedTeamIds];
     const projectRows = await this.listDashboardProjectRows(actor, selectedTeamIds);
-    const selectedProject = projectId ? projectRows.find((row) => row.id === projectId) : null;
-    const effectiveProjectRows = selectedProject ? [selectedProject] : projectRows;
-    const effectiveTeamIds = selectedProject ? [String(selectedProject.team_id)] : selectedTeamIds;
+    const effectiveProjectRows = requestedProjectIds.length
+      ? projectRows.filter((row) => requestedProjectIds.includes(String(row.id)))
+      : projectRows;
+    const effectiveTeamIds = effectiveProjectRows.length
+      ? Array.from(new Set(effectiveProjectRows.map((row) => String(row.team_id))))
+      : selectedTeamIds;
     const members = await this.dashboardMembers(effectiveTeamIds);
     const taskRows = await this.dashboardTasks(effectiveProjectRows.map((row) => String(row.id)));
-    const tasksByOwner = new Map<string, Record<string, unknown>[]>();
+    const projectStatusCounts = new Map<
+      string,
+      Record<BoardStatus, number>
+    >();
+    for (const row of effectiveProjectRows) {
+      projectStatusCounts.set(String(row.id), {
+        backlog: 0,
+        design: 0,
+        dev: 0,
+        test: 0,
+        done: 0,
+      });
+    }
+    const memberById = new Map(members.map((member) => [member.id, member]));
+    const tasksByMember = new Map<string, Array<Record<string, unknown> & { __assigneeKind: "owner" | "tester"; __effectiveWorkloadDays: number }>>();
+    const projectTaskMap = new Map<string, Record<string, unknown>[]>();
+    const projectWarningCounts = new Map<string, { dueSoon: number; overdue: number; blocked: number }>();
+    let dueSoonCount = 0;
+    let overdueCount = 0;
+    let blockedCount = 0;
     for (const row of taskRows) {
-      const ownerId = String(row.owner_user_id ?? "");
-      if (!ownerId) continue;
-      const list = tasksByOwner.get(ownerId) ?? [];
-      list.push(row);
-      tasksByOwner.set(ownerId, list);
+      const projectId = String(row.project_id ?? "");
+      const status = normalizeBoardStatus(row.status);
+      const counts = projectStatusCounts.get(projectId);
+      if (counts) {
+        counts[status] += 1;
+      }
+
+      const projectTasks = projectTaskMap.get(projectId) ?? [];
+      projectTasks.push(row);
+      projectTaskMap.set(projectId, projectTasks);
+
+      const normalizedTask = task(row, []);
+      const warnings = taskWarningFlags(normalizedTask, todayKey, dueSoonDays);
+      const warningCounts = projectWarningCounts.get(projectId) ?? { dueSoon: 0, overdue: 0, blocked: 0 };
+      if (warnings.dueSoon) {
+        dueSoonCount += 1;
+        warningCounts.dueSoon += 1;
+      }
+      if (warnings.overdue) {
+        overdueCount += 1;
+        warningCounts.overdue += 1;
+      }
+      if (warnings.blocked) {
+        blockedCount += 1;
+        warningCounts.blocked += 1;
+      }
+      projectWarningCounts.set(projectId, warningCounts);
+
+      const ownerMember = memberById.get(normalizedTask.ownerUserId);
+      if (normalizedTask.ownerUserId && ownerMember?.jobTitle !== "tester") {
+        const memberTasks = tasksByMember.get(normalizedTask.ownerUserId) ?? [];
+        memberTasks.push({
+          ...row,
+          __assigneeKind: "owner",
+          __effectiveWorkloadDays: effectiveWorkloadDays(normalizedTask),
+        });
+        tasksByMember.set(normalizedTask.ownerUserId, memberTasks);
+      }
+
+      const testerMember = memberById.get(normalizedTask.testerUserId);
+      if ((normalizedTask.status === "test" || normalizedTask.status === "done") && testerMember?.jobTitle === "tester") {
+        const memberTasks = tasksByMember.get(normalizedTask.testerUserId) ?? [];
+        memberTasks.push({
+          ...row,
+          __assigneeKind: "tester",
+          __effectiveWorkloadDays: normalizedTask.status === "test" ? testerDefaultWorkloadDays : 0,
+        });
+        tasksByMember.set(normalizedTask.testerUserId, memberTasks);
+      }
     }
     const projectNames = new Map(effectiveProjectRows.map((row) => [String(row.id), String(row.name)]));
+    const projectTeamNames = new Map(allowedTeams.map((teamItem) => [teamItem.id, teamItem.name]));
     const rows = members.map((member) => {
-      const taskList = tasksByOwner.get(member.id) ?? [];
-      const averageProgress = taskList.length
-        ? Math.round(taskList.reduce((total, row) => total + Number(row.progress ?? 0), 0) / taskList.length)
-        : 0;
+      const taskList = tasksByMember.get(member.id) ?? [];
+      const totalWorkload = taskList.reduce((total, row) => total + row.__effectiveWorkloadDays, 0);
+      const averageProgress = dashboardAverageProgressForMember(member.jobTitle, taskList);
+      const normalizedTasks = taskList.map((row) => {
+        const normalizedTask = task(row, []);
+        const warnings = taskWarningFlags(normalizedTask, todayKey, dueSoonDays);
+        return {
+          id: normalizedTask.id,
+          title: normalizedTask.title,
+          description: normalizedTask.description,
+          projectId: normalizedTask.projectId,
+          projectName: projectNames.get(normalizedTask.projectId) ?? "",
+          status: normalizedTask.status,
+          progress: dashboardProgressForMember(member.jobTitle, normalizedTask),
+          workloadDays: normalizedTask.workloadDays,
+          effectiveWorkloadDays: row.__effectiveWorkloadDays,
+          owner: normalizedTask.owner,
+          tester: normalizedTask.tester,
+          priority: normalizedTask.priority,
+          designDueDate: normalizedTask.designDueDate,
+          testDueDate: normalizedTask.testDueDate,
+          dueDate: normalizedTask.dueDate,
+          blockedReason: normalizedTask.blockedReason,
+          tags: normalizedTask.tags,
+          completedAt: normalizedTask.completedAt,
+          dueSoon: warnings.dueSoon,
+          overdue: warnings.overdue,
+          blocked: warnings.blocked,
+          assigneeKind: row.__assigneeKind,
+        };
+      });
       return {
         ...member,
         taskCount: taskList.length,
+        workloadDays: roundWorkload(totalWorkload),
         progress: averageProgress,
-        tasks: taskList.map((row) => ({
-          id: String(row.id),
-          title: String(row.title),
-          description: String(row.description ?? ""),
-          projectId: String(row.project_id),
-          projectName: projectNames.get(String(row.project_id)) ?? "",
-          status: normalizeBoardStatus(row.status),
-          progress: Number(row.progress ?? 0),
-        })),
+        dueSoonCount: normalizedTasks.filter((item) => item.dueSoon).length,
+        overdueCount: normalizedTasks.filter((item) => item.overdue).length,
+        blockedCount: normalizedTasks.filter((item) => item.blocked).length,
+        tasks: normalizedTasks,
       };
     });
     return {
       permissions: await this.adminPermissions(actor),
-      filters: { teamId, projectId },
+      filters: {
+        teamIds: selectedTeamIds,
+        projectIds: requestedProjectIds.length ? effectiveProjectRows.map((row) => String(row.id)) : [],
+      },
+      teamIds: selectedTeamIds,
+      projectIds: effectiveProjectRows.map((row) => String(row.id)),
       teams: allowedTeams,
       projects: projectRows.map((row) => ({
         id: String(row.id),
         name: String(row.name),
         teamId: String(row.team_id ?? ""),
+        teamName: projectTeamNames.get(String(row.team_id ?? "")) ?? "",
         boardId: String(row.board_id ?? ""),
+        description: String(row.description ?? ""),
+        taskCount:
+          Object.values(
+            projectStatusCounts.get(String(row.id)) ?? {
+              backlog: 0,
+              design: 0,
+              dev: 0,
+              test: 0,
+              done: 0,
+            }
+          ).reduce((sum, value) => sum + value, 0),
+        workloadDays: roundWorkload(projectDashboardWorkload(projectTaskMap.get(String(row.id)) ?? [], memberById, testerDefaultWorkloadDays)),
+        statusCounts:
+          projectStatusCounts.get(String(row.id)) ?? {
+            backlog: 0,
+            design: 0,
+            dev: 0,
+            test: 0,
+            done: 0,
+          },
+        dueSoonCount: projectWarningCounts.get(String(row.id))?.dueSoon ?? 0,
+        overdueCount: projectWarningCounts.get(String(row.id))?.overdue ?? 0,
+        blockedCount: projectWarningCounts.get(String(row.id))?.blocked ?? 0,
+        tasks: (projectTaskMap.get(String(row.id)) ?? []).map((taskRow) => {
+          const normalizedTask = task(taskRow, []);
+          const warnings = taskWarningFlags(normalizedTask, todayKey, dueSoonDays);
+          const taskTester = memberById.get(normalizedTask.testerUserId);
+          const taskOwner = memberById.get(normalizedTask.ownerUserId);
+          const assigneeKind = normalizedTask.status === "test" && taskTester?.jobTitle === "tester" ? "tester" : "owner";
+          return {
+            id: normalizedTask.id,
+            title: normalizedTask.title,
+            description: normalizedTask.description,
+            projectId: normalizedTask.projectId,
+            projectName: String(row.name),
+            status: normalizedTask.status,
+            progress: normalizedTask.progress,
+            workloadDays: normalizedTask.workloadDays,
+            effectiveWorkloadDays:
+              assigneeKind === "tester"
+                ? testerDefaultWorkloadDays
+                : taskOwner?.jobTitle === "tester"
+                  ? 0
+                  : effectiveWorkloadDays(normalizedTask),
+            owner: normalizedTask.owner,
+            tester: normalizedTask.tester,
+            priority: normalizedTask.priority,
+            designDueDate: normalizedTask.designDueDate,
+            testDueDate: normalizedTask.testDueDate,
+            dueDate: normalizedTask.dueDate,
+            blockedReason: normalizedTask.blockedReason,
+            tags: normalizedTask.tags,
+            completedAt: normalizedTask.completedAt,
+            dueSoon: warnings.dueSoon,
+            overdue: warnings.overdue,
+            blocked: warnings.blocked,
+            assigneeKind,
+          };
+        }),
       })),
       totals: {
         teams: allowedTeams.length,
         projects: projectRows.length,
         members: rows.length,
         tasks: taskRows.length,
-        progress: taskRows.length ? Math.round(taskRows.reduce((sum, row) => sum + Number(row.progress ?? 0), 0) / taskRows.length) : 0,
+        workloadDays: roundWorkload(rows.reduce((sum, row) => sum + row.workloadDays, 0)),
+        progress: rows.some((row) => row.workloadDays > 0)
+          ? Math.round(
+              rows.reduce((sum, row) => sum + row.workloadDays * row.progress, 0) /
+                Math.max(rows.reduce((sum, row) => sum + row.workloadDays, 0), 1)
+            )
+          : 0,
+        dueSoon: dueSoonCount,
+        overdue: overdueCount,
+        blocked: blockedCount,
       },
-      members: rows.sort((left, right) => right.taskCount - left.taskCount || left.displayName.localeCompare(right.displayName)),
+      members: rows.sort((left, right) => right.workloadDays - left.workloadDays || right.taskCount - left.taskCount || left.displayName.localeCompare(right.displayName)),
+      dueSoonDays,
+      todayKey,
     };
   }
 
@@ -1061,7 +1398,10 @@ export class KanbanRepository {
         role: "super_admin",
         timezone: DEFAULT_TIMEZONE,
         displayName: "公共视图",
+        phone: "",
         avatarKey: "",
+        jobTitle: "",
+        techStacks: [],
       },
       input
     );
@@ -1103,9 +1443,13 @@ export class KanbanRepository {
     if (!admin) return;
     const adminId = String(admin.id);
     const now = iso();
-    if (!(await this.q("SELECT id FROM boards WHERE id=? LIMIT 1", [DEFAULT_BOARD_ID]))[0]) {
-      await this.x("INSERT INTO boards (id,name,description,owner_user_id,created_at,updated_at) VALUES (?,'默认看板','系统初始化生成的默认看板',?,?,?)", [
+    const firstBoard = await this.firstBoardRow();
+    const boardId = firstBoard ? String(firstBoard.id) : DEFAULT_BOARD_ID;
+    if (!firstBoard) {
+      await this.x("INSERT INTO boards (id,name,description,owner_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", [
         DEFAULT_BOARD_ID,
+        await this.defaultBoardTitle(),
+        "系统初始化生成的默认看板",
         adminId,
         now,
         now,
@@ -1113,10 +1457,10 @@ export class KanbanRepository {
     }
     await this.x(
       "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'owner',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='owner'",
-      [DEFAULT_BOARD_ID, adminId, now]
+      [boardId, adminId, now]
     );
-    await this.x("UPDATE projects SET board_id=? WHERE board_id='' OR board_id IS NULL", [DEFAULT_BOARD_ID]);
-    await this.x("UPDATE task_activity SET board_id=? WHERE board_id='' OR board_id IS NULL", [DEFAULT_BOARD_ID]);
+    await this.x("UPDATE projects SET board_id=? WHERE board_id='' OR board_id IS NULL", [boardId]);
+    await this.x("UPDATE task_activity SET board_id=? WHERE board_id='' OR board_id IS NULL", [boardId]);
   }
 
   async ensureSystemParameters() {
@@ -1158,10 +1502,13 @@ export class KanbanRepository {
 
   async ensureBoardDefaults(boardId: string, ownerName: string) {
     if (Number((await this.q("SELECT COUNT(*) AS count FROM projects WHERE board_id=?", [boardId]))[0]?.count) > 0) return;
+    const firstTeam = (await this.q("SELECT team_id FROM board_teams WHERE board_id=? ORDER BY created_at ASC LIMIT 1", [boardId]))[0];
+    const teamId = typeof firstTeam?.team_id === "string" ? firstTeam.team_id : "";
+    if (!teamId) return;
     const now = iso();
     await this.x(
-      "INSERT INTO projects (id,board_id,name,description,owner,color,health,status,summary,archived_at,order_index,created_at,updated_at) VALUES (?,?,'默认项目','用于承载本看板的默认任务集合。',?,'#1f6f68','normal','active','',NULL,10,?,?)",
-      [crypto.randomUUID(), boardId, ownerName || "未分配", now, now]
+      "INSERT INTO projects (id,board_id,team_id,name,description,owner,color,health,status,summary,archived_at,order_index,created_at,updated_at) VALUES (?,?,?,'默认项目','用于承载本看板的默认任务集合。',?,'#1f6f68','normal','active','',NULL,10,?,?)",
+      [crypto.randomUUID(), boardId, teamId, ownerName || "未分配", now, now]
     );
   }
 
@@ -1183,6 +1530,17 @@ export class KanbanRepository {
 
   async requireBoardWrite(actor: CurrentUser, boardId: string) {
     if (actor.role === "super_admin") return;
+    if (actor.role !== "project_manager" && actor.role !== "development_manager") throw new Error("Forbidden");
+    if (!(await this.q("SELECT id FROM boards WHERE id=? AND owner_user_id=? LIMIT 1", [boardId, actor.id]))[0]) {
+      if (actor.role === "project_manager") {
+        throw new Error("Forbidden");
+      }
+      await this.requireBoardRead(actor, boardId);
+    }
+  }
+
+  async requireBoardAdmin(actor: CurrentUser, boardId: string) {
+    if (actor.role === "super_admin") return;
     if (actor.role !== "project_manager") throw new Error("Forbidden");
     if (!(await this.q("SELECT id FROM boards WHERE id=? AND owner_user_id=? LIMIT 1", [boardId, actor.id]))[0]) {
       throw new Error("Forbidden");
@@ -1190,6 +1548,10 @@ export class KanbanRepository {
   }
 
   requireAdminAccess(actor: CurrentUser) {
+    if (actor.role !== "super_admin" && actor.role !== "project_manager") throw new Error("Forbidden");
+  }
+
+  requireDashboardAccess(actor: CurrentUser) {
     if (actor.role !== "super_admin" && actor.role !== "project_manager") throw new Error("Forbidden");
   }
 
@@ -1338,14 +1700,16 @@ export class KanbanRepository {
     const sql =
       actor.role === "super_admin"
         ? `SELECT * FROM projects WHERE status='active' AND team_id IN (${placeholders}) ORDER BY name ASC`
-        : `SELECT p.* FROM projects p JOIN boards b ON b.id=p.board_id WHERE p.status='active' AND p.team_id IN (${placeholders}) AND b.owner_user_id=? ORDER BY p.name ASC`;
-    return this.q(sql, actor.role === "super_admin" ? teamIds : [...teamIds, actor.id]);
+        : actor.role === "project_manager"
+          ? `SELECT DISTINCT p.* FROM projects p JOIN boards b ON b.id=p.board_id WHERE p.status='active' AND p.team_id IN (${placeholders}) AND b.owner_user_id=? ORDER BY p.name ASC`
+          : `SELECT DISTINCT p.* FROM projects p JOIN team_members tm ON tm.team_id=p.team_id WHERE p.status='active' AND p.team_id IN (${placeholders}) AND tm.user_id=? ORDER BY p.name ASC`;
+    return this.q(sql, actor.role === "super_admin" ? teamIds : actor.role === "project_manager" ? [...teamIds, actor.id] : [...teamIds, actor.id]);
   }
 
   async dashboardMembers(teamIds: string[]) {
     if (!teamIds.length) return [];
     const rows = await this.q(
-      `SELECT DISTINCT u.* FROM users u JOIN team_members tm ON tm.user_id=u.id WHERE tm.team_id IN (${teamIds.map(() => "?").join(",")}) AND u.is_active=1 AND u.role='team_member' ORDER BY u.username ASC`,
+      `SELECT DISTINCT u.* FROM users u JOIN team_members tm ON tm.user_id=u.id WHERE tm.team_id IN (${teamIds.map(() => "?").join(",")}) AND u.is_active=1 AND u.role IN ('development_manager','team_member') ORDER BY u.role ASC,u.username ASC`,
       teamIds
     );
     return rows.map(boardUser);
@@ -1354,7 +1718,7 @@ export class KanbanRepository {
   async dashboardTasks(projectIds: string[]) {
     if (!projectIds.length) return [];
     return this.q(
-      `SELECT * FROM tasks WHERE deleted_at IS NULL AND status<>'done' AND project_id IN (${projectIds.map(() => "?").join(",")}) ORDER BY updated_at DESC`,
+      `SELECT * FROM tasks WHERE deleted_at IS NULL AND project_id IN (${projectIds.map(() => "?").join(",")}) ORDER BY updated_at DESC`,
       projectIds
     );
   }
@@ -1394,8 +1758,38 @@ export class KanbanRepository {
       : [];
   }
 
+  async firstBoardRow() {
+    return (
+      await this.q(
+        "SELECT b.*,u.username AS owner_username,'admin' AS access_role FROM boards b LEFT JOIN users u ON u.id=b.owner_user_id ORDER BY b.created_at ASC,b.updated_at ASC,b.id ASC LIMIT 1"
+      )
+    )[0] ?? null;
+  }
+
+  async firstBoardSummary(actor: CurrentUser) {
+    const row = await this.firstBoardRow();
+    if (!row) return null;
+    const boardId = String(row.id);
+    const teamIds = await this.boardTeamIds([boardId]);
+    return board(
+      row,
+      actor.role === "team_member" ? "viewer" : typeof row.access_role === "string" ? row.access_role : undefined,
+      teamIds.get(boardId) ?? []
+    );
+  }
+
+  async defaultBoardTitle() {
+    const row = (await this.q("SELECT value FROM system_parameters WHERE key='board_title' LIMIT 1"))[0];
+    const configured = typeof row?.value === "string" ? row.value.trim() : "";
+    return configured || defaultSystemParameters.find((parameter) => parameter.key === "board_title")?.value || "默认看板";
+  }
+
   async getSubtasks(taskId: string) {
     return this.q("SELECT * FROM subtasks WHERE task_id=? ORDER BY order_index ASC", [taskId]);
+  }
+
+  async completeSubtasks(taskId: string) {
+    await this.x("UPDATE subtasks SET done=1,updated_at=? WHERE task_id=?", [iso(), taskId]);
   }
 
   async getSubtask(taskId: string, subtaskId: string) {
@@ -1460,6 +1854,54 @@ export class KanbanRepository {
   }
 }
 
+type ChangeEntry = {
+  label: string;
+  before: string;
+  after: string;
+};
+
+function changeEntry(label: string, before: unknown, after: unknown): ChangeEntry | null {
+  const beforeText = stringifyChangeValue(before);
+  const afterText = stringifyChangeValue(after);
+  if (beforeText === afterText) {
+    return null;
+  }
+  return { label, before: beforeText, after: afterText };
+}
+
+function compactChanges(changes: Array<ChangeEntry | null>) {
+  return changes.filter((item): item is ChangeEntry => Boolean(item));
+}
+
+function summarizeChanges(changes: ChangeEntry[]) {
+  return changes.map((change) => `${change.label}：${change.before} → ${change.after}`).join("；");
+}
+
+function stringifyChangeValue(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return "空";
+  }
+  if (Array.isArray(value)) {
+    return value.length ? value.join(" / ") : "空";
+  }
+  if (typeof value === "boolean") {
+    return value ? "是" : "否";
+  }
+  return String(value);
+}
+
+function priorityLabel(value: Priority) {
+  return ({ high: "高", medium: "中", low: "低" } satisfies Record<Priority, string>)[value];
+}
+
+function projectStatusLabel(value: ProjectStatus) {
+  return ({ active: "活跃", archived: "归档" } satisfies Record<ProjectStatus, string>)[value];
+}
+
+function healthLabel(value: ProjectHealth) {
+  return ({ good: "健康", normal: "正常", risk: "风险" } satisfies Record<ProjectHealth, string>)[value];
+}
+
 function user(row: Record<string, unknown>): CurrentUser {
   return {
     id: String(row.id),
@@ -1467,7 +1909,10 @@ function user(row: Record<string, unknown>): CurrentUser {
     role: normalizeUserRole(row.role),
     timezone: normalizeTimeZone(row.timezone as string),
     displayName: typeof row.display_name === "string" ? row.display_name : "",
+    phone: typeof row.phone === "string" ? row.phone : "",
     avatarKey: typeof row.avatar_key === "string" ? row.avatar_key : "",
+    jobTitle: typeof row.job_title === "string" ? row.job_title : "",
+    techStacks: parseJsonStringArray(row.tech_stacks),
   };
 }
 
@@ -1516,6 +1961,9 @@ function teamMember(row: Record<string, unknown>): TeamMemberSummary {
     displayName: typeof row.display_name === "string" ? row.display_name : "",
     role: normalizeUserRole(row.role),
     avatarKey: typeof row.avatar_key === "string" ? row.avatar_key : "",
+    jobTitle: typeof row.job_title === "string" ? row.job_title : "",
+    techStacks: parseJsonStringArray(row.tech_stacks),
+    phone: typeof row.phone === "string" ? row.phone : "",
   };
 }
 
@@ -1526,6 +1974,9 @@ function boardUser(row: Record<string, unknown>): BoardUserOption {
     displayName: typeof row.display_name === "string" ? row.display_name : "",
     role: normalizeUserRole(row.role),
     avatarKey: typeof row.avatar_key === "string" ? row.avatar_key : "",
+    jobTitle: typeof row.job_title === "string" ? row.job_title : "",
+    techStacks: parseJsonStringArray(row.tech_stacks),
+    phone: typeof row.phone === "string" ? row.phone : "",
   };
 }
 
@@ -1576,6 +2027,7 @@ function task(row: Record<string, unknown>, steps: Subtask[]) {
     designDueDate: typeof row.design_due_date === "string" ? row.design_due_date : "",
     dueDate: String(row.due_date ?? ""),
     estimate: Number(row.estimate ?? 1),
+    workloadDays: workloadDays(row.workload_days),
     progress: Number(row.progress ?? 0),
     blockers: Number(row.blockers ?? 0),
     blockedReason: String(row.blocked_reason ?? ""),
@@ -1586,6 +2038,52 @@ function task(row: Record<string, unknown>, steps: Subtask[]) {
     completedAt: row.completed_at as string | null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
+  };
+}
+
+function daysUntil(date: string, todayKey: string) {
+  if (!date) return null;
+  const due = new Date(`${date}T00:00:00`);
+  const today = new Date(`${todayKey}T00:00:00`);
+  return Math.ceil((due.getTime() - today.getTime()) / 86400000);
+}
+
+function lateDaysByCompletion(date: string, compareIso: string | null) {
+  if (!date || !compareIso) return null;
+  const lateDays = Math.ceil((new Date(compareIso).getTime() - new Date(`${date}T23:59:59`).getTime()) / 86400000);
+  return lateDays > 0 ? -lateDays : null;
+}
+
+function taskWarningFlags(
+  taskValue: ReturnType<typeof task>,
+  todayKey: string,
+  dueSoonDays: number
+) {
+  const designDays = daysUntil(taskValue.designDueDate, todayKey);
+  const testDays = daysUntil(taskValue.testDueDate, todayKey);
+  const deliveryDays = daysUntil(taskValue.dueDate, todayKey);
+  const designLateDays = lateDaysByCompletion(taskValue.designDueDate, taskValue.completedAt);
+  const testLateDays = lateDaysByCompletion(taskValue.testDueDate, taskValue.completedAt);
+  const deliveryLateDays = lateDaysByCompletion(taskValue.dueDate, taskValue.completedAt);
+
+  const dueSoon =
+    (taskValue.status === "design" && designDays !== null && designDays >= 0 && designDays <= dueSoonDays) ||
+    (taskValue.status === "dev" && testDays !== null && testDays >= 0 && testDays <= dueSoonDays) ||
+    ((taskValue.status === "test" || taskValue.status === "done") && deliveryDays !== null && deliveryDays >= 0 && deliveryDays <= dueSoonDays);
+
+  const overdue =
+    (taskValue.status === "design" && designDays !== null && designDays < 0) ||
+    ((taskValue.status === "dev" || taskValue.status === "test") && taskValue.designDueDate && designDays !== null && designDays < 0) ||
+    (taskValue.status === "dev" && testDays !== null && testDays < 0) ||
+    (taskValue.status === "test" && taskValue.testDueDate && testDays !== null && testDays < 0) ||
+    (taskValue.status === "test" && deliveryDays !== null && deliveryDays < 0) ||
+    (taskValue.status === "done" &&
+      (designLateDays !== null || testLateDays !== null || deliveryLateDays !== null));
+
+  return {
+    dueSoon,
+    overdue,
+    blocked: taskValue.blockers > 0,
   };
 }
 
@@ -1622,6 +2120,12 @@ function settingsFromRows(rows: Record<string, unknown>[]) {
   const parameters = rows.map(parameter);
   return {
     dueSoonDays: num(parameters.find((item) => item.key === "due_soon_days")?.value, defaultSystemSettings.dueSoonDays, 0, 30),
+    testerDefaultWorkloadDays: numDecimal(
+      parameters.find((item) => item.key === "tester_default_workload_days")?.value,
+      defaultSystemSettings.testerDefaultWorkloadDays,
+      0.5,
+      10
+    ),
     activityRetentionDays: num(
       parameters.find((item) => item.key === "activity_retention_days")?.value,
       defaultSystemSettings.activityRetentionDays,
@@ -1632,8 +2136,15 @@ function settingsFromRows(rows: Record<string, unknown>[]) {
   };
 }
 
+function parameterText(settings: SystemSettings, key: string) {
+  return settings.parameters.find((item) => item.key === key)?.value.trim() ?? "";
+}
+
 function parameterValue(parameter: SystemParameter, current: string, raw: unknown) {
   if (parameter.valueType === "number") {
+    if (parameter.key === "tester_default_workload_days") {
+      return String(numDecimal(raw, Number(current) || Number(parameter.value), parameter.minValue ?? 0, parameter.maxValue ?? 100000));
+    }
     return String(num(raw, Number(current) || Number(parameter.value), parameter.minValue ?? 0, parameter.maxValue ?? 100000));
   }
   if (parameter.valueType === "boolean") {
@@ -1644,14 +2155,80 @@ function parameterValue(parameter: SystemParameter, current: string, raw: unknow
 
 function normalizeUsername(value: unknown) {
   const username = text(value);
-  if (!USERNAME_PATTERN.test(username)) throw new Error("Username must contain only letters and numbers");
+  if (!USERNAME_PATTERN.test(username)) throw new Error("Username must contain only letters, numbers, or underscores");
   return username;
 }
 
 function normalizeUserRole(value: unknown, fallback: UserRole = "team_member"): UserRole {
-  if (value === "super_admin" || value === "project_manager" || value === "team_member") return value;
+  if (value === "super_admin" || value === "project_manager" || value === "development_manager" || value === "team_member") return value;
   if (value === "user") return "team_member";
   return fallback;
+}
+
+function normalizeJobTitle(value: unknown, fallback = "") {
+  return opt(value, fallback);
+}
+
+function defaultJobTitleForRole(role: UserRole) {
+  if (role === "project_manager") return "project_manager";
+  if (role === "development_manager") return "development_manager";
+  if (role === "team_member") return "developer";
+  return "";
+}
+
+function techStacks(value: unknown, fallback: string[] = []) {
+  if (Array.isArray(value)) {
+    return Array.from(
+      new Set(
+        value
+          .map((item) => text(item))
+          .filter(Boolean)
+      )
+    ).slice(0, 24);
+  }
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      if (Array.isArray(parsed)) {
+        return techStacks(parsed, fallback);
+      }
+    } catch {
+      return Array.from(new Set(value.split(/[,\n，、]+/).map((item) => item.trim()).filter(Boolean))).slice(0, 24);
+    }
+  }
+  return fallback;
+}
+
+function parseJsonStringArray(value: unknown) {
+  try {
+    const parsed = JSON.parse(String(value ?? "[]"));
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function uniqIds(values: unknown[]) {
+  const set = new Set<string>();
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const normalized = text(item);
+        if (normalized) set.add(normalized);
+      }
+      continue;
+    }
+    if (typeof value === "string" && value.includes(",")) {
+      for (const part of value.split(",")) {
+        const normalized = text(part);
+        if (normalized) set.add(normalized);
+      }
+      continue;
+    }
+    const normalized = text(value);
+    if (normalized) set.add(normalized);
+  }
+  return [...set];
 }
 
 function requireBoardCreator(actor: CurrentUser) {
@@ -1660,6 +2237,18 @@ function requireBoardCreator(actor: CurrentUser) {
 
 function canCreateBoards(actor: CurrentUser) {
   return actor.role === "super_admin" || actor.role === "project_manager";
+}
+
+function canManageBoardTasks(actor: CurrentUser) {
+  return actor.role === "super_admin" || actor.role === "project_manager" || actor.role === "development_manager";
+}
+
+function canCreateTasks(actor: CurrentUser) {
+  return canManageBoardTasks(actor) || actor.role === "team_member";
+}
+
+function isTaskRelatedToUser(taskValue: { ownerUserId: string; testerUserId: string }, userId: string) {
+  return taskValue.ownerUserId === userId || taskValue.testerUserId === userId;
 }
 
 function adminOnly(actor: CurrentUser) {
@@ -1700,6 +2289,79 @@ function opt(value: unknown, fallback = "") {
 function num(value: unknown, fallback: number, min: number, max: number) {
   const numberValue = typeof value === "number" ? value : Number(value);
   return Number.isFinite(numberValue) ? Math.min(max, Math.max(min, Math.round(numberValue))) : fallback;
+}
+
+function numDecimal(value: unknown, fallback: number, min: number, max: number) {
+  const numberValue = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(numberValue) ? Math.min(max, Math.max(min, Math.round(numberValue * 2) / 2)) : fallback;
+}
+
+function workloadDays(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const numberValue = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numberValue)) return null;
+  return Math.min(999, Math.max(0.5, Math.round(numberValue * 2) / 2));
+}
+
+function effectiveWorkloadDays(taskValue: { workloadDays?: number | null }) {
+  return taskValue.workloadDays && Number.isFinite(taskValue.workloadDays) ? taskValue.workloadDays : 1;
+}
+
+function dashboardProgressForMember(jobTitle: string, taskValue: { status: BoardStatus; progress?: number }) {
+  if (jobTitle === "developer") {
+    return "progress" in taskValue && typeof taskValue.progress === "number" ? taskValue.progress : 0;
+  }
+  return taskValue.status === "done" ? 100 : 0;
+}
+
+function dashboardAverageProgressForMember(
+  jobTitle: string,
+  rows: Array<Record<string, unknown> & { __effectiveWorkloadDays: number }>
+) {
+  if (!rows.length) return 0;
+  if (jobTitle === "developer") {
+    const totalWorkload = rows.reduce((sum, row) => sum + row.__effectiveWorkloadDays, 0);
+    return totalWorkload > 0
+      ? Math.round(
+          rows.reduce((sum, row) => {
+            const normalizedTask = task(row, []);
+            return sum + row.__effectiveWorkloadDays * dashboardProgressForMember(jobTitle, normalizedTask);
+          }, 0) / totalWorkload
+        )
+      : 0;
+  }
+  return Math.round(
+    rows.reduce((sum, row) => {
+      const normalizedTask = task(row, []);
+      return sum + dashboardProgressForMember(jobTitle, normalizedTask);
+    }, 0) / rows.length
+  );
+}
+
+function projectDashboardWorkload(
+  taskRows: Record<string, unknown>[],
+  memberById: Map<string, { jobTitle: string }>,
+  testerDefaultWorkloadDays: number
+) {
+  return taskRows.reduce((sum, taskRow) => {
+    const normalizedTask = task(taskRow, []);
+    const ownerWorkload = memberById.get(normalizedTask.ownerUserId)?.jobTitle === "tester"
+      ? 0
+      : effectiveWorkloadDays(normalizedTask);
+    const testWorkload =
+      normalizedTask.status === "test" && memberById.get(normalizedTask.testerUserId)?.jobTitle === "tester"
+        ? testerDefaultWorkloadDays
+        : 0;
+    return sum + ownerWorkload + testWorkload;
+  }, 0);
+}
+
+function roundWorkload(value: number) {
+  return Math.round(value * 10) / 10;
+}
+
+function formatWorkload(value: number | null) {
+  return value ? `${value} 人日` : "默认 1 人日";
 }
 
 function json(value: string) {

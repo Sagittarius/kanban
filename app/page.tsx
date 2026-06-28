@@ -2,11 +2,13 @@ import AuthenticatedShell from "@/components/authenticated-shell";
 import MaintenancePage from "@/components/maintenance-page";
 import KanbanRuntimeGuard from "@/components/kanban-runtime-guard";
 import LoginPage from "@/components/login-page";
+import { cookies } from "next/headers";
 import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import { getAppVersion, getImageTag } from "@/lib/app-meta";
 import { readMaintenanceState } from "@/lib/maintenance";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { getOptionalSessionUser, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
+import { isThemeId } from "@/lib/ui-options";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,8 @@ export default async function Home() {
   const maintenanceState = await readMaintenanceState();
   const appVersion = getAppVersion();
   const imageTag = getImageTag();
+  const themeCookie = (await cookies()).get("kanban_theme")?.value;
+  const initialThemeId = isThemeId(themeCookie) ? themeCookie : "notion";
 
   if (maintenanceState) {
     return (
@@ -55,6 +59,7 @@ export default async function Home() {
       initialBoard={board}
       todayKey={board.todayKey ?? todayKeyInChina()}
       appVersion={appVersion}
+      initialThemeId={initialThemeId}
     />
   );
 

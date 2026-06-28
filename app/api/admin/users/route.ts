@@ -6,10 +6,11 @@ export async function GET() {
   try {
     const user = await requireAdminUser();
     const repo = await getKanbanRepository();
+    const permissions = await repo.adminPermissions(user);
     return NextResponse.json({
-      users: await repo.listUsers(),
+      users: permissions.canManageUsers ? await repo.listUsers(user) : [],
       assignableUsers: await repo.listAssignableUsers(),
-      permissions: await repo.adminPermissions(user),
+      permissions,
     });
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error, "加载用户失败") }, { status: errorStatus(error) });

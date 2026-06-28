@@ -2,7 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { isThemeId, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
+import { Check, UserMinus } from "lucide-react";
+import SharedSearchMultiSelect from "@/components/search-multi-select";
+import { isThemeId, jobTitleLabel, jobTitleOptions, techStackOptions, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type {
   AdminPermissions,
   BoardSummary,
@@ -13,7 +15,7 @@ import type {
   UserRole,
 } from "@/lib/auth-models";
 
-type TabId = "overview" | "users" | "teams" | "boards";
+type TabId = "users" | "teams" | "boards";
 
 type AdminBoard = BoardSummary & {
   members: Array<{
@@ -43,6 +45,14 @@ type SelectOption = {
   meta?: string;
 };
 
+type ConfirmState = {
+  title: string;
+  message: string;
+  tone?: "danger" | "default";
+  actionLabel?: string;
+  onConfirm: () => Promise<void> | void;
+} | null;
+
 const defaultPermissions: AdminPermissions = {
   canManageUsers: false,
   canCreateSuperAdmin: false,
@@ -50,8 +60,9 @@ const defaultPermissions: AdminPermissions = {
 };
 
 const roleLabels: Record<UserRole, string> = {
-  super_admin: "超级管理员",
+  super_admin: "超管",
   project_manager: "项目经理",
+  development_manager: "开发经理",
   team_member: "团队成员",
 };
 
@@ -59,7 +70,10 @@ const defaultUserDraft = {
   id: "",
   username: "",
   displayName: "",
+  phone: "",
   role: "team_member" as UserRole,
+  jobTitle: "developer",
+  techStacks: [] as string[],
   timezone: "Asia/Shanghai",
   isActive: true,
 };
@@ -72,13 +86,19 @@ const defaultTeamDraft = {
   memberIds: [] as string[],
 };
 
-export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) {
+const defaultBoardDraft = {
+  name: "",
+  description: "",
+  teamIds: [] as string[],
+};
+
+export default function AdminApp({ currentUser, initialThemeId = "notion" }: { currentUser: CurrentUser; initialThemeId?: string }) {
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [assignableUsers, setAssignableUsers] = useState<TeamMemberSummary[]>([]);
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [boards, setBoards] = useState<AdminBoard[]>([]);
   const [permissions, setPermissions] = useState<AdminPermissions>(defaultPermissions);
-  const [activeTab, setActiveTab] = useState<TabId>("overview");
+  const [activeTab, setActiveTab] = useState<TabId>("users");
   const [message, setMessage] = useState("");
   const [userQuery, setUserQuery] = useState("");
   const [teamQuery, setTeamQuery] = useState("");
@@ -87,13 +107,11 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
   const [selectedBoardId, setSelectedBoardId] = useState("");
   const [userDraft, setUserDraft] = useState(defaultUserDraft);
   const [teamDraft, setTeamDraft] = useState(defaultTeamDraft);
+  const [boardDraft, setBoardDraft] = useState(defaultBoardDraft);
   const [boardTeamDraft, setBoardTeamDraft] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
-  const [themeId, setThemeId] = useState<ThemeId>(() => {
-    if (typeof window === "undefined") return "notion";
-    const savedTheme = window.localStorage.getItem("kanban-theme");
-    return isThemeId(savedTheme) ? savedTheme : "notion";
-  });
+  const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+  const [themeId, setThemeId] = useState<ThemeId>(isThemeId(initialThemeId) ? initialThemeId : "notion");
   const initialized = useRef(false);
 
   async function refresh() {
@@ -120,7 +138,6 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
 
   const visibleTabs = useMemo<Array<[TabId, string]>>(
     () => [
-      ["overview", "概览"],
       ...(permissions.canManageUsers ? ([["users", "用户"]] as Array<[TabId, string]>) : []),
       ["teams", "团队"],
       ["boards", "看板"],
@@ -128,14 +145,20 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
     [permissions.canManageUsers]
   );
 
-  const currentTab = activeTab === "users" && !permissions.canManageUsers ? "overview" : activeTab;
+  const currentTab = activeTab === "users" && !permissions.canManageUsers ? "teams" : activeTab;
 
   const roleOptions = useMemo<SelectOption[]>(() => {
-    const roles: UserRole[] = permissions.canCreateSuperAdmin
-      ? ["super_admin", "project_manager", "team_member"]
-      : ["team_member"];
+    const roles: UserRole[] =
+      currentUser.role === "super_admin"
+        ? ["super_admin", "project_manager", "development_manager", "team_member"]
+        : ["team_member"];
     return roles.map((role) => ({ value: role, label: roleLabels[role] }));
-  }, [permissions.canCreateSuperAdmin]);
+  }, [currentUser.role]);
+
+  const jobTitleSelectOptions = useMemo<SelectOption[]>(
+    () => jobTitleOptions.map((option) => ({ value: option.value, label: option.label })),
+    []
+  );
 
   const timezoneSelectOptions = useMemo<SelectOption[]>(
     () => timezoneOptions.map(([value, label]) => ({ value, label })),
@@ -169,10 +192,13 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
       const values = [
         user.username,
         user.displayName,
+        user.phone,
         roleLabels[user.role],
         user.role,
+        jobTitleLabel(user.jobTitle),
         user.timezone,
         timezoneLabel(user.timezone),
+        ...user.techStacks,
         user.isActive ? "启用" : "停用",
       ];
       return values.some((value) => value.toLowerCase().includes(query));
@@ -196,6 +222,14 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
   }, [boardQuery, boards]);
 
   const selectedBoard = filteredBoards.find((board) => board.id === selectedBoardId) ?? filteredBoards[0] ?? null;
+  const teamById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
+  const selectedBoardTeams = useMemo(
+    () => (selectedBoard?.teamIds ?? []).map((teamId) => teamById.get(teamId)).filter((team): team is TeamSummary => Boolean(team)),
+    [selectedBoard, teamById]
+  );
+  const selectedBoardOwner = selectedBoard ? users.find((user) => user.id === selectedBoard.ownerUserId) ?? null : null;
+  const selectedBoardExplicitCount = selectedBoard?.members.length ?? 0;
+  const selectedBoardTeamMemberCount = selectedBoardTeams.reduce((sum, team) => sum + team.memberCount, 0);
 
   const selectedBoardMembers = useMemo(() => {
     if (!selectedBoard) return [];
@@ -204,7 +238,7 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
     return users
       .filter((user) => {
         if (!query) return true;
-        const values = [user.username, user.displayName, roleLabels[user.role], timezoneLabel(user.timezone)];
+        const values = [user.username, user.displayName, user.phone, roleLabels[user.role], jobTitleLabel(user.jobTitle), timezoneLabel(user.timezone), ...user.techStacks];
         return values.some((value) => value.toLowerCase().includes(query));
       })
       .map((user) => ({
@@ -238,6 +272,7 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
   function changeTheme(nextTheme: ThemeId) {
     setThemeId(nextTheme);
     window.localStorage.setItem("kanban-theme", nextTheme);
+    document.cookie = `kanban_theme=${nextTheme}; path=/; max-age=31536000; samesite=lax`;
   }
 
   function editUser(user: ManagedUser) {
@@ -245,7 +280,10 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
       id: user.id,
       username: user.username,
       displayName: user.displayName,
+      phone: user.phone,
       role: user.role,
+      jobTitle: user.jobTitle || defaultUserDraft.jobTitle,
+      techStacks: user.techStacks || [],
       timezone: user.timezone,
       isActive: user.isActive,
     });
@@ -280,7 +318,6 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
   }
 
   async function deleteUser(user: ManagedUser) {
-    if (!window.confirm(`停用用户「${user.displayName || user.username}」？`)) return;
     const response = await fetch(`/api/admin/users/${user.id}`, { method: "DELETE" });
     const payload = (await response.json().catch(() => ({}))) as { error?: string };
     setMessage(response.ok ? "用户已停用" : payload.error ?? "停用失败");
@@ -308,6 +345,10 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
     setTeamDraft(defaultTeamDraft);
   }
 
+  function resetBoardDraft() {
+    setBoardDraft(defaultBoardDraft);
+  }
+
   async function saveTeam(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -330,11 +371,39 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
     await refresh();
   }
 
+  async function saveBoard(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setMessage("");
+    const response = await fetch("/api/boards", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(boardDraft),
+    });
+    const payload = (await response.json().catch(() => ({}))) as BoardSummary & { error?: string };
+    setSaving(false);
+    if (!response.ok) {
+      setMessage(payload.error ?? "创建失败");
+      return;
+    }
+    setMessage(`看板「${payload.name}」已创建`);
+    setBoardDraft(defaultBoardDraft);
+    setSelectedBoardId(payload.id);
+    setBoardTeamDraft(payload.teamIds ?? []);
+    await refresh();
+  }
+
   async function deleteTeam(team: TeamSummary) {
-    if (!window.confirm(`删除团队「${team.name}」？`)) return;
     const response = await fetch(`/api/admin/teams/${team.id}`, { method: "DELETE" });
     const payload = (await response.json().catch(() => ({}))) as { error?: string };
     setMessage(response.ok ? "团队已删除" : payload.error ?? "删除失败");
+    await refresh();
+  }
+
+  async function deleteBoard(board: AdminBoard) {
+    const response = await fetch(`/api/boards/${board.id}`, { method: "DELETE" });
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    setMessage(response.ok ? "看板已删除" : payload.error ?? "删除失败");
     await refresh();
   }
 
@@ -407,14 +476,14 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
             href="/dashboard"
             className="ml-auto inline-flex h-10 items-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--hover)]"
           >
-            工作饱和度
+            项目负载大屏
           </Link>
         </div>
 
         {message ? <div className="mt-4 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 py-3 text-sm">{message}</div> : null}
 
-        {currentTab === "overview" ? (
-          <div className="mt-5 grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+        <div className="sticky top-4 z-10 mt-5 rounded-2xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--panel)_90%,white_10%)] p-4 shadow-lg backdrop-blur">
+          <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
             <SummaryCard label="用户" value={summary.users} />
             <SummaryCard label="启用" value={summary.activeUsers} />
             <SummaryCard label="项目经理" value={summary.projectManagers} />
@@ -422,7 +491,7 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
             <SummaryCard label="看板" value={summary.boards} />
             <SummaryCard label="授权" value={summary.explicitUsers} />
           </div>
-        ) : null}
+        </div>
 
         {currentTab === "users" ? (
           <div className="mt-5 grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
@@ -433,10 +502,10 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
                     <input
                       value={userDraft.username}
                       onChange={(event) => setUserDraft((current) => ({ ...current, username: event.target.value }))}
-                      pattern="[A-Za-z0-9]+"
+                      pattern="[A-Za-z0-9_]+"
                       disabled={Boolean(userDraft.id)}
                       className="field"
-                      placeholder="例如 zhangsan01"
+                      placeholder="例如 zhangsan_01"
                     />
                   </Field>
                   <Field label="姓名">
@@ -447,6 +516,14 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
                       placeholder="输入姓名"
                     />
                   </Field>
+                  <Field label="手机">
+                    <input
+                      value={userDraft.phone}
+                      onChange={(event) => setUserDraft((current) => ({ ...current, phone: event.target.value }))}
+                      className="field"
+                      placeholder="输入手机号"
+                    />
+                  </Field>
                   <Field label="角色">
                     <SearchSelect
                       value={userDraft.role}
@@ -455,12 +532,30 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
                       placeholder="选择角色"
                     />
                   </Field>
+                  <Field label="职位">
+                    <SearchSelect
+                      value={userDraft.jobTitle}
+                      options={jobTitleSelectOptions}
+                      onChange={(value) => setUserDraft((current) => ({ ...current, jobTitle: value }))}
+                      placeholder="选择职位"
+                    />
+                  </Field>
                   <Field label="时区">
                     <SearchSelect
                       value={userDraft.timezone}
                       options={timezoneSelectOptions}
                       onChange={(value) => setUserDraft((current) => ({ ...current, timezone: value }))}
                       placeholder="选择时区"
+                    />
+                  </Field>
+                  <Field label="技术栈">
+                  <SharedSearchMultiSelect
+                    value={userDraft.techStacks}
+                    options={techStackOptions.map((item) => ({ value: item, label: item }))}
+                    onChange={(techStacks) => setUserDraft((current) => ({ ...current, techStacks }))}
+                      placeholder="搜索技术栈"
+                      summaryLabel="技术栈"
+                      searchPlaceholder="搜索技术栈"
                     />
                   </Field>
                   {userDraft.id ? (
@@ -475,7 +570,7 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
                   ) : null}
                   <div className="flex gap-2">
                     <button disabled={saving} className="h-10 flex-1 rounded-xl bg-[var(--accent)] text-sm font-semibold text-white disabled:opacity-60">
-                      {saving ? "保存中" : "保存"}
+                      {saving ? "保存中" : userDraft.id ? "保存" : "创建"}
                     </button>
                     <button type="button" onClick={resetUserDraft} className="h-10 rounded-xl border border-[var(--border)] px-4 text-sm font-semibold">
                       清空
@@ -489,7 +584,7 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
             </Panel>
 
             <Panel title="用户列表" count={filteredUsers.length}>
-              <SearchInput value={userQuery} onChange={setUserQuery} placeholder="搜索用户、姓名、角色、时区" />
+              <SearchInput value={userQuery} onChange={setUserQuery} placeholder="搜索用户、姓名、手机、角色、时区" />
               <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
                 {filteredUsers.map((user) => (
                   <UserCard
@@ -497,8 +592,29 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
                     user={user}
                     canManage={permissions.canManageUsers && (currentUser.role === "super_admin" || user.role === "team_member")}
                     onEdit={() => editUser(user)}
-                    onReset={() => void resetPassword(user.id)}
-                    onDelete={() => void deleteUser(user)}
+                    onReset={() =>
+                      setConfirmState({
+                        title: "重置密码",
+                        message: `确认将用户「${user.displayName || user.username}」的密码重置为默认密码吗？`,
+                        actionLabel: "重置密码",
+                        onConfirm: async () => {
+                          await resetPassword(user.id);
+                          setConfirmState(null);
+                        },
+                      })
+                    }
+                    onDelete={() =>
+                      setConfirmState({
+                        title: "停用用户",
+                        message: `停用用户「${user.displayName || user.username}」后，该用户将无法继续登录。`,
+                        tone: "danger",
+                        actionLabel: "停用用户",
+                        onConfirm: async () => {
+                          await deleteUser(user);
+                          setConfirmState(null);
+                        },
+                      })
+                    }
                   />
                 ))}
               </div>
@@ -535,7 +651,7 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
                   />
                 </Field>
                 <Field label="成员">
-                  <SearchMultiSelect
+                  <SharedSearchMultiSelect
                     value={teamDraft.memberIds}
                     options={assignableUserOptions}
                     onChange={(memberIds) => setTeamDraft((current) => ({ ...current, memberIds }))}
@@ -544,7 +660,7 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
                 </Field>
                 <div className="flex gap-2">
                   <button disabled={saving} className="h-10 flex-1 rounded-xl bg-[var(--accent)] text-sm font-semibold text-white disabled:opacity-60">
-                    {saving ? "保存中" : "保存"}
+                    {saving ? "创建中" : teamDraft.id ? "保存" : "创建"}
                   </button>
                   <button type="button" onClick={resetTeamDraft} className="h-10 rounded-xl border border-[var(--border)] px-4 text-sm font-semibold">
                     清空
@@ -568,7 +684,22 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
                     </div>
                     <div className="mt-4 flex justify-end gap-2">
                       <SmallButton onClick={() => editTeam(team)}>编辑</SmallButton>
-                      <SmallButton onClick={() => void deleteTeam(team)}>删除</SmallButton>
+                      <SmallButton
+                        onClick={() =>
+                          setConfirmState({
+                            title: "删除团队",
+                            message: `删除团队「${team.name}」后，与该团队绑定的看板关联会同步解除。`,
+                            tone: "danger",
+                            actionLabel: "删除团队",
+                            onConfirm: async () => {
+                              await deleteTeam(team);
+                              setConfirmState(null);
+                            },
+                          })
+                        }
+                      >
+                        删除
+                      </SmallButton>
                     </div>
                   </div>
                 ))}
@@ -578,94 +709,249 @@ export default function AdminApp({ currentUser }: { currentUser: CurrentUser }) 
         ) : null}
 
         {currentTab === "boards" ? (
-          <div className="mt-5 grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
+          <div className="mt-5 grid gap-5 xl:grid-cols-[360px_minmax(360px,0.9fr)_minmax(0,1.3fr)]">
+            <section className="space-y-5">
+              <Panel title="创建看板">
+                <form onSubmit={saveBoard} className="space-y-4">
+                  <Field label="看板名称">
+                    <input
+                      value={boardDraft.name}
+                      onChange={(event) => setBoardDraft((current) => ({ ...current, name: event.target.value }))}
+                      className="field"
+                      placeholder="输入看板名称"
+                    />
+                  </Field>
+                  <Field label="说明">
+                    <textarea
+                      value={boardDraft.description}
+                      onChange={(event) => setBoardDraft((current) => ({ ...current, description: event.target.value }))}
+                      className="field min-h-[104px] py-3"
+                      placeholder="输入说明"
+                    />
+                  </Field>
+                  <Field label="关联团队">
+                    {teamOptions.length > 0 ? (
+                      <SharedSearchMultiSelect
+                        value={boardDraft.teamIds}
+                        options={teamOptions}
+                        onChange={(teamIds) => setBoardDraft((current) => ({ ...current, teamIds }))}
+                        placeholder="搜索团队"
+                        summaryLabel="团队"
+                        searchPlaceholder="搜索团队"
+                      />
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setActiveTab("teams")}
+                        className="h-11 w-full rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel-soft)] text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--text)]"
+                      >
+                        创建团队
+                      </button>
+                    )}
+                  </Field>
+                  <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+                    <button disabled={saving} className="h-10 rounded-xl bg-[var(--accent)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60">
+                      {saving ? "创建中" : "创建"}
+                    </button>
+                    <button type="button" onClick={resetBoardDraft} className="h-10 rounded-xl border border-[var(--border)] px-4 text-sm font-semibold transition hover:bg-[var(--hover)]">
+                      清空
+                    </button>
+                  </div>
+                </form>
+              </Panel>
+
+              <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-1">
+                <BoardMetric label="看板" value={boards.length} />
+                <BoardMetric label="已关联团队" value={boards.filter((board) => (board.teamIds?.length ?? 0) > 0).length} />
+                <BoardMetric label="显式授权" value={summary.explicitUsers} />
+              </div>
+            </section>
+
             <Panel title="看板列表" count={filteredBoards.length}>
               <SearchInput value={boardQuery} onChange={setBoardQuery} placeholder="搜索看板、说明、拥有者" />
-              <div className="mt-4 max-h-[760px] space-y-2 overflow-y-auto pr-1">
-                {filteredBoards.map((board) => (
-                  <button
-                    key={board.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedBoardId(board.id);
-                      setBoardTeamDraft(board.teamIds ?? []);
-                    }}
-                    className={`w-full rounded-xl border p-4 text-left transition ${
-                      selectedBoard?.id === board.id
-                        ? "border-[var(--accent)] bg-[var(--accent-soft)]"
-                        : "border-[var(--border)] bg-[var(--panel-soft)] hover:bg-[var(--hover)]"
-                    }`}
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate font-semibold">{board.name}</p>
-                        <p className="mt-1 line-clamp-2 text-sm text-[var(--muted)]">{board.description || "无说明"}</p>
+              <div className="mt-4 max-h-[780px] space-y-3 overflow-y-auto pr-1">
+                {filteredBoards.map((board) => {
+                  const active = selectedBoard?.id === board.id;
+                  const teamCount = board.teamIds?.length ?? 0;
+                  return (
+                    <button
+                      key={board.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedBoardId(board.id);
+                        setBoardTeamDraft(board.teamIds ?? []);
+                      }}
+                      className={`group w-full rounded-2xl border p-4 text-left shadow-sm transition ${
+                        active
+                          ? "border-[var(--accent)] bg-[linear-gradient(135deg,var(--accent-soft),var(--panel))] shadow-[0_18px_40px_rgba(15,118,110,0.14)]"
+                          : "border-[var(--border)] bg-[var(--panel-soft)] hover:border-[var(--accent)]/30 hover:bg-[var(--hover)]"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate text-base font-semibold">{board.name}</p>
+                          <p className="mt-1 line-clamp-2 text-sm leading-5 text-[var(--muted)]">{board.description || "无说明"}</p>
+                        </div>
+                        <span className="grid h-11 min-w-11 place-items-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-2 text-center text-xs font-semibold text-[var(--text)]">
+                          <span className="text-base leading-4">{teamCount}</span>
+                          <span className="text-[10px] leading-3 text-[var(--muted)]">团队</span>
+                        </span>
                       </div>
-                      <span className="rounded-full bg-[var(--panel)] px-2.5 py-1 text-xs text-[var(--muted)]">{board.teamIds?.length ?? 0}</span>
-                    </div>
-                    <p className="mt-3 text-xs text-[var(--muted)]">{board.ownerUsername}</p>
-                  </button>
-                ))}
+                      <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
+                        <span className="rounded-lg bg-[var(--panel)] px-2.5 py-1">@{board.ownerUsername}</span>
+                        <span className="rounded-lg bg-[var(--panel)] px-2.5 py-1">{board.members.length} 授权</span>
+                      </div>
+                    </button>
+                  );
+                })}
+                {filteredBoards.length === 0 ? <EmptyState text="暂无看板" /> : null}
               </div>
             </Panel>
 
-            <Panel title={selectedBoard?.name ?? "看板授权"}>
+            <section className="rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-sm">
               {selectedBoard ? (
-                <div className="grid gap-5 2xl:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-                  <div className="space-y-4">
-                    <Field label="关联团队">
+                <div className="space-y-5">
+                  <div className="rounded-2xl border border-[var(--border)] bg-[linear-gradient(135deg,var(--panel-soft),var(--panel))] p-5">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-[var(--accent)]">当前看板</p>
+                        <h2 className="mt-2 truncate text-2xl font-semibold">{selectedBoard.name}</h2>
+                        <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--muted)]">{selectedBoard.description || "无说明"}</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setConfirmState({
+                            title: "删除看板",
+                            message: `删除看板「${selectedBoard.name}」后，该看板下的项目、任务、拆解和活动记录都会被一并删除。`,
+                            tone: "danger",
+                            actionLabel: "删除看板",
+                            onConfirm: async () => {
+                              await deleteBoard(selectedBoard);
+                              setConfirmState(null);
+                            },
+                          })
+                        }
+                        className="h-10 rounded-xl border border-[var(--danger)]/25 bg-[var(--danger-soft)] px-4 text-sm font-semibold text-[var(--danger)] transition hover:opacity-90"
+                      >
+                        删除看板
+                      </button>
+                    </div>
+                    <div className="mt-5 grid gap-3 sm:grid-cols-4">
+                      <BoardMetric label="拥有者" value={selectedBoardOwner?.displayName || selectedBoard.ownerUsername} compact />
+                      <BoardMetric label="团队" value={selectedBoardTeams.length} compact />
+                      <BoardMetric label="团队成员" value={selectedBoardTeamMemberCount} compact />
+                      <BoardMetric label="显式授权" value={selectedBoardExplicitCount} compact />
+                    </div>
+                  </div>
+
+                  <div className="grid gap-5 2xl:grid-cols-[minmax(0,0.85fr)_minmax(0,1.15fr)]">
+                    <div className="space-y-4 rounded-2xl border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <h3 className="font-semibold">关联团队</h3>
+                        <button onClick={() => void saveBoardTeams()} className="h-9 rounded-xl bg-[var(--accent)] px-4 text-xs font-semibold text-white transition hover:bg-[var(--accent-hover)]">
+                          保存
+                        </button>
+                      </div>
                       {teamOptions.length > 0 ? (
-                        <SearchMultiSelect
+                        <SharedSearchMultiSelect
                           value={boardTeamDraft}
                           options={teamOptions}
                           onChange={setBoardTeamDraft}
                           placeholder="搜索团队"
+                          summaryLabel="团队"
+                          searchPlaceholder="搜索团队"
                         />
                       ) : (
                         <button
                           type="button"
                           onClick={() => setActiveTab("teams")}
-                          className="h-11 w-full rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel-soft)] text-sm text-[var(--muted)]"
+                          className="h-11 w-full rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)] text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--text)]"
                         >
                           创建团队
                         </button>
                       )}
-                    </Field>
-                    <button onClick={() => void saveBoardTeams()} className="h-10 w-full rounded-xl bg-[var(--accent)] text-sm font-semibold text-white">
-                      保存团队
-                    </button>
-                  </div>
-                  <div>
-                    <SearchInput value={memberQuery} onChange={setMemberQuery} placeholder="搜索授权用户" />
-                    <div className="mt-4 max-h-[640px] space-y-2 overflow-y-auto pr-1">
-                      {selectedBoardMembers.map(({ user, owner, explicit }) => (
-                        <div key={user.id} className="flex items-center justify-between gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3">
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-semibold">{user.displayName || user.username}</p>
-                            <p className="truncate text-xs text-[var(--muted)]">@{user.username} · {roleLabels[user.role]}</p>
+                      <div className="space-y-2">
+                        {selectedBoardTeams.map((team) => (
+                          <div key={team.id} className="flex items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+                            <span className="mt-1 h-3 w-3 rounded-full" style={{ backgroundColor: team.color }} />
+                            <div className="min-w-0 flex-1">
+                              <p className="truncate text-sm font-semibold">{team.name}</p>
+                              <p className="mt-1 text-xs text-[var(--muted)]">{team.memberCount} 人 · {team.ownerUsername}</p>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <span className="rounded-full bg-[var(--panel)] px-2.5 py-1 text-xs text-[var(--muted)]">
-                              {owner ? "拥有者" : explicit ? "已授权" : "未授权"}
-                            </span>
-                            {!owner ? (
-                              <SmallButton onClick={() => void grant(selectedBoard.id, user.id, explicit ? "revoke" : "grant")}>
-                                {explicit ? "取消" : "授权"}
-                              </SmallButton>
-                            ) : null}
+                        ))}
+                        {selectedBoardTeams.length === 0 ? (
+                          <div className="rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel)] px-3 py-6 text-center text-sm text-[var(--muted)]">
+                            未关联团队
                           </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="rounded-2xl border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <h3 className="font-semibold">授权用户</h3>
+                        <div className="w-full sm:w-[280px]">
+                          <SearchInput value={memberQuery} onChange={setMemberQuery} placeholder="搜索授权用户" />
                         </div>
-                      ))}
+                      </div>
+                      <div className="mt-4 max-h-[620px] space-y-2 overflow-y-auto pr-1">
+                        {selectedBoardMembers.map(({ user, owner, explicit }) => (
+                          <div
+                            key={user.id}
+                            className={`flex items-center justify-between gap-3 rounded-xl border px-4 py-3 transition ${
+                              owner || explicit
+                                ? "border-[var(--accent)]/20 bg-[var(--panel)]"
+                                : "border-[var(--border)] bg-[var(--panel)] opacity-80 hover:opacity-100"
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-semibold">{user.displayName || user.username}</p>
+                              <p className="truncate text-xs text-[var(--muted)]">@{user.username} · {roleLabels[user.role]} · {jobTitleLabel(user.jobTitle)}</p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              <span
+                                className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
+                                  owner
+                                    ? "bg-[var(--accent)] text-white"
+                                    : explicit
+                                      ? "bg-[var(--accent-soft)] text-[var(--accent)]"
+                                      : "bg-[var(--panel-soft)] text-[var(--muted)]"
+                                }`}
+                              >
+                                {owner ? "拥有者" : explicit ? "已授权" : "未授权"}
+                              </span>
+                              {!owner ? (
+                                <SmallButton onClick={() => void grant(selectedBoard.id, user.id, explicit ? "revoke" : "grant")}>
+                                  {explicit ? "取消" : "授权"}
+                                </SmallButton>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                        {selectedBoardMembers.length === 0 ? <EmptyState text="暂无用户" /> : null}
+                      </div>
                     </div>
                   </div>
                 </div>
               ) : (
                 <EmptyState text="选择看板" />
               )}
-            </Panel>
+            </section>
           </div>
         ) : null}
       </section>
+      {confirmState ? (
+        <ConfirmDialog
+          title={confirmState.title}
+          message={confirmState.message}
+          tone={confirmState.tone}
+          actionLabel={confirmState.actionLabel}
+          onClose={() => setConfirmState(null)}
+          onConfirm={() => void confirmState.onConfirm()}
+        />
+      ) : null}
       <style>{`
         .field {
           height: 2.75rem;
@@ -689,6 +975,15 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
     <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 shadow-sm">
       <p className="text-sm text-[var(--muted)]">{label}</p>
       <p className="mt-2 text-3xl font-semibold">{value}</p>
+    </div>
+  );
+}
+
+function BoardMetric({ label, value, compact = false }: { label: string; value: number | string; compact?: boolean }) {
+  return (
+    <div className={`rounded-2xl border border-[var(--border)] bg-[var(--panel)] shadow-sm ${compact ? "px-3 py-3" : "px-4 py-4"}`}>
+      <p className="text-xs font-medium text-[var(--muted)]">{label}</p>
+      <p className={`${compact ? "mt-1 truncate text-base" : "mt-2 text-2xl"} font-semibold text-[var(--text)]`}>{value}</p>
     </div>
   );
 }
@@ -797,71 +1092,6 @@ function SearchSelect({
   );
 }
 
-function SearchMultiSelect({
-  value,
-  options,
-  onChange,
-  placeholder,
-}: {
-  value: string[];
-  options: SelectOption[];
-  onChange: (value: string[]) => void;
-  placeholder: string;
-}) {
-  const [query, setQuery] = useState("");
-  const selected = options.filter((option) => value.includes(option.value));
-  const filtered = options.filter((option) => matchesOption(option, query));
-  function toggle(optionValue: string) {
-    onChange(value.includes(optionValue) ? value.filter((item) => item !== optionValue) : [...value, optionValue]);
-  }
-  return (
-    <div className="rounded-xl border border-[var(--border)] bg-[var(--input)] p-2">
-      <div className="flex flex-wrap gap-2">
-        {selected.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => toggle(option.value)}
-            className="rounded-lg bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--accent)]"
-          >
-            {option.label} ×
-          </button>
-        ))}
-        {selected.length > 0 ? (
-          <button type="button" onClick={() => onChange([])} className="rounded-lg px-2.5 py-1 text-xs text-[var(--muted)] hover:bg-[var(--hover)]">
-            清空
-          </button>
-        ) : null}
-      </div>
-      <input
-        value={query}
-        onChange={(event) => setQuery(event.target.value)}
-        placeholder={placeholder}
-        className="mt-2 h-10 w-full rounded-lg border border-[var(--border)] bg-[var(--panel)] px-3 text-sm outline-none focus:border-[var(--accent)]"
-      />
-      <div className="mt-2 max-h-[220px] overflow-y-auto">
-        {filtered.map((option) => {
-          const active = value.includes(option.value);
-          return (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => toggle(option.value)}
-              className={`block w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-                active ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "hover:bg-[var(--hover)]"
-              }`}
-            >
-              <span className="font-medium">{option.label}</span>
-              {option.meta ? <span className="ml-2 text-xs text-[var(--muted)]">{option.meta}</span> : null}
-            </button>
-          );
-        })}
-        {filtered.length === 0 ? <div className="px-3 py-4 text-center text-sm text-[var(--muted)]">无匹配项</div> : null}
-      </div>
-    </div>
-  );
-}
-
 function UserCard({
   user,
   canManage,
@@ -881,7 +1111,22 @@ function UserCard({
         <div className="min-w-0">
           <p className="truncate font-semibold">{user.displayName || user.username}</p>
           <p className="truncate text-xs text-[var(--muted)]">@{user.username}</p>
-          <p className="mt-2 text-xs text-[var(--muted)]">{roleLabels[user.role]} · {timezoneLabel(user.timezone)}</p>
+          {user.phone ? <p className="mt-1 truncate text-xs text-[var(--muted)]">{user.phone}</p> : null}
+          <p className="mt-2 text-xs text-[var(--muted)]">
+            {roleLabels[user.role]} · {jobTitleLabel(user.jobTitle)} · {timezoneLabel(user.timezone)}
+          </p>
+          {user.techStacks.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {user.techStacks.slice(0, 4).map((item) => (
+                <span key={item} className="rounded-full bg-[var(--tag-bg)] px-2 py-0.5 text-[11px] font-medium text-[var(--text)]">
+                  {item}
+                </span>
+              ))}
+              {user.techStacks.length > 4 ? (
+                <span className="rounded-full bg-[var(--panel)] px-2 py-0.5 text-[11px] text-[var(--muted)]">+{user.techStacks.length - 4}</span>
+              ) : null}
+            </div>
+          ) : null}
         </div>
         <span className={`rounded-full px-2.5 py-1 text-xs ${user.isActive ? "bg-[var(--tag-bg)]" : "bg-[var(--danger-soft)] text-[var(--danger)]"}`}>
           {user.isActive ? "启用" : "停用"}
@@ -914,6 +1159,50 @@ function EmptyState({ text }: { text: string }) {
   return (
     <div className="grid min-h-[180px] place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel-soft)] text-sm text-[var(--muted)]">
       {text}
+    </div>
+  );
+}
+
+function ConfirmDialog({
+  title,
+  message,
+  tone = "default",
+  actionLabel = "确认",
+  onClose,
+  onConfirm,
+}: {
+  title: string;
+  message: string;
+  tone?: "danger" | "default";
+  actionLabel?: string;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/30 px-4">
+      <div className="w-full max-w-[420px] rounded-[24px] border border-white/70 bg-white p-6 shadow-2xl">
+        <div className="flex items-start gap-3">
+          <div className={`grid h-10 w-10 place-items-center rounded-2xl ${tone === "danger" ? "bg-[#fff1ef] text-[#c7523d]" : "bg-slate-100 text-slate-700"}`}>
+            {tone === "danger" ? <UserMinus size={18} /> : <Check size={18} />}
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-600">{message}</p>
+          </div>
+        </div>
+        <div className="mt-6 flex justify-end gap-3">
+          <button type="button" onClick={onClose} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
+            取消
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className={`h-10 rounded-xl px-4 text-sm font-semibold text-white ${tone === "danger" ? "bg-[#c7523d]" : "bg-[var(--accent)]"}`}
+          >
+            {actionLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

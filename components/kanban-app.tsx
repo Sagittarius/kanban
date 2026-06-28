@@ -16,22 +16,28 @@ import {
   Activity,
   Archive,
   ArchiveRestore,
+  ChartNoAxesCombined,
   ChevronDown,
   ChevronUp,
   Check,
   CheckCircle2,
   Copyright,
+  Download,
   Edit3,
   FolderPlus,
+  LayoutGrid,
   PanelRightOpen,
   Plus,
   RotateCcw,
+  Rows3,
   Search,
   SlidersHorizontal,
   Tag,
   Trash2,
   X,
 } from "lucide-react";
+import { utils, writeFileXLSX } from "xlsx";
+import SearchMultiSelect, { type MultiSelectOption } from "@/components/search-multi-select";
 import {
   useEffect,
   useMemo,
@@ -60,6 +66,7 @@ import {
 
 type SyncState = "synced" | "syncing" | "local";
 type DrawerMode = "task" | "project" | "activity" | "settings" | null;
+type ViewMode = "board" | "list";
 type ThemeId =
   | "linear"
   | "github"
@@ -68,12 +75,17 @@ type ThemeId =
   | "slack"
   | "figma"
   | "monday"
-  | "microsoft";
-type MetricFilter = "dueSoon" | "blocked" | null;
+  | "microsoft"
+  | "neon"
+  | "deepspace";
+type MetricFilter = "dueSoon" | "overdue" | "blocked" | null;
 type DragTargetData =
   | { type: "task"; status: BoardStatus }
   | { type: "column"; status: BoardStatus }
   | { type: "delete-zone" };
+
+const floatingActionButtonClass =
+  "inline-flex h-11 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--text)] px-4 text-[14px] font-semibold leading-none text-[var(--panel)] shadow-lg transition hover:opacity-90";
 
 type NewTaskForm = {
   title: string;
@@ -83,6 +95,7 @@ type NewTaskForm = {
   owner: string;
   testerUserId: string;
   tester: string;
+  workloadDays: string;
   priority: Priority;
   testDueDate: string;
   designDueDate: string;
@@ -140,6 +153,8 @@ const themePresets: Array<{ id: ThemeId; label: string }> = [
   { id: "figma", label: "Figma" },
   { id: "monday", label: "Monday" },
   { id: "microsoft", label: "Microsoft" },
+  { id: "neon", label: "Neon Grid" },
+  { id: "deepspace", label: "Deep Space" },
 ];
 
 const fallbackProject: Project = {
@@ -341,6 +356,50 @@ function taskHasDueSoonAlert(task: BoardTask, todayKey: string, dueSoonDays: num
   return deadlineMarkers(task, todayKey, dueSoonDays).some((marker) => marker.state === "due-soon");
 }
 
+function taskHasOverdueAlert(task: BoardTask, todayKey: string, dueSoonDays: number) {
+  return deadlineMarkers(task, todayKey, dueSoonDays).some((marker) => marker.state === "overdue" || marker.state === "late");
+}
+
+function deadlineSummary(task: BoardTask, todayKey: string, dueSoonDays: number) {
+  const markers = deadlineMarkers(task, todayKey, dueSoonDays);
+  return markers.length
+    ? markers
+        .map((marker) => `${marker.label}:${marker.date}${marker.note ? ` (${marker.note})` : ""}`)
+        .join(" / ")
+    : "未排期";
+}
+
+function deadlineMarkerClass(state: DeadlineMarker["state"]) {
+  if (state === "due-soon") {
+    return "border-[#f59e0b]/70 bg-[#fff1d6] font-semibold text-[#9a3412] dark:border-[#fb923c]/70 dark:bg-[#7c2d12]/70 dark:text-[#fed7aa]";
+  }
+  if (state === "overdue" || state === "late") {
+    return "border-[#dc2626]/70 bg-[#fee2e2] font-semibold text-[#991b1b] dark:border-[#f87171]/80 dark:bg-[#7f1d1d]/80 dark:text-[#fecaca]";
+  }
+  return "border-[var(--card-border)] bg-[var(--card-section)]";
+}
+
+function taskSpreadsheet(task: BoardTask, project: Project, statusLabelText: string, todayKey: string, dueSoonDays: number) {
+  return {
+    project: project.name,
+    title: task.title,
+    description: task.description || "",
+    status: statusLabelText,
+    priority: priorityLabels[task.priority],
+    owner: task.owner || "",
+    tester: task.tester || "",
+    workloadDays: task.workloadDays ?? "",
+    tags: task.tags.join(" / "),
+    designDueDate: task.designDueDate || "",
+    testDueDate: task.testDueDate || "",
+    dueDate: task.dueDate || "",
+    deadlines: deadlineSummary(task, todayKey, dueSoonDays),
+    progress: `${task.progress}%`,
+    blockers: task.blockers > 0 ? `${task.blockers}` : "",
+    updatedAt: task.updatedAt.slice(0, 10),
+  };
+}
+
 function isBoardStatus(value: unknown): value is BoardStatus {
   return value === "backlog" || value === "design" || value === "dev" || value === "test" || value === "done";
 }
@@ -450,6 +509,44 @@ function moveTaskToStatusEnd(tasks: BoardTask[], taskId: string, targetStatus: B
   return boardTasksFromGroups(tasks, groups);
 }
 
+function moveTaskToStatusTarget(tasks: BoardTask[], taskId: string, targetStatus: BoardStatus, targetId?: string) {
+  if (!targetId || targetId === taskId) {
+    return moveTaskToStatusEnd(tasks, taskId, targetStatus);
+  }
+
+  const groups = tasksByStatus(tasks);
+  let movingTask: BoardTask | null = null;
+
+  (Object.keys(groups) as BoardStatus[]).forEach((status) => {
+    groups[status] = groups[status].filter((task) => {
+      if (task.id === taskId) {
+        movingTask = task;
+        return false;
+      }
+
+      return true;
+    });
+  });
+
+  if (!movingTask) {
+    return tasks;
+  }
+
+  const targetIndex = groups[targetStatus].findIndex((task) => task.id === targetId);
+  const nextTask: BoardTask = { ...movingTask, status: targetStatus };
+  if (targetIndex < 0) {
+    groups[targetStatus] = [...groups[targetStatus], nextTask];
+  } else {
+    groups[targetStatus] = [
+      ...groups[targetStatus].slice(0, targetIndex),
+      nextTask,
+      ...groups[targetStatus].slice(targetIndex),
+    ];
+  }
+
+  return boardTasksFromGroups(tasks, groups);
+}
+
 function tasksFromDragTarget(tasks: BoardTask[], event: DragOverEvent | DragEndEvent, targetStatus: BoardStatus) {
   const source = event.operation.source;
   const target = event.operation.target;
@@ -461,8 +558,10 @@ function tasksFromDragTarget(tasks: BoardTask[], event: DragOverEvent | DragEndE
   const isCrossRegion = targetStatus !== source.initialGroup;
   const targetTaskCount = tasks.filter((task) => task.status === targetStatus && task.id !== source.id).length;
 
-  if (isCrossRegion && (!isSortable(target) || targetTaskCount <= 1)) {
-    return moveTaskToStatusEnd(tasks, source.id, targetStatus);
+  if (isCrossRegion) {
+    return isSortable(target) && typeof target.id === "string" && targetTaskCount > 0
+      ? moveTaskToStatusTarget(tasks, source.id, targetStatus, target.id)
+      : moveTaskToStatusEnd(tasks, source.id, targetStatus);
   }
 
   return tasksFromDragEvent(tasks, event);
@@ -510,6 +609,29 @@ function userName(user: BoardUserOption | null | undefined) {
   return user ? user.displayName || user.username : "";
 }
 
+function isTaskRelatedToUser(task: BoardTask, userId: string) {
+  return task.ownerUserId === userId || task.testerUserId === userId;
+}
+
+function summarizeActivityChanges(meta: Record<string, unknown>) {
+  const changes = Array.isArray(meta.changes) ? meta.changes : [];
+  return changes
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const row = item as Record<string, unknown>;
+      const label = typeof row.label === "string" ? row.label : "";
+      const before = typeof row.before === "string" ? row.before : "";
+      const after = typeof row.after === "string" ? row.after : "";
+      if (!label || before === after) {
+        return null;
+      }
+      return { label, before, after };
+    })
+    .filter((item): item is { label: string; before: string; after: string } => Boolean(item));
+}
+
 function sortTasks(tasks: BoardTask[]) {
   return [...tasks].sort((left, right) => {
     if (left.orderIndex !== right.orderIndex) {
@@ -525,6 +647,33 @@ function progressFromSubtasks(subtasks: Subtask[], fallback: number) {
   }
   const done = subtasks.filter((step) => step.done).length;
   return Math.round((done / subtasks.length) * 100);
+}
+
+function applyDoneSideEffects(task: BoardTask, updatedAt = new Date().toISOString()): BoardTask {
+  if (task.status !== "done") {
+    return task;
+  }
+  return {
+    ...task,
+    progress: 100,
+    blockers: 0,
+    blockedReason: "",
+    subtasks: task.subtasks.map((step) => (
+      step.done ? step : { ...step, done: true, updatedAt }
+    )),
+  };
+}
+
+function applyDoneSideEffectsToTasks(tasks: BoardTask[]) {
+  const updatedAt = new Date().toISOString();
+  return tasks.map((task) => applyDoneSideEffects(task, updatedAt));
+}
+
+function normalizeWorkloadInput(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return null;
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return null;
+  return Math.min(999, Math.max(0.5, Math.round(numeric * 2) / 2));
 }
 
 function taskUpdates(tasks: BoardTask[]) {
@@ -585,7 +734,9 @@ function isThemeId(value: unknown): value is ThemeId {
     value === "slack" ||
     value === "figma" ||
     value === "monday" ||
-    value === "microsoft"
+    value === "microsoft" ||
+    value === "neon" ||
+    value === "deepspace"
   );
 }
 
@@ -621,10 +772,12 @@ export default function KanbanApp({
   initialBoard,
   todayKey,
   appVersion,
+  initialThemeId = "notion",
 }: {
   initialBoard: BoardData;
   todayKey: string;
   appVersion: string;
+  initialThemeId?: string;
 }) {
   const [board, setBoard] = useState(initialBoard);
   const [, setSyncState] = useState<SyncState>("syncing");
@@ -632,10 +785,11 @@ export default function KanbanApp({
   const [projectFilter, setProjectFilter] = useState("all");
   const [priorityFilter, setPriorityFilter] = useState<Priority | "all">("all");
   const [tagFilters, setTagFilters] = useState<string[]>([]);
-  const [tagSearch, setTagSearch] = useState("");
+  const [viewMode, setViewMode] = useState<ViewMode>("board");
+  const [listStatusFilters, setListStatusFilters] = useState<BoardStatus[]>([]);
   const [metricFilter, setMetricFilter] = useState<MetricFilter>(null);
   const [backlogCollapsed, setBacklogCollapsed] = useState(false);
-  const [themeId, setThemeId] = useState<ThemeId>("notion");
+  const [themeId, setThemeId] = useState<ThemeId>(isThemeId(initialThemeId) ? initialThemeId : "notion");
   const [drawerMode, setDrawerMode] = useState<DrawerMode>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
@@ -657,6 +811,7 @@ export default function KanbanApp({
     owner: "",
     testerUserId: "",
     tester: "",
+    workloadDays: "",
     priority: "medium",
     testDueDate: "",
     designDueDate: "",
@@ -717,17 +872,10 @@ export default function KanbanApp({
     latestTasksRef.current = board.tasks;
   }, [board.tasks]);
 
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      const savedTheme = window.localStorage.getItem("kanban-theme");
-      if (isThemeId(savedTheme)) {
-        setThemeId(savedTheme);
-      }
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
-  }, []);
-
   const boardTeams = useMemo(() => board.teams ?? [], [board.teams]);
+  const currentUser = board.currentUser ?? initialBoard.currentUser ?? null;
+  const currentUserRole = currentUser?.role ?? "super_admin";
+  const canManageProjects = currentUserRole !== "team_member";
   const sortedProjects = useMemo(() => sortProjects(board.projects), [board.projects]);
   const activeProjects = useMemo(
     () => sortedProjects.filter((project) => project.status === "active"),
@@ -741,13 +889,23 @@ export default function KanbanApp({
     () => sortedProjects.filter((project) => project.status === "archived"),
     [sortedProjects]
   );
-  const boardTitle = board.boardName?.trim() || settingText(settings, "board_title", "项目看板");
+  const boardTitle = board.boardName?.trim() || settingText(settings, "board_title", "默认看板");
   const selectedTask = selectedTaskId
     ? board.tasks.find((task) => task.id === selectedTaskId) ?? null
     : null;
+  const selectedTaskEditable = selectedTask ? canEditTask(selectedTask) : false;
   const selectedProject = selectedProjectId
     ? board.projects.find((project) => project.id === selectedProjectId) ?? null
     : null;
+  function canEditTask(task: BoardTask) {
+    if (currentUserRole !== "team_member") {
+      return true;
+    }
+    return currentUser ? isTaskRelatedToUser(task, currentUser.id) : false;
+  }
+  function canDragTask(task: BoardTask) {
+    return canEditTask(task);
+  }
   const allTags = useMemo(
     () => {
       const activeIds = new Set(activeProjects.map((p) => p.id));
@@ -761,22 +919,6 @@ export default function KanbanApp({
     },
     [board.tasks, activeProjects]
   );
-
-  useEffect(() => {
-    if (!metricFilter) {
-      return;
-    }
-
-    function handleClickOutside(event: MouseEvent) {
-      if (metricRef.current?.contains(event.target as Node)) {
-        return;
-      }
-      setMetricFilter(null);
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [metricFilter]);
 
   const filteredTasks = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -800,7 +942,9 @@ export default function KanbanApp({
         metricFilter === null ||
         (metricFilter === "blocked"
           ? task.blockers > 0
-          : task.status !== "done" && taskHasDueSoonAlert(task, todayKey, dueSoonDays));
+          : metricFilter === "overdue"
+            ? task.status !== "done" && taskHasOverdueAlert(task, todayKey, dueSoonDays)
+            : task.status !== "done" && taskHasDueSoonAlert(task, todayKey, dueSoonDays));
 
       return (
         activeProjectIds.has(project.id) &&
@@ -829,12 +973,14 @@ export default function KanbanApp({
     const activeTasks = board.tasks.filter((task) => activeProjectIds.has(task.projectId));
     const blocked = activeTasks.filter((task) => task.blockers > 0);
     const dueSoon = activeTasks.filter((task) => task.status !== "done" && taskHasDueSoonAlert(task, todayKey, dueSoonDays));
+    const overdue = activeTasks.filter((task) => task.status !== "done" && taskHasOverdueAlert(task, todayKey, dueSoonDays));
     const completed = activeTasks.filter((task) => task.status === "done");
 
     return {
       projects: activeProjects.length,
       active: activeTasks.filter((task) => task.status !== "done").length,
       dueSoon: dueSoon.length,
+      overdue: overdue.length,
       blocked: blocked.length,
       completion: activeTasks.length
         ? Math.round((completed.length / activeTasks.length) * 100)
@@ -850,6 +996,11 @@ export default function KanbanApp({
   function changeTheme(nextTheme: ThemeId) {
     setThemeId(nextTheme);
     window.localStorage.setItem("kanban-theme", nextTheme);
+    document.cookie = `kanban_theme=${nextTheme}; path=/; max-age=31536000; samesite=lax`;
+  }
+
+  function changeViewMode(nextMode: ViewMode) {
+    setViewMode(nextMode);
   }
 
   async function persistSettings(patch: SettingsPatch) {
@@ -1084,11 +1235,12 @@ export default function KanbanApp({
   async function persistTask(taskId: string, patch: Partial<BoardTask>) {
     const previous = board.tasks.find((task) => task.id === taskId);
     const previousTasks = board.tasks;
+    const updatedAt = new Date().toISOString();
     setBoard((current) => ({
       ...current,
       tasks: current.tasks.map((task) =>
         task.id === taskId
-          ? { ...task, ...patch, updatedAt: new Date().toISOString() }
+          ? applyDoneSideEffects({ ...task, ...patch, updatedAt }, updatedAt)
           : task
       ),
     }));
@@ -1135,6 +1287,10 @@ export default function KanbanApp({
       notify("请选择负责人", "error");
       return;
     }
+    if (currentUserRole === "team_member" && currentUser && owner.id !== currentUser.id && tester?.id !== currentUser.id) {
+      notify("团队成员只能创建跟自己有关的任务", "error");
+      return;
+    }
 
     const optimistic: BoardTask = {
       id: nextLocalId("local-task"),
@@ -1147,6 +1303,7 @@ export default function KanbanApp({
       owner: userName(owner),
       testerUserId: newTask.testerUserId,
       tester: userName(tester),
+      workloadDays: normalizeWorkloadInput(newTask.workloadDays),
       startDate: "",
       testDueDate: newTask.testDueDate,
       designDueDate: newTask.designDueDate,
@@ -1174,6 +1331,7 @@ export default function KanbanApp({
       ownerUserId: "",
       tester: "",
       testerUserId: "",
+      workloadDays: "",
       testDueDate: "",
       designDueDate: "",
       dueDate: "",
@@ -1196,6 +1354,7 @@ export default function KanbanApp({
         projectId,
         ownerUserId: newTask.ownerUserId,
         testerUserId: newTask.testerUserId,
+        workloadDays: normalizeWorkloadInput(newTask.workloadDays),
         priority: newTask.priority,
         testDueDate: newTask.testDueDate,
         designDueDate: newTask.designDueDate,
@@ -1303,6 +1462,10 @@ export default function KanbanApp({
 
     setCrossDragTarget(targetStatus);
 
+    if (targetStatus !== source.initialGroup) {
+      return;
+    }
+
     if (!shouldMoveTasks(event, targetStatus)) {
       return;
     }
@@ -1355,11 +1518,11 @@ export default function KanbanApp({
       return;
     }
 
-    const finalTasks = sameTaskOrder(startTasks, liveTasks)
+    const finalTasks = applyDoneSideEffectsToTasks(sameTaskOrder(startTasks, liveTasks)
       ? targetStatus && shouldMoveTasks(event, targetStatus)
         ? tasksFromDragTarget(liveTasks, event, targetStatus)
         : liveTasks
-      : liveTasks;
+      : liveTasks);
 
     if (sameTaskOrder(startTasks, finalTasks)) {
       dragStartTasksRef.current = null;
@@ -1367,6 +1530,18 @@ export default function KanbanApp({
     }
 
     latestTasksRef.current = finalTasks;
+    const isCrossRegionDrop = Boolean(targetStatus && targetStatus !== source.initialGroup);
+    if (isCrossRegionDrop) {
+      dragStartTasksRef.current = null;
+      window.setTimeout(() => {
+        setBoard((current) =>
+          sameTaskOrder(current.tasks, finalTasks) ? current : { ...current, tasks: finalTasks }
+        );
+        void persistCurrentOrder(finalTasks, startTasks);
+      }, 0);
+      return;
+    }
+
     setBoard((current) =>
       sameTaskOrder(current.tasks, finalTasks) ? current : { ...current, tasks: finalTasks }
     );
@@ -1553,10 +1728,17 @@ export default function KanbanApp({
   }
 
   const activeProjectChoices = activeProjects.length ? activeProjects : sortedProjects;
+  const listTasks = board.columns.flatMap((column) =>
+    sortTasks(filteredTasks.filter((task) => task.status === column.id)).map((task) => ({
+      task,
+      project: projectById(board.projects, task.projectId),
+      statusLabel: column.title,
+    }))
+  );
   const newTaskProjectId = newTask.projectId;
   const newTaskMembers = membersForProject(board.projects, boardTeams, newTaskProjectId);
   const themeOptions = themePresets.map((theme) => ({ value: theme.id, label: theme.label }));
-  const activeProjectOptions = activeProjectChoices.map((project) => ({
+  const activeProjectOptions = activeProjects.map((project) => ({
     value: project.id,
     label: project.name,
     meta: project.owner,
@@ -1571,15 +1753,83 @@ export default function KanbanApp({
     { value: "medium", label: "中优先级" },
     { value: "low", label: "低优先级" },
   ];
+  const listStatusOptions: MultiSelectOption[] = board.columns.map((column) => ({
+    value: column.id,
+    label: column.title,
+    colorDotClass: column.tone,
+  }));
+  const visibleListTasks =
+    listStatusFilters.length > 0
+      ? listTasks.filter(({ task }) => listStatusFilters.includes(task.status))
+      : listTasks;
+
+  function exportTaskTable() {
+    const rows = listTasks.map(({ task, project, statusLabel }) =>
+      taskSpreadsheet(task, project, statusLabel, todayKey, dueSoonDays)
+    );
+    const worksheet = utils.json_to_sheet(rows, {
+      header: [
+        "project",
+        "title",
+        "description",
+        "status",
+        "priority",
+        "owner",
+        "tester",
+        "workloadDays",
+        "tags",
+        "designDueDate",
+        "testDueDate",
+        "dueDate",
+        "deadlines",
+        "progress",
+        "blockers",
+        "updatedAt",
+      ],
+    });
+    utils.sheet_add_aoa(
+      worksheet,
+      [[
+        "项目",
+        "任务",
+        "描述",
+        "状态",
+        "优先级",
+        "负责人",
+        "测试员",
+        "工作量（人日）",
+        "标签",
+        "设计截止",
+        "提测日期",
+        "交付日期",
+        "截止摘要",
+        "进度",
+        "阻塞",
+        "更新时间",
+      ]],
+      { origin: "A1" }
+    );
+    const workbook = utils.book_new();
+    utils.book_append_sheet(workbook, worksheet, (boardTitle.slice(0, 25) || "任务列表").replace(/[\\/?*[\]:]/g, ""));
+    writeFileXLSX(
+      workbook,
+      `${boardTitle.replace(/[\\\\/:*?\"<>|]/g, "-") || "任务列表"}-${new Date().toISOString().slice(0, 10)}.xlsx`
+    );
+  }
 
   return (
     <main data-theme={themeId} className="kanban-theme flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--text)]">
       <div className="mx-auto grid min-h-screen w-full max-w-[2160px] flex-1 grid-rows-[auto_1fr] gap-4 px-5 py-4 2xl:px-8">
         <header className="flex flex-col gap-4 border-b border-[var(--border)] pb-4 2xl:flex-row 2xl:items-end 2xl:justify-between">
           <div>
-            <div className="flex flex-wrap items-center gap-3 text-xs font-semibold uppercase text-[var(--muted)]">
-              <span className="h-2 w-2 rounded-full bg-[var(--accent)]" />
-              <span>Project Operations</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-[var(--muted)]">
+              <span className="inline-flex items-center rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--accent)]">
+                <span className="mr-2 h-2 w-2 rounded-full bg-current opacity-75" />
+                KANBAN
+              </span>
+              <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-1 text-[11px] font-semibold text-[var(--muted)]">
+                {appVersion}
+              </span>
             </div>
             <h1 className="mt-3 text-3xl font-semibold 2xl:text-5xl">{boardTitle}</h1>
           </div>
@@ -1595,13 +1845,19 @@ export default function KanbanApp({
                 onClick={() => setMetricFilter((current) => (current === "dueSoon" ? null : "dueSoon"))}
               />
               <Metric
+                label="超期"
+                value={metrics.overdue}
+                alert={metrics.overdue > 0}
+                active={metricFilter === "overdue"}
+                onClick={() => setMetricFilter((current) => (current === "overdue" ? null : "overdue"))}
+              />
+              <Metric
                 label="阻塞"
                 value={metrics.blocked}
                 alert={metrics.blocked > 0}
                 active={metricFilter === "blocked"}
                 onClick={() => setMetricFilter((current) => (current === "blocked" ? null : "blocked"))}
               />
-              <Metric label="完成" value={`${metrics.completion}%`} />
             </div>
             <div className="flex items-center gap-2">
               <span className="shrink-0 text-sm text-[var(--muted)]">配色方案</span>
@@ -1629,14 +1885,16 @@ export default function KanbanApp({
             <div className="space-y-2">
               <div className="flex items-center justify-between">
                 <h2 className="text-sm font-semibold">项目</h2>
-                <button
-                  type="button"
-                  title="新建项目"
-                  onClick={() => openProject(null)}
-                  className="rounded-md border border-[var(--border)] p-2 text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
-                >
-                  <FolderPlus size={16} />
-                </button>
+                {canManageProjects ? (
+                  <button
+                    type="button"
+                    title="新建项目"
+                    onClick={() => openProject(null)}
+                    className="rounded-md border border-[var(--border)] p-2 text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
+                  >
+                    <FolderPlus size={16} />
+                  </button>
+                ) : null}
               </div>
               <button
                 type="button"
@@ -1660,8 +1918,8 @@ export default function KanbanApp({
                     setProjectFilter(project.id);
                     setSelectedProjectId(project.id);
                   }}
-                  onEdit={() => openProject(project)}
-                  onArchive={() => void persistProject(project.id, { status: "archived" }, "项目已归档")}
+                  onEdit={canManageProjects ? () => openProject(project) : undefined}
+                  onArchive={canManageProjects ? () => void persistProject(project.id, { status: "archived" }, "项目已归档") : undefined}
                 />
               ))}
             </div>
@@ -1680,7 +1938,7 @@ export default function KanbanApp({
                 {search ? (
                   <button
                     type="button"
-                    title="清除搜索"
+                    title="重置搜索"
                     onClick={() => setSearch("")}
                     className="absolute right-2 top-2 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
                   >
@@ -1708,8 +1966,6 @@ export default function KanbanApp({
                 allTags={allTags}
                 selected={tagFilters}
                 onChange={setTagFilters}
-                search={tagSearch}
-                onSearchChange={setTagSearch}
               />
             </div>
 
@@ -1734,51 +1990,81 @@ export default function KanbanApp({
                 className="min-h-[132px] w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
               <div>
-                <SearchableSelect
-                  value={newTaskProjectId}
-                  options={activeProjectOptions}
-                  onChange={(value) =>
-                    setNewTask((current) => ({
-                      ...current,
-                      projectId: value,
-                      ownerUserId: "",
-                      owner: "",
-                      testerUserId: "",
-                      tester: "",
-                    }))
-                  }
-                  placeholder="选择项目"
-                  clearable
-                />
+                {activeProjectOptions.length > 0 ? (
+                  <SearchableSelect
+                    value={newTaskProjectId}
+                    options={activeProjectOptions}
+                    onChange={(value) =>
+                      setNewTask((current) => ({
+                        ...current,
+                        projectId: value,
+                        ownerUserId: "",
+                        owner: "",
+                        testerUserId: "",
+                        tester: "",
+                      }))
+                    }
+                    placeholder="选择项目"
+                    clearable
+                  />
+                ) : canManageProjects ? (
+                  <button
+                    type="button"
+                    onClick={() => openProject(null)}
+                    className="h-10 w-full rounded-md border border-dashed border-[var(--border)] bg-[var(--panel-soft)] text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--text)]"
+                  >
+                    创建项目
+                  </button>
+                ) : (
+                  <div className="grid h-10 place-items-center rounded-md border border-dashed border-[var(--border)] bg-[var(--panel-soft)] text-sm text-[var(--muted)]">
+                    暂无可选项目
+                  </div>
+                )}
               </div>
-              <div className="grid grid-cols-2 gap-2">
-                <SearchableSelect
-                  value={newTask.ownerUserId}
-                  options={newTaskMemberOptions}
-                  onChange={(value) => {
-                    const member = newTaskMembers.find((item) => item.id === value);
-                    setNewTask((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
-                  }}
-                  placeholder="负责人"
-                  clearable
-                />
-                <SearchableSelect
-                  value={newTask.testerUserId}
-                  options={newTaskMemberOptions}
-                  onChange={(value) => {
-                    const member = newTaskMembers.find((item) => item.id === value);
-                    setNewTask((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
-                  }}
-                  placeholder="测试员"
-                  clearable
-                />
-              </div>
+              {newTaskProjectId && newTaskMemberOptions.length === 0 ? (
+                <div className="rounded-md border border-dashed border-[var(--border)] bg-[var(--panel-soft)] px-3 py-3 text-sm text-[var(--muted)]">
+                  当前项目没有可用团队成员，请先在后台管理创建团队并把项目绑定到团队。
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-2">
+                  <SearchableSelect
+                    value={newTask.ownerUserId}
+                    options={newTaskMemberOptions}
+                    onChange={(value) => {
+                      const member = newTaskMembers.find((item) => item.id === value);
+                      setNewTask((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
+                    }}
+                    placeholder="负责人"
+                    clearable
+                  />
+                  <SearchableSelect
+                    value={newTask.testerUserId}
+                    options={newTaskMemberOptions}
+                    onChange={(value) => {
+                      const member = newTaskMembers.find((item) => item.id === value);
+                      setNewTask((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
+                    }}
+                    placeholder="测试员"
+                    clearable
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-2">
                 <SearchableSelect
                   value={newTask.priority}
                   options={priorityOptions}
                   onChange={(value) => setNewTask((current) => ({ ...current, priority: value as Priority }))}
                   placeholder="优先级"
+                />
+                <input
+                  name="newTaskWorkloadDays"
+                  type="number"
+                  min="0.5"
+                  step="0.5"
+                  value={newTask.workloadDays}
+                  onChange={(event) => setNewTask((current) => ({ ...current, workloadDays: event.target.value }))}
+                  placeholder="工作量（人日）"
+                  className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
                 />
               </div>
               <div className="grid grid-cols-2 gap-2">
@@ -1852,12 +2138,68 @@ export default function KanbanApp({
             ) : null}
           </aside>
 
-          <DragDropProvider
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragEnd={(event) => void handleDragEnd(event)}
-          >
           <section className="min-w-0 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--board-bg)]">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--border)] px-3 py-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="inline-flex rounded-md border border-[var(--border)] bg-[var(--panel)] p-1">
+                  <button
+                    type="button"
+                    title="卡片视图"
+                    aria-label="卡片视图"
+                    onClick={() => changeViewMode("board")}
+                    className={`inline-flex items-center gap-2 rounded px-3 py-2 text-sm transition ${
+                      viewMode === "board"
+                        ? "bg-[var(--text)] text-[var(--panel)]"
+                        : "text-[var(--muted)] hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
+                    }`}
+                  >
+                    <LayoutGrid size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    title="列表视图"
+                    aria-label="列表视图"
+                    onClick={() => changeViewMode("list")}
+                    className={`inline-flex items-center gap-2 rounded px-3 py-2 text-sm transition ${
+                      viewMode === "list"
+                        ? "bg-[var(--text)] text-[var(--panel)]"
+                        : "text-[var(--muted)] hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
+                    }`}
+                  >
+                    <Rows3 size={15} />
+                  </button>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {viewMode === "list" ? (
+                  <ListStatusMultiSelect
+                    value={listStatusFilters}
+                    options={listStatusOptions}
+                    onChange={setListStatusFilters}
+                  />
+                ) : null}
+                <span className="inline-flex h-10 min-w-[86px] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-center shadow-sm">
+                  <span className="inline-flex items-baseline">
+                    <span className="text-lg font-semibold leading-none text-[var(--text)]">{visibleListTasks.length}</span>
+                    <span className="ml-0.5 text-[10px] font-semibold leading-none text-[var(--muted)]">任务</span>
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  onClick={exportTaskTable}
+                  className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-sm font-medium text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
+                >
+                  <Download size={15} />
+                  导出
+                </button>
+              </div>
+            </div>
+            {viewMode === "board" ? (
+              <DragDropProvider
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
+                onDragEnd={(event) => void handleDragEnd(event)}
+              >
             {/* 需求池：横向布局 - 始终显示，拖拽时不消失 */}
             <div className="border-b border-[var(--border)] p-3">
               {board.columns.slice(0, 1).map((column) => {
@@ -1865,11 +2207,12 @@ export default function KanbanApp({
                   filteredTasks.filter((task) => task.status === column.id)
                 );
                 return (
-                  <HorizontalBoardColumn
+                <HorizontalBoardColumn
                     key={column.id}
                     column={column}
                     tasks={columnTasks}
                     projects={board.projects}
+                    canDragTask={canDragTask}
                     collapsed={backlogCollapsed}
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
@@ -1895,6 +2238,7 @@ export default function KanbanApp({
                     column={column}
                     tasks={columnTasks}
                     projects={board.projects}
+                    canDragTask={canDragTask}
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
@@ -1905,9 +2249,17 @@ export default function KanbanApp({
                 );
               })}
             </div>
+            <DeleteDropZone visible={draggingTaskId !== null} />
+            </DragDropProvider>
+            ) : (
+              <KanbanListView
+                tasks={visibleListTasks}
+                todayKey={todayKey}
+                dueSoonDays={dueSoonDays}
+                onOpenTask={openTask}
+              />
+            )}
           </section>
-          <DeleteDropZone visible={draggingTaskId !== null} />
-          </DragDropProvider>
 
         </section>
       </div>
@@ -1930,15 +2282,26 @@ export default function KanbanApp({
         </div>
       </footer>
 
-      <button
-        type="button"
-        title="活动记录"
-        onClick={() => setDrawerMode("activity")}
-        className="fixed bottom-5 right-5 z-30 inline-flex items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--text)] px-4 py-3 text-sm font-semibold text-[var(--panel)] shadow-lg transition hover:opacity-90"
-      >
-        <Activity size={17} />
-        活动记录
-      </button>
+      <div className="fixed bottom-5 right-5 z-30 flex flex-col items-end gap-3">
+        <button
+          type="button"
+          title="项目负载大屏"
+          onClick={() => window.location.assign("/dashboard")}
+          className={floatingActionButtonClass}
+        >
+          <ChartNoAxesCombined size={17} className="shrink-0" />
+          <span>项目负载</span>
+        </button>
+        <button
+          type="button"
+          title="活动记录"
+          onClick={() => setDrawerMode("activity")}
+          className={floatingActionButtonClass}
+        >
+          <Activity size={17} className="shrink-0" />
+          <span>活动记录</span>
+        </button>
+      </div>
 
       <ToastViewport toasts={toasts} />
 
@@ -1953,6 +2316,8 @@ export default function KanbanApp({
               newSubtaskTitle={newSubtaskTitle}
               setNewSubtaskTitle={setNewSubtaskTitle}
               columns={board.columns}
+              currentUser={currentUser}
+              editable={selectedTaskEditable}
               onSave={(patch) => persistTask(selectedTask.id, patch)}
               onRework={() => reworkTask(selectedTask.id)}
               onDelete={() => void removeTask(selectedTask.id)}
@@ -1968,6 +2333,7 @@ export default function KanbanApp({
               teams={boardTeams}
               draft={projectDraft}
               setDraft={setProjectDraft}
+              editable={canManageProjects}
               onSubmit={saveProject}
               onArchive={(summary) => {
                 if (selectedProject) {
@@ -2014,6 +2380,7 @@ function HorizontalBoardColumn({
   column,
   tasks,
   projects,
+  canDragTask,
   collapsed,
   selectedTaskId,
   todayKey,
@@ -2026,6 +2393,7 @@ function HorizontalBoardColumn({
   column: BoardData["columns"][number];
   tasks: BoardTask[];
   projects: Project[];
+  canDragTask: (task: BoardTask) => boolean;
   collapsed: boolean;
   selectedTaskId: string | null;
   todayKey: string;
@@ -2099,6 +2467,7 @@ function HorizontalBoardColumn({
                   stripeEnabled={taskCardStripeEnabled}
                   className="w-[280px] shrink-0"
                   onSelect={() => onOpenTask(task.id)}
+                  draggable={canDragTask(task)}
                 />
               ))}
               {tasks.length === 0 ? (
@@ -2115,6 +2484,7 @@ function BoardColumnView({
   column,
   tasks,
   projects,
+  canDragTask,
   selectedTaskId,
   todayKey,
   dueSoonDays,
@@ -2125,6 +2495,7 @@ function BoardColumnView({
   column: BoardData["columns"][number];
   tasks: BoardTask[];
   projects: Project[];
+  canDragTask: (task: BoardTask) => boolean;
   selectedTaskId: string | null;
   todayKey: string;
   dueSoonDays: number;
@@ -2178,6 +2549,7 @@ function BoardColumnView({
               stripeEnabled={taskCardStripeEnabled}
               className="w-full"
               onSelect={() => onOpenTask(task.id)}
+              draggable={canDragTask(task)}
             />
           ))}
           {tasks.length === 0 ? (
@@ -2188,7 +2560,134 @@ function BoardColumnView({
   );
 }
 
+function KanbanListView({
+  tasks,
+  todayKey,
+  dueSoonDays,
+  onOpenTask,
+}: {
+  tasks: Array<{ task: BoardTask; project: Project; statusLabel: string }>;
+  todayKey: string;
+  dueSoonDays: number;
+  onOpenTask: (taskId: string) => void;
+}) {
+  return (
+    <div className="min-h-[760px] overflow-auto bg-[var(--lane-bg)] p-3 2xl:min-h-[900px]">
+      <div className="min-w-[1200px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+        <div className="grid grid-cols-[180px_minmax(280px,1.6fr)_140px_110px_110px_130px_130px_220px_140px_110px_110px] gap-3 border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">
+          <span>项目 / 状态</span>
+          <span>任务</span>
+          <span>负责人</span>
+          <span>测试员</span>
+          <span>工作量（人日）</span>
+          <span>标签</span>
+          <span>截止</span>
+          <span>拆解</span>
+          <span>更新时间</span>
+          <span>进度</span>
+          <span>阻塞</span>
+        </div>
+        <div className="divide-y divide-[var(--border)]">
+          {tasks.length > 0 ? (
+            tasks.map(({ task, project, statusLabel }) => {
+              const deadlineText = deadlineSummary(task, todayKey, dueSoonDays);
+              return (
+                <button
+                  key={task.id}
+                  type="button"
+                  onClick={() => onOpenTask(task.id)}
+                  className="grid w-full grid-cols-[180px_minmax(280px,1.6fr)_140px_110px_110px_130px_130px_220px_140px_110px_110px] gap-3 px-4 py-3 text-left transition hover:bg-[var(--hover)]"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--text)]">{project.name}</span>
+                    <span className="mt-1 inline-flex rounded-full bg-[var(--panel-soft)] px-2 py-1 text-xs text-[var(--muted)]">{statusLabel}</span>
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-[var(--text)]">{task.title}</span>
+                    <span className="mt-1 line-clamp-2 block text-xs text-[var(--muted)]">{task.description || "无描述"}</span>
+                  </span>
+                  <span className="truncate text-sm text-[var(--text)]">{task.owner || "-"}</span>
+                  <span className="truncate text-sm text-[var(--text)]">{task.tester || "-"}</span>
+                  <span className="text-sm font-semibold text-[var(--text)]">{task.workloadDays ?? "-"}</span>
+                  <span className="truncate text-xs text-[var(--muted)]">{task.tags.join(" / ") || "-"}</span>
+                  <span className="truncate text-xs text-[var(--muted)]">{deadlineText}</span>
+                  <span className="truncate text-xs text-[var(--muted)]">
+                    {task.subtasks.length > 0 ? `${task.subtasks.filter((step) => step.done).length}/${task.subtasks.length}` : "-"}
+                  </span>
+                  <span className="text-xs text-[var(--muted)]">{task.updatedAt.slice(0, 10)}</span>
+                  <span className="text-sm font-semibold text-[var(--text)]">{task.progress}%</span>
+                  <span className={`text-sm font-semibold ${task.blockers > 0 ? "text-[#c7523d]" : "text-[var(--muted)]"}`}>
+                    {task.blockers > 0 ? task.blockers : "-"}
+                  </span>
+                </button>
+              );
+            })
+          ) : (
+            <div className="grid min-h-[280px] place-items-center text-sm text-[var(--muted)]">暂无任务</div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function HorizontalSortableTaskCard({
+  task,
+  index,
+  todayKey,
+  dueSoonDays,
+  project,
+  selected,
+  stripeEnabled,
+  className,
+  onSelect,
+  draggable,
+}: {
+  task: BoardTask;
+  index: number;
+  todayKey: string;
+  dueSoonDays: number;
+  project: Project;
+  selected: boolean;
+  stripeEnabled: boolean;
+  className?: string;
+  onSelect: () => void;
+  draggable: boolean;
+}) {
+  if (!draggable) {
+    return (
+      <div className={`${className ?? ""}`}>
+        <TaskCard
+          task={task}
+          todayKey={todayKey}
+          dueSoonDays={dueSoonDays}
+          project={project}
+          selected={selected}
+          stripeEnabled={stripeEnabled}
+          dragging={false}
+          draggable={false}
+          onSelect={onSelect}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <HorizontalDraggableTaskCard
+      task={task}
+      index={index}
+      todayKey={todayKey}
+      dueSoonDays={dueSoonDays}
+      project={project}
+      selected={selected}
+      stripeEnabled={stripeEnabled}
+      className={className}
+      onSelect={onSelect}
+    />
+  );
+}
+
+function HorizontalDraggableTaskCard({
   task,
   index,
   todayKey,
@@ -2231,6 +2730,7 @@ function HorizontalSortableTaskCard({
         selected={selected}
         stripeEnabled={stripeEnabled}
         dragging={isDragging}
+        draggable={true}
         onSelect={onSelect}
       />
     </div>
@@ -2247,6 +2747,62 @@ function VerticalSortableTaskCard({
   stripeEnabled,
   className,
   onSelect,
+  draggable,
+}: {
+  task: BoardTask;
+  index: number;
+  todayKey: string;
+  dueSoonDays: number;
+  project: Project;
+  selected: boolean;
+  stripeEnabled: boolean;
+  className?: string;
+  onSelect: () => void;
+  draggable: boolean;
+}) {
+  if (!draggable) {
+    return (
+      <div className={`${className ?? ""}`}>
+        <TaskCard
+          task={task}
+          todayKey={todayKey}
+          dueSoonDays={dueSoonDays}
+          project={project}
+          selected={selected}
+          stripeEnabled={stripeEnabled}
+          dragging={false}
+          draggable={false}
+          onSelect={onSelect}
+        />
+      </div>
+    );
+  }
+
+  return (
+    <VerticalDraggableTaskCard
+      task={task}
+      index={index}
+      todayKey={todayKey}
+      dueSoonDays={dueSoonDays}
+      project={project}
+      selected={selected}
+      stripeEnabled={stripeEnabled}
+      className={className}
+      onSelect={onSelect}
+    />
+  );
+}
+
+function VerticalDraggableTaskCard({
+  task,
+  index,
+  todayKey,
+  dueSoonDays,
+  project,
+  selected,
+  stripeEnabled,
+  className,
+  onSelect,
 }: {
   task: BoardTask;
   index: number;
@@ -2280,6 +2836,7 @@ function VerticalSortableTaskCard({
         selected={selected}
         stripeEnabled={stripeEnabled}
         dragging={isDragging}
+        draggable={true}
         onSelect={onSelect}
       />
     </div>
@@ -2394,8 +2951,8 @@ function ProjectRow({
   selected: boolean;
   taskCount: number;
   onSelect: () => void;
-  onEdit: () => void;
-  onArchive: () => void;
+  onEdit?: () => void;
+  onArchive?: () => void;
 }) {
   return (
     <div
@@ -2424,30 +2981,36 @@ function ProjectRow({
             {healthLabels[project.health]}
           </span>
         </div>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            title="编辑项目"
-            onClick={(event) => {
-              event.stopPropagation();
-              onEdit();
-            }}
-            className="rounded p-1 hover:bg-white/20"
-          >
-            <Edit3 size={13} />
-          </button>
-          <button
-            type="button"
-            title="归档项目"
-            onClick={(event) => {
-              event.stopPropagation();
-              onArchive();
-            }}
-            className="rounded p-1 hover:bg-white/20"
-          >
-            <Archive size={13} />
-          </button>
-        </div>
+        {onEdit || onArchive ? (
+          <div className="flex gap-1">
+            {onEdit ? (
+              <button
+                type="button"
+                title="编辑项目"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onEdit();
+                }}
+                className="rounded p-1 hover:bg-white/20"
+              >
+                <Edit3 size={13} />
+              </button>
+            ) : null}
+            {onArchive ? (
+              <button
+                type="button"
+                title="归档项目"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onArchive();
+                }}
+                className="rounded p-1 hover:bg-white/20"
+              >
+                <Archive size={13} />
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -2497,6 +3060,7 @@ function TaskCard({
   selected,
   stripeEnabled,
   dragging,
+  draggable,
   onSelect,
 }: {
   task: BoardTask;
@@ -2506,6 +3070,7 @@ function TaskCard({
   selected: boolean;
   stripeEnabled: boolean;
   dragging: boolean;
+  draggable: boolean;
   onSelect: () => void;
 }) {
   const markers = deadlineMarkers(task, todayKey, dueSoonDays);
@@ -2527,7 +3092,9 @@ function TaskCard({
       } ${hasDateAlert ? "border-[var(--danger)] bg-[var(--danger-soft)]" : ""} ${
         dragging
           ? "shadow-[0_22px_50px_rgba(15,23,42,0.24),0_8px_18px_rgba(15,23,42,0.16)] ring-1 ring-[var(--accent-soft)]"
-          : "cursor-grab shadow-[var(--card-shadow)] hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--card-shadow-hover)] active:cursor-grabbing"
+          : draggable
+            ? "cursor-grab shadow-[var(--card-shadow)] hover:-translate-y-0.5 hover:border-[var(--accent)] hover:shadow-[var(--card-shadow-hover)] active:cursor-grabbing"
+            : "cursor-default shadow-[var(--card-shadow)]"
       }`}
     >
       {stripeEnabled ? (
@@ -2548,9 +3115,14 @@ function TaskCard({
               <span className="truncate">{project.name}</span>
             </div>
           </div>
-          <span className={`shrink-0 rounded-md border px-2 py-0.5 text-[11px] ${priorityTone[task.priority]}`}>
-            {priorityLabels[task.priority]}
-          </span>
+          <div className="flex shrink-0 items-center gap-1">
+            <span className="rounded-md border border-[var(--card-border-strong)] bg-[var(--card-section)] px-2 py-0.5 text-[11px] font-semibold text-[var(--text)] shadow-sm">
+              {task.workloadDays ?? "-"}
+            </span>
+            <span className={`rounded-md border px-2 py-0.5 text-[11px] ${priorityTone[task.priority]}`}>
+              {priorityLabels[task.priority]}
+            </span>
+          </div>
         </div>
         <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--muted)]">
           {task.description || "暂无描述"}
@@ -2593,11 +3165,7 @@ function TaskCard({
           markers.map((marker) => (
             <div
               key={`${marker.label}-${marker.date}`}
-              className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1 ${
-                marker.state === "normal"
-                  ? "border-[var(--card-border)] bg-[var(--card-section)]"
-                  : "border-[var(--danger)] bg-white/55 font-semibold text-[var(--danger)]"
-              }`}
+              className={`flex items-center justify-between gap-2 rounded-md border px-2 py-1 ${deadlineMarkerClass(marker.state)}`}
             >
               <span>{marker.label}</span>
               <span className="shrink-0 tabular-nums">
@@ -2680,6 +3248,7 @@ type TaskDraft = {
   owner: string;
   testerUserId: string;
   tester: string;
+  workloadDays: string;
   progress: number;
   blockers: number;
   blockedReason: string;
@@ -2700,6 +3269,7 @@ function taskDraftFromTask(task: BoardTask): TaskDraft {
     owner: task.owner,
     testerUserId: task.testerUserId,
     tester: task.tester,
+    workloadDays: task.workloadDays === null || task.workloadDays === undefined ? "" : String(task.workloadDays),
     progress: task.progress,
     blockers: task.blockers,
     blockedReason: task.blockedReason,
@@ -2712,6 +3282,8 @@ function TaskDrawer({
   projects,
   teams,
   columns,
+  currentUser,
+  editable,
   newSubtaskTitle,
   setNewSubtaskTitle,
   onSave,
@@ -2726,6 +3298,8 @@ function TaskDrawer({
   projects: Project[];
   teams: BoardTeamOption[];
   columns: BoardData["columns"];
+  currentUser: BoardData["currentUser"];
+  editable: boolean;
   newSubtaskTitle: string;
   setNewSubtaskTitle: (value: string) => void;
   onSave: (patch: Partial<BoardTask>) => Promise<boolean>;
@@ -2769,6 +3343,14 @@ function TaskDrawer({
       window.alert(!draft.projectId ? "请选择项目" : "请选择负责人");
       return;
     }
+    if (
+      currentUser?.role === "team_member" &&
+      draft.ownerUserId !== currentUser.id &&
+      draft.testerUserId !== currentUser.id
+    ) {
+      window.alert("团队成员只能保存跟自己有关的任务");
+      return;
+    }
 
     setSaving(true);
     await onSave({
@@ -2784,6 +3366,7 @@ function TaskDrawer({
       owner: draft.owner,
       testerUserId: draft.testerUserId,
       tester: draft.tester,
+      workloadDays: normalizeWorkloadInput(draft.workloadDays),
       progress: draft.progress,
       blockers: draft.blockers,
       blockedReason: draft.blockedReason,
@@ -2805,148 +3388,161 @@ function TaskDrawer({
       </div>
 
       <form id="task-edit-form" onSubmit={saveTask} className="flex flex-col gap-5">
-        <Field label="任务名称">
-          <input
-            name="taskTitle"
-            value={draft.title}
-            onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
-          />
-        </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="项目">
-            <SearchableSelect
-              value={draft.projectId}
-              options={taskProjectOptions}
-              onChange={(value) =>
-                setDraft((current) => ({
-                  ...current,
-                  projectId: value,
-                  ownerUserId: "",
-                  owner: "",
-                  testerUserId: "",
-                  tester: "",
-                }))
-              }
-              placeholder="选择项目"
-            />
-          </Field>
-          <Field label="状态">
-            <SearchableSelect
-              value={draft.status}
-              options={taskColumnOptions}
-              onChange={(value) => setDraft((current) => ({ ...current, status: value as BoardStatus }))}
-              placeholder="选择状态"
-            />
-          </Field>
-          <Field label="优先级">
-            <SearchableSelect
-              value={draft.priority}
-              options={taskPriorityOptions}
-              onChange={(value) => setDraft((current) => ({ ...current, priority: value as Priority }))}
-              placeholder="选择优先级"
-            />
-          </Field>
-          <Field label="负责人">
-            <SearchableSelect
-              value={draft.ownerUserId}
-              options={taskMemberOptions}
-              onChange={(value) => {
-                const member = taskMembers.find((item) => item.id === value);
-                setDraft((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
-              }}
-              placeholder="选择负责人"
-              clearable
-            />
-          </Field>
-          <Field label="测试员">
-            <SearchableSelect
-              value={draft.testerUserId}
-              options={taskMemberOptions}
-              onChange={(value) => {
-                const member = taskMembers.find((item) => item.id === value);
-                setDraft((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
-              }}
-              placeholder="选择测试员"
-              clearable
-            />
-          </Field>
-          <Field label="设计截止">
+        <fieldset disabled={!editable} className="flex flex-col gap-5">
+          <Field label="任务名称">
             <input
-              name="taskDesignDueDate"
-              type="date"
-              value={draft.designDueDate}
-              onChange={(event) => setDraft((current) => ({ ...current, designDueDate: event.target.value }))}
+              name="taskTitle"
+              value={draft.title}
+              onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
             />
           </Field>
-          <Field label="提测日期">
-            <input
-              name="taskTestDueDate"
-              type="date"
-              value={draft.testDueDate}
-              onChange={(event) => setDraft((current) => ({ ...current, testDueDate: event.target.value }))}
-            />
-          </Field>
-          <Field label="交付日期">
-            <input
-              name="taskDueDate"
-              type="date"
-              value={draft.dueDate}
-              onChange={(event) => setDraft((current) => ({ ...current, dueDate: event.target.value }))}
-            />
-          </Field>
-        </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="项目">
+              <SearchableSelect
+                value={draft.projectId}
+                options={taskProjectOptions}
+                onChange={(value) =>
+                  setDraft((current) => ({
+                    ...current,
+                    projectId: value,
+                    ownerUserId: "",
+                    owner: "",
+                    testerUserId: "",
+                    tester: "",
+                  }))
+                }
+                placeholder="选择项目"
+              />
+            </Field>
+            <Field label="状态">
+              <SearchableSelect
+                value={draft.status}
+                options={taskColumnOptions}
+                onChange={(value) => setDraft((current) => ({ ...current, status: value as BoardStatus }))}
+                placeholder="选择状态"
+              />
+            </Field>
+            <Field label="优先级">
+              <SearchableSelect
+                value={draft.priority}
+                options={taskPriorityOptions}
+                onChange={(value) => setDraft((current) => ({ ...current, priority: value as Priority }))}
+                placeholder="选择优先级"
+              />
+            </Field>
+            <Field label="工作量（人日）">
+              <input
+                type="number"
+                name="taskWorkloadDays"
+                min="0.5"
+                step="0.5"
+                value={draft.workloadDays}
+                onChange={(event) => setDraft((current) => ({ ...current, workloadDays: event.target.value }))}
+                placeholder="不填按 1 人日计算"
+              />
+            </Field>
+            <Field label="负责人">
+              <SearchableSelect
+                value={draft.ownerUserId}
+                options={taskMemberOptions}
+                onChange={(value) => {
+                  const member = taskMembers.find((item) => item.id === value);
+                  setDraft((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
+                }}
+                placeholder="选择负责人"
+                clearable
+              />
+            </Field>
+            <Field label="测试员">
+              <SearchableSelect
+                value={draft.testerUserId}
+                options={taskMemberOptions}
+                onChange={(value) => {
+                  const member = taskMembers.find((item) => item.id === value);
+                  setDraft((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
+                }}
+                placeholder="选择测试员"
+                clearable
+              />
+            </Field>
+            <Field label="设计截止">
+              <input
+                name="taskDesignDueDate"
+                type="date"
+                value={draft.designDueDate}
+                onChange={(event) => setDraft((current) => ({ ...current, designDueDate: event.target.value }))}
+              />
+            </Field>
+            <Field label="提测日期">
+              <input
+                name="taskTestDueDate"
+                type="date"
+                value={draft.testDueDate}
+                onChange={(event) => setDraft((current) => ({ ...current, testDueDate: event.target.value }))}
+              />
+            </Field>
+            <Field label="交付日期">
+              <input
+                name="taskDueDate"
+                type="date"
+                value={draft.dueDate}
+                onChange={(event) => setDraft((current) => ({ ...current, dueDate: event.target.value }))}
+              />
+            </Field>
+          </div>
 
-        <Field label="描述">
-          <textarea
-            name="taskDescription"
-            value={draft.description}
-            onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
-            rows={7}
-            className="min-h-[184px] resize-none leading-6"
-          />
-        </Field>
-
-        <div className="grid grid-cols-[1fr_100px] gap-4">
-          <Field label={`进度 ${draft.progress}%`}>
-            <input
-              type="range"
-              name="taskProgress"
-              min="0"
-              max="100"
-              value={draft.progress}
-              onChange={(event) => setDraft((current) => ({ ...current, progress: Number(event.target.value) }))}
-              className="accent-[var(--accent)]"
+          <Field label="描述">
+            <textarea
+              name="taskDescription"
+              value={draft.description}
+              onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
+              rows={7}
+              className="min-h-[184px] resize-none leading-6"
             />
           </Field>
-          <Field label="阻塞项">
+
+          <div className="grid grid-cols-[1fr_100px] gap-4">
+            <Field label={`进度 ${draft.progress}%`}>
+              <input
+                type="range"
+                name="taskProgress"
+                min="0"
+                max="100"
+                value={draft.progress}
+                onChange={(event) => setDraft((current) => ({ ...current, progress: Number(event.target.value) }))}
+                className="accent-[var(--accent)]"
+              />
+            </Field>
+            <Field label="阻塞项">
+              <input
+                type="number"
+                name="taskBlockers"
+                min="0"
+                max="99"
+                value={draft.blockers}
+                onChange={(event) => setDraft((current) => ({ ...current, blockers: Number(event.target.value) }))}
+              />
+            </Field>
+          </div>
+
+          <Field label="阻塞说明">
             <input
-              type="number"
-              name="taskBlockers"
-              min="0"
-              max="99"
-              value={draft.blockers}
-              onChange={(event) => setDraft((current) => ({ ...current, blockers: Number(event.target.value) }))}
+              name="taskBlockedReason"
+              value={draft.blockedReason}
+              onChange={(event) => setDraft((current) => ({ ...current, blockedReason: event.target.value }))}
+              placeholder="没有阻塞时可留空"
             />
           </Field>
-        </div>
 
-        <Field label="阻塞说明">
-          <input
-            name="taskBlockedReason"
-            value={draft.blockedReason}
-            onChange={(event) => setDraft((current) => ({ ...current, blockedReason: event.target.value }))}
-            placeholder="没有阻塞时可留空"
-          />
-        </Field>
-
-        <Field label="标签">
-          <input
-            name="taskTags"
-            value={draft.tagsText}
-            onChange={(event) => setDraft((current) => ({ ...current, tagsText: event.target.value }))}
-            placeholder="例如：接口 复盘 移动端"
-          />
-        </Field>
+          <Field label="标签">
+            <input
+              name="taskTags"
+              value={draft.tagsText}
+              onChange={(event) => setDraft((current) => ({ ...current, tagsText: event.target.value }))}
+              placeholder="例如：接口 复盘 移动端"
+            />
+          </Field>
+        </fieldset>
       </form>
 
       <section className="flex flex-col gap-4 border-t border-[var(--border)] pt-4">
@@ -2966,138 +3562,144 @@ function TaskDrawer({
             />
           </div>
         ) : null}
-        <div className="flex flex-col gap-2">
-          {task.subtasks.filter((s) => !s.done).map((step) => (
-            <div key={step.id} className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2">
-              <button
-                type="button"
-                onClick={() => onToggleSubtask(step)}
-                className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[var(--border)] transition hover:border-[var(--accent)]"
-              >
-                <Check size={11} className="opacity-0" />
-              </button>
-              {editingSubtaskId === step.id ? (
-                <input
-                  value={editingSubtaskTitle}
-                  onChange={(e) => setEditingSubtaskTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") { onUpdateSubtask(step, editingSubtaskTitle); setEditingSubtaskId(null); }
-                    if (e.key === "Escape") { setEditingSubtaskId(null); }
-                  }}
-                  onBlur={() => {
-                    if (editingSubtaskTitle.trim()) { onUpdateSubtask(step, editingSubtaskTitle); }
-                    setEditingSubtaskId(null);
-                  }}
-                  autoFocus
-                  className="flex-1 rounded border border-[var(--accent)] bg-[var(--input)] px-2 py-1 text-sm outline-none"
-                />
-              ) : (
+        <fieldset disabled={!editable} className="flex flex-col gap-4">
+          <div className="flex flex-col gap-2">
+            {task.subtasks.filter((s) => !s.done).map((step) => (
+              <div key={step.id} className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2">
                 <button
                   type="button"
-                  onClick={() => { setEditingSubtaskId(step.id); setEditingSubtaskTitle(step.title); }}
-                  className="flex-1 rounded px-1 py-0.5 text-left text-sm transition hover:bg-[var(--panel-soft)]"
+                  onClick={() => onToggleSubtask(step)}
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[var(--border)] transition hover:border-[var(--accent)]"
                 >
-                  {step.title}
+                  <Check size={11} className="opacity-0" />
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onDeleteSubtask(step); }}
-                title="删除拆解"
-                className="shrink-0 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--danger)]"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          ))}
-          {task.subtasks.filter((s) => s.done).map((step) => (
-            <div key={step.id} className="flex items-center gap-2 rounded-md border border-[#c8d8bf] bg-[#edf6ea] px-3 py-2">
-              <button
-                type="button"
-                onClick={() => onToggleSubtask(step)}
-                className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[#4f7a45] bg-[#4f7a45] text-white transition"
-              >
-                <Check size={11} />
-              </button>
-              {editingSubtaskId === step.id ? (
-                <input
-                  value={editingSubtaskTitle}
-                  onChange={(e) => setEditingSubtaskTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") { onUpdateSubtask(step, editingSubtaskTitle); setEditingSubtaskId(null); }
-                    if (e.key === "Escape") { setEditingSubtaskId(null); }
-                  }}
-                  onBlur={() => {
-                    if (editingSubtaskTitle.trim()) { onUpdateSubtask(step, editingSubtaskTitle); }
-                    setEditingSubtaskId(null);
-                  }}
-                  autoFocus
-                  className="flex-1 rounded border border-[var(--accent)] bg-white px-2 py-1 text-sm text-[#58704e] outline-none"
-                />
-              ) : (
+                {editingSubtaskId === step.id ? (
+                  <input
+                    value={editingSubtaskTitle}
+                    onChange={(e) => setEditingSubtaskTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { onUpdateSubtask(step, editingSubtaskTitle); setEditingSubtaskId(null); }
+                      if (e.key === "Escape") { setEditingSubtaskId(null); }
+                    }}
+                    onBlur={() => {
+                      if (editingSubtaskTitle.trim()) { onUpdateSubtask(step, editingSubtaskTitle); }
+                      setEditingSubtaskId(null);
+                    }}
+                    autoFocus
+                    className="flex-1 rounded border border-[var(--accent)] bg-[var(--input)] px-2 py-1 text-sm outline-none"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setEditingSubtaskId(step.id); setEditingSubtaskTitle(step.title); }}
+                    className="flex-1 rounded px-1 py-0.5 text-left text-sm transition hover:bg-[var(--panel-soft)]"
+                  >
+                    {step.title}
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => { setEditingSubtaskId(step.id); setEditingSubtaskTitle(step.title); }}
-                  className="flex-1 rounded px-1 py-0.5 text-left text-sm text-[#58704e] line-through transition hover:bg-white/50"
+                  onClick={(e) => { e.stopPropagation(); onDeleteSubtask(step); }}
+                  title="删除拆解"
+                  className="shrink-0 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--danger)]"
                 >
-                  {step.title}
+                  <X size={13} />
                 </button>
-              )}
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onDeleteSubtask(step); }}
-                title="删除拆解"
-                className="shrink-0 rounded p-1 text-[#6d8064] transition hover:bg-white/50 hover:text-[var(--danger)]"
-              >
-                <X size={13} />
-              </button>
-            </div>
-          ))}
-        </div>
-        <form onSubmit={onCreateSubtask} className="grid grid-cols-[minmax(0,1fr)_42px] gap-2">
-          <input
-            value={newSubtaskTitle}
-            name="newSubtaskTitle"
-            onChange={(event) => setNewSubtaskTitle(event.target.value)}
-            placeholder="添加新拆解项"
-            className="h-11 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
-          />
-          <button type="submit" title="添加任务拆解" className="grid h-11 place-items-center rounded-md bg-[var(--accent)] text-white transition hover:bg-[var(--accent-hover)]">
-            <Plus size={16} />
-          </button>
-        </form>
+              </div>
+            ))}
+            {task.subtasks.filter((s) => s.done).map((step) => (
+              <div key={step.id} className="flex items-center gap-2 rounded-md border border-[#c8d8bf] bg-[#edf6ea] px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => onToggleSubtask(step)}
+                  className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[#4f7a45] bg-[#4f7a45] text-white transition"
+                >
+                  <Check size={11} />
+                </button>
+                {editingSubtaskId === step.id ? (
+                  <input
+                    value={editingSubtaskTitle}
+                    onChange={(e) => setEditingSubtaskTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { onUpdateSubtask(step, editingSubtaskTitle); setEditingSubtaskId(null); }
+                      if (e.key === "Escape") { setEditingSubtaskId(null); }
+                    }}
+                    onBlur={() => {
+                      if (editingSubtaskTitle.trim()) { onUpdateSubtask(step, editingSubtaskTitle); }
+                      setEditingSubtaskId(null);
+                    }}
+                    autoFocus
+                    className="flex-1 rounded border border-[var(--accent)] bg-white px-2 py-1 text-sm text-[#58704e] outline-none"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => { setEditingSubtaskId(step.id); setEditingSubtaskTitle(step.title); }}
+                    className="flex-1 rounded px-1 py-0.5 text-left text-sm text-[#58704e] line-through transition hover:bg-white/50"
+                  >
+                    {step.title}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onDeleteSubtask(step); }}
+                  title="删除拆解"
+                  className="shrink-0 rounded p-1 text-[#6d8064] transition hover:bg-white/50 hover:text-[var(--danger)]"
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <form onSubmit={onCreateSubtask} className="grid grid-cols-[minmax(0,1fr)_42px] gap-2">
+            <input
+              value={newSubtaskTitle}
+              name="newSubtaskTitle"
+              onChange={(event) => setNewSubtaskTitle(event.target.value)}
+              placeholder="添加新拆解项"
+              className="h-11 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+            />
+            <button type="submit" title="添加任务拆解" className="grid h-11 place-items-center rounded-md bg-[var(--accent)] text-white transition hover:bg-[var(--accent-hover)]">
+              <Plus size={16} />
+            </button>
+          </form>
+        </fieldset>
       </section>
 
-      <div className={`mt-2 grid gap-3 border-t border-[var(--border)] pt-5 ${task.status === "done" ? "grid-cols-3" : "grid-cols-2"}`}>
-        <button
-          type="submit"
-          form="task-edit-form"
-          disabled={saving}
-          className="flex items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60"
-        >
-          <CheckCircle2 size={16} />
-          {saving ? "保存中" : "保存任务"}
-        </button>
-        {task.status === "done" ? (
+      {editable ? (
+        <div className={`mt-2 grid gap-3 border-t border-[var(--border)] pt-5 ${task.status === "done" ? "grid-cols-3" : "grid-cols-2"}`}>
+          <button
+            type="submit"
+            form="task-edit-form"
+            disabled={saving}
+            className="flex items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60"
+          >
+            <CheckCircle2 size={16} />
+            {saving ? "保存中" : "保存任务"}
+          </button>
+          {task.status === "done" ? (
+            <button
+              type="button"
+              onClick={() => void handleRework()}
+              disabled={reworking}
+              className="flex items-center justify-center gap-2 rounded-md border border-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-[var(--accent)] transition hover:bg-[var(--accent-soft)] disabled:opacity-60"
+            >
+              <RotateCcw size={16} />
+              {reworking ? "发起中" : "发起返工"}
+            </button>
+          ) : null}
           <button
             type="button"
-            onClick={() => void handleRework()}
-            disabled={reworking}
-            className="flex items-center justify-center gap-2 rounded-md border border-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-[var(--accent)] transition hover:bg-[var(--accent-soft)] disabled:opacity-60"
+            onClick={onDelete}
+            className="flex items-center justify-center gap-2 rounded-md border border-[var(--danger)] px-4 py-2.5 text-sm font-semibold text-[var(--danger)] transition hover:bg-[var(--danger-soft)]"
           >
-            <RotateCcw size={16} />
-            {reworking ? "发起中" : "发起返工"}
+            <Trash2 size={16} />
+            删除任务
           </button>
-        ) : null}
-        <button
-          type="button"
-          onClick={onDelete}
-          className="flex items-center justify-center gap-2 rounded-md border border-[var(--danger)] px-4 py-2.5 text-sm font-semibold text-[var(--danger)] transition hover:bg-[var(--danger-soft)]"
-        >
-          <Trash2 size={16} />
-          删除任务
-        </button>
-      </div>
+        </div>
+      ) : (
+        <div className="mt-2 border-t border-[var(--border)] pt-5 text-sm text-[var(--muted)]">当前任务仅可查看</div>
+      )}
     </section>
   );
 }
@@ -3107,6 +3709,7 @@ function ProjectDrawer({
   teams,
   draft,
   setDraft,
+  editable,
   onSubmit,
   onArchive,
   onRestore,
@@ -3116,6 +3719,7 @@ function ProjectDrawer({
   teams: BoardTeamOption[];
   draft: ProjectForm;
   setDraft: (draft: ProjectForm) => void;
+  editable: boolean;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
   onArchive: (summary: string) => void;
   onRestore: () => void;
@@ -3139,66 +3743,70 @@ function ProjectDrawer({
       </div>
 
       <form onSubmit={onSubmit} className="space-y-5">
-        <Field label="项目名称">
-          <input name="projectName" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
-        </Field>
-        <Field label="项目描述">
-          <textarea
-            name="projectDescription"
-            value={draft.description}
-            onChange={(event) => setDraft({ ...draft, description: event.target.value })}
-            rows={3}
-            className="resize-none leading-6"
-          />
-        </Field>
-        <Field label="团队">
-          {teams.length > 0 ? (
-            <SearchableSelect
-              value={draft.teamId}
-              options={teamOptions}
-              onChange={(value) => setDraft({ ...draft, teamId: value })}
-              placeholder="选择团队"
-              clearable
-            />
-          ) : (
-            <button type="button" onClick={() => window.location.assign("/admin")} className="h-10 w-full rounded-md border border-dashed border-[var(--border)] text-sm text-[var(--muted)]">
-              创建团队
-            </button>
-          )}
-        </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="负责人">
-            <input name="projectOwner" value={draft.owner} onChange={(event) => setDraft({ ...draft, owner: event.target.value })} />
+        <fieldset disabled={!editable} className="space-y-5">
+          <Field label="项目名称">
+            <input name="projectName" value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
           </Field>
-          <Field label="健康度">
-            <SearchableSelect
-              value={draft.health}
-              options={healthOptions}
-              onChange={(value) => setDraft({ ...draft, health: value as ProjectHealth })}
-              placeholder="选择健康度"
+          <Field label="项目描述">
+            <textarea
+              name="projectDescription"
+              value={draft.description}
+              onChange={(event) => setDraft({ ...draft, description: event.target.value })}
+              rows={3}
+              className="resize-none leading-6"
             />
           </Field>
-        </div>
-        <Field label="颜色">
-          <input name="projectColor" type="color" value={draft.color} onChange={(event) => setDraft({ ...draft, color: event.target.value })} className="h-10 w-full" />
-        </Field>
-        <Field label="归档总结">
-          <textarea
-            name="projectSummary"
-            value={draft.summary}
-            onChange={(event) => setDraft({ ...draft, summary: event.target.value })}
-            rows={4}
-            placeholder="项目完成后记录结果、经验和后续建议"
-            className="resize-none leading-6"
-          />
-        </Field>
-        <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
-          <CheckCircle2 size={16} />
-          保存项目
-        </button>
+          <Field label="团队">
+            {teams.length > 0 ? (
+              <SearchableSelect
+                value={draft.teamId}
+                options={teamOptions}
+                onChange={(value) => setDraft({ ...draft, teamId: value })}
+                placeholder="选择团队"
+                clearable
+              />
+            ) : (
+              <button type="button" onClick={() => window.location.assign("/admin")} className="h-10 w-full rounded-md border border-dashed border-[var(--border)] text-sm text-[var(--muted)]">
+                创建团队
+              </button>
+            )}
+          </Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="负责人">
+              <input name="projectOwner" value={draft.owner} onChange={(event) => setDraft({ ...draft, owner: event.target.value })} />
+            </Field>
+            <Field label="健康度">
+              <SearchableSelect
+                value={draft.health}
+                options={healthOptions}
+                onChange={(value) => setDraft({ ...draft, health: value as ProjectHealth })}
+                placeholder="选择健康度"
+              />
+            </Field>
+          </div>
+          <Field label="颜色">
+            <input name="projectColor" type="color" value={draft.color} onChange={(event) => setDraft({ ...draft, color: event.target.value })} className="h-10 w-full" />
+          </Field>
+          <Field label="归档总结">
+            <textarea
+              name="projectSummary"
+              value={draft.summary}
+              onChange={(event) => setDraft({ ...draft, summary: event.target.value })}
+              rows={4}
+              placeholder="项目完成后记录结果、经验和后续建议"
+              className="resize-none leading-6"
+            />
+          </Field>
+        </fieldset>
+        {editable ? (
+          <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
+            <CheckCircle2 size={16} />
+            保存项目
+          </button>
+        ) : null}
       </form>
 
-      {project ? (
+      {editable && project ? (
         <div className="grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-4">
           {project.status === "archived" ? (
             <button type="button" onClick={onRestore} className="flex items-center justify-center gap-2 rounded-md border border-[var(--border)] px-4 py-2.5 text-sm transition hover:bg-[var(--panel-soft)]">
@@ -3216,6 +3824,8 @@ function ProjectDrawer({
             删除
           </button>
         </div>
+      ) : project ? (
+        <div className="border-t border-[var(--border)] pt-4 text-sm text-[var(--muted)]">当前看板设置仅可查看</div>
       ) : null}
     </section>
   );
@@ -3405,9 +4015,22 @@ function ActivityPanel({
         {activity.slice(0, expanded ? 80 : 18).map((item) => {
           const project = item.projectId ? projects.find((candidate) => candidate.id === item.projectId) : null;
           const task = item.taskId ? tasks.find((candidate) => candidate.id === item.taskId) : null;
+          const changes = summarizeActivityChanges(item.meta);
           return (
             <div key={item.id} className="border-l-2 border-[var(--accent)] pl-3">
               <p className="text-sm leading-5 text-[var(--text)]">{item.message}</p>
+              {changes.length > 0 ? (
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {changes.map((change) => (
+                    <span key={`${item.id}-${change.label}`} className="inline-flex items-center gap-1 rounded-md border border-[var(--border)] bg-[var(--panel-soft)] px-2 py-1 text-[11px] text-[var(--muted)]">
+                      <strong className="font-semibold text-[var(--text)]">{change.label}</strong>
+                      <span className="text-[var(--muted)]">{change.before}</span>
+                      <span className="text-[var(--accent)]">→</span>
+                      <span className="text-[var(--text)]">{change.after}</span>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
                 <span>{formatActivityTime(item.createdAt)}</span>
                 {project ? <span>{project.name}</span> : null}
@@ -3526,10 +4149,11 @@ function SearchableSelect({
             {clearable && value ? (
               <button
                 type="button"
+                title="重置选择"
                 onClick={() => pick("")}
-                className="rounded border border-[var(--border)] px-2 text-xs text-[var(--muted)] transition hover:bg-[var(--panel-soft)]"
+                className="grid h-8 w-8 shrink-0 place-items-center rounded border border-[var(--border)] text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
               >
-                清除
+                <X size={14} />
               </button>
             ) : null}
           </div>
@@ -3562,130 +4186,43 @@ function TagMultiSelect({
   allTags,
   selected,
   onChange,
-  search,
-  onSearchChange,
 }: {
   allTags: string[];
   selected: string[];
   onChange: (tags: string[]) => void;
-  search: string;
-  onSearchChange: (value: string) => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    if (open) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [open]);
-
-  const filtered = search.trim()
-    ? allTags.filter((tag) => tag.toLowerCase().includes(search.trim().toLowerCase()))
-    : allTags;
-
-  const toggle = (tag: string) => {
-    if (selected.includes(tag)) {
-      onChange(selected.filter((t) => t !== tag));
-    } else {
-      onChange([...selected, tag]);
-    }
-  };
-
-  const clearAll = () => {
-    onChange([]);
-    onSearchChange("");
-  };
-
   return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-1.5 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-left transition"
-      >
-        {selected.length === 0 ? (
-          <span className="text-[var(--muted)]">全部标签</span>
-        ) : (
-          <span className="flex flex-wrap gap-1">
-            {selected.map((tag) => (
-              <span key={tag} className="inline-flex items-center gap-0.5 rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-xs text-[var(--accent)]">
-                {tag}
-              </span>
-            ))}
-          </span>
-        )}
-      </button>
-      {selected.length > 0 ? (
-        <button
-          type="button"
-          onClick={(e) => { e.stopPropagation(); clearAll(); }}
-          className="absolute right-2 top-1/2 -translate-y-1/2 text-[var(--muted)] hover:text-[var(--text)]"
-        >
-          <X size={14} />
-        </button>
-      ) : null}
-      {open ? (
-        <div className="absolute left-0 top-full z-30 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--panel)] shadow-lg">
-          <div className="border-b border-[var(--border)] p-2">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-2 text-[var(--muted)]" size={14} />
-              <input
-                value={search}
-                onChange={(e) => onSearchChange(e.target.value)}
-                placeholder="搜索标签..."
-                className="w-full rounded border border-[var(--border)] bg-[var(--input)] py-1.5 pl-8 pr-3 text-sm outline-none"
-                autoFocus
-              />
-              {search ? (
-                <button
-                  type="button"
-                  title="清除标签搜索"
-                  onClick={() => onSearchChange("")}
-                  className="absolute right-1.5 top-1.5 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
-                >
-                  <X size={13} />
-                </button>
-              ) : null}
-            </div>
-          </div>
-          <div className="max-h-[180px] overflow-y-auto p-1">
-            {filtered.length === 0 ? (
-              <p className="px-3 py-2 text-sm text-[var(--muted)]">无匹配标签</p>
-            ) : (
-              filtered.map((tag) => (
-                <button
-                  key={tag}
-                  type="button"
-                  onClick={() => toggle(tag)}
-                  className={`flex w-full items-center gap-2 rounded px-3 py-1.5 text-left text-sm transition ${
-                    selected.includes(tag)
-                      ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                      : "hover:bg-[var(--panel-soft)]"
-                  }`}
-                >
-                  <span
-                    className={`grid h-4 w-4 shrink-0 place-items-center rounded border transition ${
-                      selected.includes(tag)
-                        ? "border-[var(--accent)] bg-[var(--accent)] text-white"
-                        : "border-[var(--border)]"
-                    }`}
-                  >
-                    {selected.includes(tag) ? <Check size={11} /> : null}
-                  </span>
-                  {tag}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      ) : null}
-    </div>
+    <SearchMultiSelect
+      value={selected}
+      options={allTags.map((tag) => ({ value: tag, label: tag }))}
+      onChange={onChange}
+      placeholder="全部标签"
+      summaryLabel="标签"
+      searchPlaceholder="搜索标签"
+      panelClassName="left-0 right-auto w-full min-w-[280px]"
+    />
+  );
+}
+
+function ListStatusMultiSelect({
+  value,
+  options,
+  onChange,
+}: {
+  value: BoardStatus[];
+  options: MultiSelectOption[];
+  onChange: (value: BoardStatus[]) => void;
+}) {
+  return (
+    <SearchMultiSelect
+      value={value}
+      options={options}
+      onChange={(nextValue) => onChange(nextValue as BoardStatus[])}
+      placeholder="全部阶段"
+      summaryLabel="阶段"
+      searchPlaceholder="搜索阶段"
+      className="min-w-[240px]"
+      compact
+    />
   );
 }

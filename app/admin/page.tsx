@@ -1,10 +1,14 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
 import AdminApp from "@/components/admin-app";
 import LoginPage from "@/components/login-page";
 import { getOptionalSessionUser } from "@/lib/server-session";
+import { isThemeId } from "@/lib/ui-options";
 
 export default async function AdminPage() {
   const user = await getOptionalSessionUser();
+  const themeCookie = (await cookies()).get("kanban_theme")?.value;
+  const initialThemeId = isThemeId(themeCookie) ? themeCookie : "notion";
   if (!user) {
     return <LoginPage />;
   }
@@ -22,5 +26,5 @@ export default async function AdminPage() {
     );
   }
 
-  return <AdminApp currentUser={user} />;
+  return <AdminApp currentUser={user} initialThemeId={initialThemeId} />;
 }

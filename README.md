@@ -12,15 +12,17 @@
 
 ## 功能
 
-- 项目、优先级和关键词筛选
+- 登录鉴权、用户角色、团队、看板授权和个人资料管理
+- 项目、优先级、标签、阶段、临期、超期、阻塞和关键词筛选
 - 项目增删改查、完成归档、归档总结和恢复
-- 需求池、开发中、测试中、已完成四列看板
-- 任务拖拽移动、列内排序、拖入回收站删除
-- dnd-kit 多列拖拽，拖动时卡片实时浮动让位
+- 需求池、设计中、开发中、测试中、已完成五列看板
+- 任务拖拽移动、列内排序、拖入回收站删除；跨列移动在释放时提交，减少拖拽过程中的 DOM 抖动
 - 任务详情抽屉，包括状态、负责人、截止日、描述、标签、阻塞项和阻塞说明
+- 任务工作量人日、负责人/测试员与团队成员联动选择
 - 多任务拆解 checklist，完成后联动任务进度
 - 临期、逾期和超期完成任务醒目标注
-- Linear、GitHub、Notion、Atlassian 四套日常主题
+- Linear、GitHub、Notion、Atlassian、Neon Grid、Deep Space 等多套主题
+- 团队工作饱和度 dashboard，支持多团队、多项目筛选、浅色/暗色方案和公开访问开关
 - 系统参数表，可配置临期天数和活动记录保留天数
 - 独立全局活动记录面板，记录项目、任务、任务拆解和跨阶段移动，并按保留天数自动清理
 - SQLite/PostgreSQL 持久化项目、任务、任务拆解、系统参数和活动记录
@@ -99,6 +101,8 @@ cp .env.development.example .env.development.local
 
 - `KANBAN_AUTH_ENABLED=true`：开启鉴权
 - `KANBAN_AUTH_ENABLED=false`：关闭鉴权
+- `KANBAN_DEFAULT_BOARD_ID=default-board`：新部署初始化默认看板时使用的看板 ID
+- 关闭鉴权时，新部署会初始化系统参数 `board_title` 指定名称的默认看板；升级部署会展示数据库里最早创建的看板，页面标题使用 `board_title`
 - `KANBAN_SQLITE_PATH=.data/kanban.sqlite`：指定本地 SQLite 路径
 - `KANBAN_DB_DRIVER=sqlite`：显式指定本地开发驱动
 - `KANBAN_SQLITE_BACKUP_DIR=.data/backups`：本地安全升级前的 SQLite 备份目录
@@ -624,6 +628,7 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 | `KANBAN_AUTO_UPGRADE` | `true` | 是否在容器启动时自动执行 SQLite 安全升级 |
 | `KANBAN_MAINTENANCE_TOKEN` | - | 维护页手工升级口令，`KANBAN_AUTO_UPGRADE=false` 时建议配置 |
 | `KANBAN_IMAGE_TAG` | `kanban:<version>` | 维护页和 footer 展示的运行镜像标识，支持 `{version}` 占位符 |
+| `KANBAN_DEFAULT_BOARD_ID` | `default-board` | 新部署初始化默认看板时使用的看板 ID |
 | `POSTGRES_URL` | - | PostgreSQL 连接字符串，仅 PostgreSQL 模式使用 |
 
 ## 活动记录

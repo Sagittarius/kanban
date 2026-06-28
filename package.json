@@ -1,6 +1,6 @@
 {
   "name": "project-kanban-board",
-  "version": "1.2.0",
+  "version": "1.3.1",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -20,6 +20,7 @@
     "db:upgrade:check": "node scripts/upgrade-local-sqlite.mjs --check",
     "db:upgrade:safe": "node scripts/upgrade-local-sqlite.mjs",
     "db:restore:sqlite": "node scripts/restore-local-sqlite-backup.mjs",
+    "seed:feature-demo": "node scripts/seed-feature-demo.mjs",
     "local:dev": "pnpm run db:migrate:local && vinext dev --hostname 0.0.0.0",
     "local:start": "pnpm run db:migrate:local && vinext start --hostname 0.0.0.0"
   },
@@ -32,7 +33,8 @@
     "next": "16.2.6",
     "pg": "^8.16.3",
     "react": "19.2.6",
-    "react-dom": "19.2.6"
+    "react-dom": "19.2.6",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",

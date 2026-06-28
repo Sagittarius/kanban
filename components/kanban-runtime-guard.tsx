@@ -32,6 +32,7 @@ type KanbanRuntimeGuardProps = {
   initialBoard: BoardData;
   todayKey: string;
   appVersion: string;
+  initialThemeId?: string;
 };
 
 const reportedErrors = new Map<string, number>();
@@ -185,6 +186,7 @@ export default function KanbanRuntimeGuard({
   initialBoard,
   todayKey,
   appVersion,
+  initialThemeId,
 }: KanbanRuntimeGuardProps) {
   return (
     <RuntimeErrorBoundary>
@@ -193,6 +195,7 @@ export default function KanbanRuntimeGuard({
         initialBoard={initialBoard}
         todayKey={todayKey}
         appVersion={appVersion}
+        initialThemeId={initialThemeId}
       />
     </RuntimeErrorBoundary>
   );

@@ -129,6 +129,58 @@ body {
   --danger-soft: #fff0ee;
 }
 
+.kanban-theme[data-theme="neon"] {
+  --app-bg: #08111f;
+  --board-bg: #0d1730;
+  --panel: rgba(11, 19, 37, 0.94);
+  --panel-soft: rgba(16, 27, 52, 0.88);
+  --column-bg: rgba(10, 18, 37, 0.9);
+  --card: rgba(13, 22, 42, 0.96);
+  --card-border: rgba(74, 222, 255, 0.18);
+  --card-border-strong: rgba(99, 102, 241, 0.28);
+  --card-section: rgba(18, 30, 56, 0.88);
+  --card-shadow: 0 1px 2px rgba(4, 8, 20, 0.24), 0 12px 30px rgba(0, 0, 0, 0.28);
+  --card-shadow-hover: 0 2px 6px rgba(4, 8, 20, 0.3), 0 20px 44px rgba(0, 0, 0, 0.36);
+  --input: rgba(10, 18, 36, 0.94);
+  --hover: rgba(20, 34, 63, 0.94);
+  --lane-bg: rgba(14, 25, 49, 0.92);
+  --text: #e7f6ff;
+  --muted: #8aa9c7;
+  --border: rgba(109, 136, 177, 0.22);
+  --accent: #4adeff;
+  --accent-hover: #2fc9ee;
+  --accent-soft: rgba(74, 222, 255, 0.16);
+  --tag-bg: rgba(31, 55, 96, 0.62);
+  --danger: #ff4f7b;
+  --danger-soft: rgba(255, 79, 123, 0.24);
+}
+
+.kanban-theme[data-theme="deepspace"] {
+  --app-bg: #12121b;
+  --board-bg: #1a1826;
+  --panel: #171722;
+  --panel-soft: #201f2f;
+  --column-bg: #1b1b28;
+  --card: #1d1f2b;
+  --card-border: #2d3348;
+  --card-border-strong: #404a69;
+  --card-section: #242636;
+  --card-shadow: 0 1px 2px rgba(8, 8, 16, 0.18), 0 12px 30px rgba(8, 8, 16, 0.24);
+  --card-shadow-hover: 0 2px 6px rgba(8, 8, 16, 0.24), 0 20px 44px rgba(8, 8, 16, 0.32);
+  --input: #161827;
+  --hover: #26283a;
+  --lane-bg: #202437;
+  --text: #f3f2ff;
+  --muted: #a7a6bf;
+  --border: #31374d;
+  --accent: #8b5cf6;
+  --accent-hover: #7c3aed;
+  --accent-soft: rgba(139, 92, 246, 0.18);
+  --tag-bg: rgba(77, 56, 138, 0.34);
+  --danger: #ff5d8f;
+  --danger-soft: rgba(255, 93, 143, 0.24);
+}
+
 .kanban-theme[data-theme="slack"] {
   --app-bg: #f7f6f8;
   --board-bg: #ece8ef;

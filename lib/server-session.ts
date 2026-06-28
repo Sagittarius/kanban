@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import { ACTIVE_BOARD_COOKIE, SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
-import { DEFAULT_BOARD_ID, getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 
 export async function getOptionalSessionUser(): Promise<CurrentUser | null> {
   const cookieStore = await cookies();
@@ -47,7 +47,7 @@ export async function requireAdminUser(): Promise<CurrentUser> {
 export async function resolveActiveBoard(user: CurrentUser): Promise<BoardSummary> {
   const repo = await getKanbanRepository();
   if (!isAuthFeatureEnabled()) {
-    return repo.resolveBoardForUser(user, DEFAULT_BOARD_ID);
+    return repo.resolvePublicBoard(user);
   }
   const cookieStore = await cookies();
   const requested = cookieStore.get(ACTIVE_BOARD_COOKIE)?.value ?? null;

@@ -30,7 +30,10 @@ export default async function DashboardPage() {
             role: "super_admin",
             timezone: DEFAULT_TIMEZONE,
             displayName: "公共视图",
+            phone: "",
             avatarKey: "",
+            jobTitle: "",
+            techStacks: [],
           }}
           publicView
         />
@@ -59,7 +62,10 @@ export default async function DashboardPage() {
           role: "super_admin",
           timezone: DEFAULT_TIMEZONE,
           displayName: "公共视图",
+          phone: "",
           avatarKey: "",
+          jobTitle: "",
+          techStacks: [],
         }
       }
       publicView={!user}

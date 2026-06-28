@@ -6,9 +6,11 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const repo = await getKanbanRepository();
+    const teamIds = url.searchParams.getAll("teamId").filter(Boolean);
+    const projectIds = url.searchParams.getAll("projectId").filter(Boolean);
     const input = {
-      teamId: url.searchParams.get("teamId") ?? "",
-      projectId: url.searchParams.get("projectId") ?? "",
+      teamIds,
+      projectIds,
     };
     const publicEnabled = await repo.workloadDashboardPublicEnabled();
     const user = await requireSessionUser().catch((error: unknown) => {

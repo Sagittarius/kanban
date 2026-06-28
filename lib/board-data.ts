@@ -1,3 +1,5 @@
+import type { CurrentUser } from "@/lib/auth-models";
+
 export type BoardStatus = "backlog" | "design" | "dev" | "test" | "done";
 export type Priority = "high" | "medium" | "low";
 export type ProjectHealth = "good" | "normal" | "risk";
@@ -46,6 +48,7 @@ export type BoardTask = {
   owner: string;
   testerUserId: string;
   tester: string;
+  workloadDays?: number | null;
   startDate: string;
   testDueDate: string;
   designDueDate: string;
@@ -90,6 +93,7 @@ export type SystemParameter = {
 
 export type SystemSettings = {
   dueSoonDays: number;
+  testerDefaultWorkloadDays: number;
   activityRetentionDays: number;
   parameters: SystemParameter[];
 };
@@ -98,8 +102,11 @@ export type BoardUserOption = {
   id: string;
   username: string;
   displayName: string;
-  role: "super_admin" | "project_manager" | "team_member";
+  role: "super_admin" | "project_manager" | "development_manager" | "team_member";
   avatarKey: string;
+  jobTitle: string;
+  techStacks: string[];
+  phone: string;
 };
 
 export type BoardTeamOption = {
@@ -117,6 +124,7 @@ export type BoardData = {
   columns: BoardColumn[];
   projects: Project[];
   tasks: BoardTask[];
+  currentUser?: CurrentUser;
   teams?: BoardTeamOption[];
   users?: BoardUserOption[];
   activity: ActivityLog[];
@@ -165,6 +173,18 @@ export const defaultSystemParameters: SystemParameter[] = [
     updatedAt: seedTime,
   },
   {
+    key: "tester_default_workload_days",
+    value: "1",
+    label: "测试默认工作量",
+    valueType: "number",
+    group: "任务",
+    unit: "人日",
+    minValue: 0.5,
+    maxValue: 10,
+    orderIndex: 18,
+    updatedAt: seedTime,
+  },
+  {
     key: "activity_retention_days",
     value: "180",
     label: "活动保留天数",
@@ -178,7 +198,7 @@ export const defaultSystemParameters: SystemParameter[] = [
   },
   {
     key: "board_title",
-    value: "项目看板",
+    value: "默认看板",
     label: "看板名称",
     valueType: "text",
     group: "看板",
@@ -264,6 +284,7 @@ export const defaultSystemParameters: SystemParameter[] = [
 
 export const defaultSystemSettings: SystemSettings = {
   dueSoonDays: 2,
+  testerDefaultWorkloadDays: 1,
   activityRetentionDays: 180,
   parameters: defaultSystemParameters.map((parameter) => ({ ...parameter })),
 };
@@ -667,11 +688,12 @@ export function createSeedBoard(): BoardData {
     projects: [],
     tasks: [],
     activity: [],
-    settings: {
-      dueSoonDays: defaultSystemSettings.dueSoonDays,
-      activityRetentionDays: defaultSystemSettings.activityRetentionDays,
-      parameters: defaultSystemSettings.parameters.map((parameter) => ({ ...parameter })),
-    },
+      settings: {
+        dueSoonDays: defaultSystemSettings.dueSoonDays,
+        testerDefaultWorkloadDays: defaultSystemSettings.testerDefaultWorkloadDays,
+        activityRetentionDays: defaultSystemSettings.activityRetentionDays,
+        parameters: defaultSystemSettings.parameters.map((parameter) => ({ ...parameter })),
+      },
     storageMode: "local",
   };
 }

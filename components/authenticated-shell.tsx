@@ -2,18 +2,9 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
-import { avatarOptions, timezoneOptions } from "@/lib/ui-options";
-import type { BoardSummary, CurrentUser, TeamSummary } from "@/lib/auth-models";
-
-type BoardDraft = {
-  name: string;
-  description: string;
-  teamIds: string[];
-};
-
-type TeamsResponse = {
-  teams: TeamSummary[];
-};
+import SearchMultiSelect from "@/components/search-multi-select";
+import { avatarOptions, jobTitleOptions, techStackOptions, timezoneOptions } from "@/lib/ui-options";
+import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
 
 type ShellSelectOption = {
   value: string;
@@ -33,17 +24,13 @@ export default function AuthenticatedShell({
   children: ReactNode;
 }) {
   const [currentUser, setCurrentUser] = useState(user);
-  const [boardList, setBoardList] = useState(boards);
+  const [boardList] = useState(boards);
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [createBoardOpen, setCreateBoardOpen] = useState(false);
-  const [editBoardOpen, setEditBoardOpen] = useState(false);
   const [boardPickerOpen, setBoardPickerOpen] = useState(false);
   const [boardQuery, setBoardQuery] = useState("");
-  const [teamQuery, setTeamQuery] = useState("");
-  const [teamOptions, setTeamOptions] = useState<TeamSummary[]>([]);
   const [savingProfile, setSavingProfile] = useState(false);
-  const [savingBoard, setSavingBoard] = useState(false);
+  const [flash, setFlash] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [passwordDraft, setPasswordDraft] = useState({
     currentPassword: "",
     newPassword: "",
@@ -52,22 +39,14 @@ export default function AuthenticatedShell({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const activeBoard = boardList.find((board) => board.id === activeBoardId);
   const readOnly = activeBoard?.role === "viewer";
-  const canManageBoard = activeBoard?.role !== "viewer";
   const canUseAdmin = currentUser.role === "super_admin" || currentUser.role === "project_manager";
-  const canCreateBoard = canUseAdmin;
   const [profileDraft, setProfileDraft] = useState({
+    displayName: user.displayName || "",
+    phone: user.phone || "",
     timezone: user.timezone || "Asia/Shanghai",
     avatarKey: user.avatarKey || avatarOptions[0].key,
-  });
-  const [boardDraft, setBoardDraft] = useState<BoardDraft>({
-    name: activeBoard?.name ?? "",
-    description: activeBoard?.description ?? "",
-    teamIds: activeBoard?.teamIds ?? [],
-  });
-  const [newBoardDraft, setNewBoardDraft] = useState<BoardDraft>({
-    name: "",
-    description: "",
-    teamIds: [],
+    jobTitle: user.jobTitle || "",
+    techStacks: user.techStacks || [],
   });
 
   const filteredBoards = boardList.filter((board) => {
@@ -80,6 +59,13 @@ export default function AuthenticatedShell({
     );
   });
   const timezoneSelectOptions: ShellSelectOption[] = timezoneOptions.map(([value, label]) => ({ value, label }));
+
+  function showFlash(message: string, type: "success" | "error" = "success") {
+    setFlash({ message, type });
+    window.setTimeout(() => {
+      setFlash((current) => (current?.message === message ? null : current));
+    }, 2800);
+  }
 
   useEffect(() => {
     if (!menuOpen) return;
@@ -95,44 +81,16 @@ export default function AuthenticatedShell({
     return () => window.removeEventListener("mousedown", handlePointerDown);
   }, [menuOpen]);
 
-  useEffect(() => {
-    if (!canUseAdmin) return;
-    fetch("/api/admin/teams")
-      .then((response) => response.json() as Promise<TeamsResponse>)
-      .then((payload) => setTeamOptions(payload.teams ?? []))
-      .catch(() => setTeamOptions([]));
-  }, [canUseAdmin]);
-
   async function switchBoard(boardId: string) {
     await fetch(`/api/boards/${boardId}/select`, { method: "POST" });
     setBoardPickerOpen(false);
     window.location.assign("/");
   }
 
-  async function createBoard() {
-    if (!newBoardDraft.name.trim()) return;
-
-    setSavingBoard(true);
-    const response = await fetch("/api/boards", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newBoardDraft),
-    });
-    const payload = (await response.json().catch(() => ({}))) as BoardSummary & { error?: string };
-    setSavingBoard(false);
-    if (!response.ok) {
-      window.alert(payload.error ?? "创建看板失败");
-      return;
-    }
-    setCreateBoardOpen(false);
-    setNewBoardDraft({ name: "", description: "", teamIds: [] });
-    await switchBoard(payload.id);
-  }
-
   async function saveProfile() {
     if (passwordDraft.newPassword || passwordDraft.currentPassword || passwordDraft.confirmPassword) {
       if (passwordDraft.newPassword !== passwordDraft.confirmPassword) {
-        window.alert("两次输入的新密码不一致");
+        showFlash("两次输入的新密码不一致", "error");
         return;
       }
     }
@@ -144,6 +102,9 @@ export default function AuthenticatedShell({
       body: JSON.stringify({
         timezone: profileDraft.timezone,
         avatarKey: profileDraft.avatarKey,
+        phone: profileDraft.phone,
+        jobTitle: profileDraft.jobTitle,
+        techStacks: profileDraft.techStacks,
         currentPassword: passwordDraft.currentPassword,
         newPassword: passwordDraft.newPassword,
       }),
@@ -151,33 +112,13 @@ export default function AuthenticatedShell({
     const payload = (await response.json().catch(() => ({}))) as { user?: CurrentUser; error?: string };
     setSavingProfile(false);
     if (!response.ok || !payload.user) {
-      window.alert(payload.error ?? "保存个人设置失败");
+      showFlash(payload.error ?? "保存个人设置失败", "error");
       return;
     }
     setCurrentUser(payload.user);
     setPasswordDraft({ currentPassword: "", newPassword: "", confirmPassword: "" });
     setProfileOpen(false);
-    window.location.reload();
-  }
-
-  async function saveBoard() {
-    if (!activeBoard || !boardDraft.name.trim()) return;
-
-    setSavingBoard(true);
-    const response = await fetch(`/api/boards/${activeBoard.id}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(boardDraft),
-    });
-    const payload = (await response.json().catch(() => ({}))) as BoardSummary & { error?: string };
-    setSavingBoard(false);
-    if (!response.ok) {
-      window.alert(payload.error ?? "保存看板信息失败");
-      return;
-    }
-    setBoardList((current) => current.map((board) => (board.id === payload.id ? payload : board)));
-    setEditBoardOpen(false);
-    window.location.reload();
+    showFlash("个人设置已保存");
   }
 
   async function logout() {
@@ -230,9 +171,6 @@ export default function AuthenticatedShell({
                         <div className="text-[11px] font-medium text-slate-500">当前看板</div>
                         <div className="mt-0.5 truncate text-sm font-semibold text-slate-900">{activeBoard?.name || "未选择看板"}</div>
                       </div>
-                      <span className="rounded-full bg-slate-100 px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                        {activeBoard ? (activeBoard.role === "owner" ? "拥有者" : activeBoard.role === "admin" ? "管理" : "只读") : "-"}
-                      </span>
                     </button>
 
                     {boardPickerOpen ? (
@@ -260,9 +198,6 @@ export default function AuthenticatedShell({
                                   <p className="truncate text-sm font-semibold text-slate-900">{board.name}</p>
                                   <p className="truncate text-xs text-slate-500">{board.description || "无说明"}</p>
                                 </div>
-                                <span className="rounded-full bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-600">
-                                  {board.role === "owner" ? "拥有者" : board.role === "admin" ? "管理" : "只读"}
-                                </span>
                               </div>
                             </button>
                           ))}
@@ -278,32 +213,12 @@ export default function AuthenticatedShell({
                 </div>
 
                 <div className="space-y-2">
+                  {canUseAdmin ? (
+                    <MenuButton onClick={() => window.location.assign("/dashboard")}>项目负载</MenuButton>
+                  ) : null}
                   <MenuButton onClick={() => { setProfileOpen(true); setMenuOpen(false); }}>
                     个人设置
                   </MenuButton>
-                  {canCreateBoard ? (
-                    <MenuButton onClick={() => { setCreateBoardOpen(true); setMenuOpen(false); }}>
-                      创建看板
-                    </MenuButton>
-                  ) : null}
-                  {canManageBoard ? (
-                    <MenuButton
-                      onClick={() => {
-                        setBoardDraft({
-                          name: activeBoard?.name ?? "",
-                          description: activeBoard?.description ?? "",
-                          teamIds: activeBoard?.teamIds ?? [],
-                        });
-                        setEditBoardOpen(true);
-                        setMenuOpen(false);
-                      }}
-                    >
-                      看板设置
-                    </MenuButton>
-                  ) : null}
-                  {canUseAdmin ? (
-                    <MenuButton onClick={() => window.location.assign("/dashboard")}>工作饱和度</MenuButton>
-                  ) : null}
                   {canUseAdmin ? (
                     <MenuButton onClick={() => window.location.assign("/admin")}>后台管理</MenuButton>
                   ) : null}
@@ -319,6 +234,13 @@ export default function AuthenticatedShell({
       {readOnly ? (
         <style>{'main.kanban-theme aside form,button[title="新建项目"],button[title="编辑项目"],button[title="归档项目"]{display:none!important}'}</style>
       ) : null}
+      {flash ? (
+        <div className={`fixed left-1/2 top-5 z-[130] -translate-x-1/2 rounded-2xl border px-4 py-3 text-sm shadow-xl ${
+          flash.type === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"
+        }`}>
+          {flash.message}
+        </div>
+      ) : null}
       {children}
 
       {profileOpen ? (
@@ -330,7 +252,29 @@ export default function AuthenticatedShell({
             </label>
             <label className="block space-y-2 text-sm">
               <span className="font-medium text-slate-700">姓名</span>
-              <input value={currentUser.displayName || "-"} disabled className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-500" />
+              <input
+                value={profileDraft.displayName}
+                disabled
+                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-500"
+              />
+            </label>
+            <label className="block space-y-2 text-sm">
+              <span className="font-medium text-slate-700">手机</span>
+              <input
+                value={profileDraft.phone}
+                onChange={(event) => setProfileDraft((current) => ({ ...current, phone: event.target.value }))}
+                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
+                placeholder="输入手机号"
+              />
+            </label>
+            <label className="block space-y-2 text-sm">
+              <span className="font-medium text-slate-700">职位</span>
+              <ShellSearchSelect
+                value={profileDraft.jobTitle}
+                options={jobTitleOptions.map((option) => ({ value: option.value, label: option.label }))}
+                onChange={(value) => setProfileDraft((current) => ({ ...current, jobTitle: value }))}
+                placeholder="选择职位"
+              />
             </label>
             <label className="block space-y-2 text-sm">
               <span className="font-medium text-slate-700">时区</span>
@@ -341,6 +285,17 @@ export default function AuthenticatedShell({
                 placeholder="选择时区"
               />
             </label>
+            <div className="space-y-2 text-sm">
+              <span className="font-medium text-slate-700">技术栈</span>
+              <SearchMultiSelect
+                value={profileDraft.techStacks}
+                options={techStackOptions.map((item) => ({ value: item, label: item }))}
+                onChange={(techStacks) => setProfileDraft((current) => ({ ...current, techStacks }))}
+                placeholder="选择或搜索技术栈"
+                summaryLabel="技术栈"
+                searchPlaceholder="搜索技术栈"
+              />
+            </div>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="block space-y-2 text-sm">
                 <span className="font-medium text-slate-700">当前密码</span>
@@ -401,103 +356,6 @@ export default function AuthenticatedShell({
         </ShellModal>
       ) : null}
 
-      {createBoardOpen ? (
-        <ShellModal title="创建看板" onClose={() => setCreateBoardOpen(false)}>
-          <div className="space-y-4">
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">名称</span>
-              <input
-                value={newBoardDraft.name}
-                onChange={(event) => setNewBoardDraft((current) => ({ ...current, name: event.target.value }))}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
-                placeholder="输入看板名称"
-              />
-            </label>
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">说明</span>
-              <textarea
-                value={newBoardDraft.description}
-                onChange={(event) => setNewBoardDraft((current) => ({ ...current, description: event.target.value }))}
-                className="min-h-[96px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-[#0f766e]"
-                placeholder="输入看板说明"
-              />
-            </label>
-            <div className="space-y-2 text-sm">
-              <span className="font-medium text-slate-700">团队</span>
-              {teamOptions.length > 0 ? (
-                <ShellTeamMultiSelect
-                  teams={teamOptions}
-                  value={newBoardDraft.teamIds}
-                  query={teamQuery}
-                  onQueryChange={setTeamQuery}
-                  onChange={(teamIds) => setNewBoardDraft((current) => ({ ...current, teamIds }))}
-                />
-              ) : (
-                <button type="button" onClick={() => window.location.assign("/admin")} className="h-11 w-full rounded-xl border border-dashed border-slate-200 text-sm text-slate-500">
-                  创建团队
-                </button>
-              )}
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={() => setCreateBoardOpen(false)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
-                取消
-              </button>
-              <button type="button" onClick={() => void createBoard()} disabled={savingBoard} className="h-10 rounded-xl bg-[#0f766e] px-4 text-sm font-semibold text-white disabled:opacity-60">
-                {savingBoard ? "创建中..." : "创建"}
-              </button>
-            </div>
-          </div>
-        </ShellModal>
-      ) : null}
-
-      {editBoardOpen ? (
-        <ShellModal title="看板设置" onClose={() => setEditBoardOpen(false)}>
-          <div className="space-y-4">
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">名称</span>
-              <input
-                value={boardDraft.name}
-                onChange={(event) => setBoardDraft((current) => ({ ...current, name: event.target.value }))}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
-                placeholder="输入看板名称"
-              />
-            </label>
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">说明</span>
-              <textarea
-                value={boardDraft.description}
-                onChange={(event) => setBoardDraft((current) => ({ ...current, description: event.target.value }))}
-                className="min-h-[96px] w-full rounded-xl border border-slate-200 bg-white px-3 py-3 outline-none focus:border-[#0f766e]"
-                placeholder="输入看板说明"
-              />
-            </label>
-            <div className="space-y-2 text-sm">
-              <span className="font-medium text-slate-700">团队</span>
-              {teamOptions.length > 0 ? (
-                <ShellTeamMultiSelect
-                  teams={teamOptions}
-                  value={boardDraft.teamIds}
-                  query={teamQuery}
-                  onQueryChange={setTeamQuery}
-                  onChange={(teamIds) => setBoardDraft((current) => ({ ...current, teamIds }))}
-                />
-              ) : (
-                <button type="button" onClick={() => window.location.assign("/admin")} className="h-11 w-full rounded-xl border border-dashed border-slate-200 text-sm text-slate-500">
-                  创建团队
-                </button>
-              )}
-            </div>
-            <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={() => setEditBoardOpen(false)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
-                取消
-              </button>
-              <button type="button" onClick={() => void saveBoard()} disabled={savingBoard} className="h-10 rounded-xl bg-[#0f766e] px-4 text-sm font-semibold text-white disabled:opacity-60">
-                {savingBoard ? "保存中..." : "保存"}
-              </button>
-            </div>
-          </div>
-        </ShellModal>
-      ) : null}
     </>
   );
 }
@@ -589,78 +447,6 @@ function ShellSearchSelect({
           </div>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function ShellTeamMultiSelect({
-  teams,
-  value,
-  query,
-  onQueryChange,
-  onChange,
-}: {
-  teams: TeamSummary[];
-  value: string[];
-  query: string;
-  onQueryChange: (value: string) => void;
-  onChange: (value: string[]) => void;
-}) {
-  const selected = teams.filter((team) => value.includes(team.id));
-  const filtered = teams.filter((team) => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return true;
-    return [team.name, team.description, team.ownerUsername].some((text) => text.toLowerCase().includes(normalized));
-  });
-
-  function toggle(teamId: string) {
-    onChange(value.includes(teamId) ? value.filter((item) => item !== teamId) : [...value, teamId]);
-  }
-
-  return (
-    <div className="rounded-xl border border-slate-200 bg-slate-50 p-2">
-      <div className="flex flex-wrap gap-2">
-        {selected.map((team) => (
-          <button
-            key={team.id}
-            type="button"
-            onClick={() => toggle(team.id)}
-            className="rounded-lg bg-[#e7f5f2] px-2.5 py-1 text-xs font-semibold text-[#0f766e]"
-          >
-            {team.name} ×
-          </button>
-        ))}
-        {selected.length > 0 ? (
-          <button type="button" onClick={() => onChange([])} className="rounded-lg px-2.5 py-1 text-xs text-slate-500 hover:bg-white">
-            清空
-          </button>
-        ) : null}
-      </div>
-      <input
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value)}
-        placeholder="搜索团队"
-        className="mt-2 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm outline-none focus:border-[#0f766e]"
-      />
-      <div className="mt-2 max-h-[200px] overflow-y-auto">
-        {filtered.map((team) => {
-          const active = value.includes(team.id);
-          return (
-            <button
-              key={team.id}
-              type="button"
-              onClick={() => toggle(team.id)}
-              className={`block w-full rounded-lg px-3 py-2 text-left text-sm transition ${
-                active ? "bg-[#e7f5f2] text-[#0f766e]" : "hover:bg-white"
-              }`}
-            >
-              <span className="font-medium">{team.name}</span>
-              <span className="ml-2 text-xs text-slate-500">{team.memberCount} 人</span>
-            </button>
-          );
-        })}
-        {filtered.length === 0 ? <div className="px-3 py-4 text-center text-sm text-slate-500">无匹配团队</div> : null}
-      </div>
     </div>
   );
 }

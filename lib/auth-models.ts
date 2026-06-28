@@ -1,6 +1,16 @@
-export type UserRole = "super_admin" | "project_manager" | "team_member";
+export type UserRole = "super_admin" | "project_manager" | "development_manager" | "team_member";
 
 export type BoardRole = "owner" | "viewer" | "admin";
+
+export type JobTitle =
+  | "team_lead"
+  | "architect"
+  | "product_manager"
+  | "project_manager"
+  | "development_manager"
+  | "developer"
+  | "tester"
+  | "custom";
 
 export type CurrentUser = {
   id: string;
@@ -8,7 +18,10 @@ export type CurrentUser = {
   role: UserRole;
   timezone: string;
   displayName: string;
+  phone: string;
   avatarKey: string;
+  jobTitle: string;
+  techStacks: string[];
 };
 
 export type ManagedUser = CurrentUser & {
@@ -41,6 +54,9 @@ export type TeamMemberSummary = {
   displayName: string;
   role: UserRole;
   avatarKey: string;
+  jobTitle: string;
+  techStacks: string[];
+  phone: string;
 };
 
 export type TeamSummary = {
