@@ -434,18 +434,6 @@ function isDeleteDropTarget(target: { id: string | number; data?: unknown } | nu
   return target?.id === "delete-zone";
 }
 
-function taskStatusFromDragSource(source: DragStartEvent["operation"]["source"], tasks: BoardTask[]) {
-  if (!isSortable(source) || typeof source.id !== "string") {
-    return null;
-  }
-
-  if (isBoardStatus(source.initialGroup)) {
-    return source.initialGroup;
-  }
-
-  return tasks.find((task) => task.id === source.id)?.status ?? null;
-}
-
 function tasksByStatus(tasks: BoardTask[]) {
   return {
     backlog: sortTasks(tasks.filter((task) => task.status === "backlog")),
@@ -509,44 +497,6 @@ function moveTaskToStatusEnd(tasks: BoardTask[], taskId: string, targetStatus: B
   return boardTasksFromGroups(tasks, groups);
 }
 
-function moveTaskToStatusTarget(tasks: BoardTask[], taskId: string, targetStatus: BoardStatus, targetId?: string) {
-  if (!targetId || targetId === taskId) {
-    return moveTaskToStatusEnd(tasks, taskId, targetStatus);
-  }
-
-  const groups = tasksByStatus(tasks);
-  let movingTask: BoardTask | null = null;
-
-  (Object.keys(groups) as BoardStatus[]).forEach((status) => {
-    groups[status] = groups[status].filter((task) => {
-      if (task.id === taskId) {
-        movingTask = task;
-        return false;
-      }
-
-      return true;
-    });
-  });
-
-  if (!movingTask) {
-    return tasks;
-  }
-
-  const targetIndex = groups[targetStatus].findIndex((task) => task.id === targetId);
-  const nextTask: BoardTask = { ...movingTask, status: targetStatus };
-  if (targetIndex < 0) {
-    groups[targetStatus] = [...groups[targetStatus], nextTask];
-  } else {
-    groups[targetStatus] = [
-      ...groups[targetStatus].slice(0, targetIndex),
-      nextTask,
-      ...groups[targetStatus].slice(targetIndex),
-    ];
-  }
-
-  return boardTasksFromGroups(tasks, groups);
-}
-
 function tasksFromDragTarget(tasks: BoardTask[], event: DragOverEvent | DragEndEvent, targetStatus: BoardStatus) {
   const source = event.operation.source;
   const target = event.operation.target;
@@ -558,10 +508,8 @@ function tasksFromDragTarget(tasks: BoardTask[], event: DragOverEvent | DragEndE
   const isCrossRegion = targetStatus !== source.initialGroup;
   const targetTaskCount = tasks.filter((task) => task.status === targetStatus && task.id !== source.id).length;
 
-  if (isCrossRegion) {
-    return isSortable(target) && typeof target.id === "string" && targetTaskCount > 0
-      ? moveTaskToStatusTarget(tasks, source.id, targetStatus, target.id)
-      : moveTaskToStatusEnd(tasks, source.id, targetStatus);
+  if (isCrossRegion && (!isSortable(target) || targetTaskCount <= 1)) {
+    return moveTaskToStatusEnd(tasks, source.id, targetStatus);
   }
 
   return tasksFromDragEvent(tasks, event);
@@ -902,9 +850,6 @@ export default function KanbanApp({
       return true;
     }
     return currentUser ? isTaskRelatedToUser(task, currentUser.id) : false;
-  }
-  function canDragTask(task: BoardTask) {
-    return canEditTask(task);
   }
   const allTags = useMemo(
     () => {
@@ -1287,11 +1232,6 @@ export default function KanbanApp({
       notify("请选择负责人", "error");
       return;
     }
-    if (currentUserRole === "team_member" && currentUser && owner.id !== currentUser.id && tester?.id !== currentUser.id) {
-      notify("团队成员只能创建跟自己有关的任务", "error");
-      return;
-    }
-
     const optimistic: BoardTask = {
       id: nextLocalId("local-task"),
       projectId,
@@ -1433,15 +1373,14 @@ export default function KanbanApp({
 
   function handleDragStart(event: DragStartEvent) {
     const source = event.operation.source;
-    const sourceStatus = taskStatusFromDragSource(source, board.tasks);
-    if (!isSortable(source) || typeof source.id !== "string" || !sourceStatus) {
+    if (!isSortable(source) || typeof source.id !== "string" || !isBoardStatus(source.initialGroup)) {
       return;
     }
 
     dragStartTasksRef.current = board.tasks;
     latestTasksRef.current = board.tasks;
     setDraggingTaskId(source.id);
-    setCrossDragTarget(sourceStatus);
+    setCrossDragTarget(source.initialGroup);
   }
 
   function handleDragOver(event: DragOverEvent) {
@@ -1461,10 +1400,6 @@ export default function KanbanApp({
     }
 
     setCrossDragTarget(targetStatus);
-
-    if (targetStatus !== source.initialGroup) {
-      return;
-    }
 
     if (!shouldMoveTasks(event, targetStatus)) {
       return;
@@ -1530,18 +1465,6 @@ export default function KanbanApp({
     }
 
     latestTasksRef.current = finalTasks;
-    const isCrossRegionDrop = Boolean(targetStatus && targetStatus !== source.initialGroup);
-    if (isCrossRegionDrop) {
-      dragStartTasksRef.current = null;
-      window.setTimeout(() => {
-        setBoard((current) =>
-          sameTaskOrder(current.tasks, finalTasks) ? current : { ...current, tasks: finalTasks }
-        );
-        void persistCurrentOrder(finalTasks, startTasks);
-      }, 0);
-      return;
-    }
-
     setBoard((current) =>
       sameTaskOrder(current.tasks, finalTasks) ? current : { ...current, tasks: finalTasks }
     );
@@ -2212,7 +2135,6 @@ export default function KanbanApp({
                     column={column}
                     tasks={columnTasks}
                     projects={board.projects}
-                    canDragTask={canDragTask}
                     collapsed={backlogCollapsed}
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
@@ -2238,7 +2160,6 @@ export default function KanbanApp({
                     column={column}
                     tasks={columnTasks}
                     projects={board.projects}
-                    canDragTask={canDragTask}
                     selectedTaskId={selectedTaskId}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
@@ -2380,7 +2301,6 @@ function HorizontalBoardColumn({
   column,
   tasks,
   projects,
-  canDragTask,
   collapsed,
   selectedTaskId,
   todayKey,
@@ -2393,7 +2313,6 @@ function HorizontalBoardColumn({
   column: BoardData["columns"][number];
   tasks: BoardTask[];
   projects: Project[];
-  canDragTask: (task: BoardTask) => boolean;
   collapsed: boolean;
   selectedTaskId: string | null;
   todayKey: string;
@@ -2467,7 +2386,6 @@ function HorizontalBoardColumn({
                   stripeEnabled={taskCardStripeEnabled}
                   className="w-[280px] shrink-0"
                   onSelect={() => onOpenTask(task.id)}
-                  draggable={canDragTask(task)}
                 />
               ))}
               {tasks.length === 0 ? (
@@ -2484,7 +2402,6 @@ function BoardColumnView({
   column,
   tasks,
   projects,
-  canDragTask,
   selectedTaskId,
   todayKey,
   dueSoonDays,
@@ -2495,7 +2412,6 @@ function BoardColumnView({
   column: BoardData["columns"][number];
   tasks: BoardTask[];
   projects: Project[];
-  canDragTask: (task: BoardTask) => boolean;
   selectedTaskId: string | null;
   todayKey: string;
   dueSoonDays: number;
@@ -2549,7 +2465,6 @@ function BoardColumnView({
               stripeEnabled={taskCardStripeEnabled}
               className="w-full"
               onSelect={() => onOpenTask(task.id)}
-              draggable={canDragTask(task)}
             />
           ))}
           {tasks.length === 0 ? (
@@ -2641,7 +2556,6 @@ function HorizontalSortableTaskCard({
   stripeEnabled,
   className,
   onSelect,
-  draggable,
 }: {
   task: BoardTask;
   index: number;
@@ -2652,26 +2566,7 @@ function HorizontalSortableTaskCard({
   stripeEnabled: boolean;
   className?: string;
   onSelect: () => void;
-  draggable: boolean;
 }) {
-  if (!draggable) {
-    return (
-      <div className={`${className ?? ""}`}>
-        <TaskCard
-          task={task}
-          todayKey={todayKey}
-          dueSoonDays={dueSoonDays}
-          project={project}
-          selected={selected}
-          stripeEnabled={stripeEnabled}
-          dragging={false}
-          draggable={false}
-          onSelect={onSelect}
-        />
-      </div>
-    );
-  }
-
   return (
     <HorizontalDraggableTaskCard
       task={task}
@@ -2747,7 +2642,6 @@ function VerticalSortableTaskCard({
   stripeEnabled,
   className,
   onSelect,
-  draggable,
 }: {
   task: BoardTask;
   index: number;
@@ -2758,26 +2652,7 @@ function VerticalSortableTaskCard({
   stripeEnabled: boolean;
   className?: string;
   onSelect: () => void;
-  draggable: boolean;
 }) {
-  if (!draggable) {
-    return (
-      <div className={`${className ?? ""}`}>
-        <TaskCard
-          task={task}
-          todayKey={todayKey}
-          dueSoonDays={dueSoonDays}
-          project={project}
-          selected={selected}
-          stripeEnabled={stripeEnabled}
-          dragging={false}
-          draggable={false}
-          onSelect={onSelect}
-        />
-      </div>
-    );
-  }
-
   return (
     <VerticalDraggableTaskCard
       task={task}
@@ -3384,7 +3259,7 @@ function TaskDrawer({
   return (
     <section className="space-y-5 pr-10">
       <div>
-        <h2 className="text-base font-semibold">编辑任务信息</h2>
+        <h2 className="text-base font-semibold">{editable ? "编辑任务信息" : "任务信息"}</h2>
       </div>
 
       <form id="task-edit-form" onSubmit={saveTask} className="flex flex-col gap-5">
