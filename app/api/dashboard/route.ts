@@ -21,16 +21,15 @@ export const GET = withApiLogging("dashboard.get", async function GET(request: R
       throw error;
     });
 
-    if (!user || (user.role !== "super_admin" && user.role !== "project_manager")) {
-      if (!publicEnabled) {
-        throw new Error(user ? "Forbidden" : "Unauthorized");
-      }
+    if (publicEnabled) {
       return NextResponse.json(await repo.getPublicWorkloadDashboard(input));
     }
 
-    return NextResponse.json(
-      await repo.getWorkloadDashboard(user, input)
-    );
+    if (!user) {
+      throw new Error("Unauthorized");
+    }
+
+    return NextResponse.json(await repo.getWorkloadDashboard(user, input));
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error, "加载面板失败") }, { status: errorStatus(error) });
   }

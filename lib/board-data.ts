@@ -163,7 +163,7 @@ export const defaultSystemParameters: SystemParameter[] = [
   {
     key: "workload_dashboard_public_enabled",
     value: "false",
-    label: "工作饱和度公开访问",
+    label: "项目负载大屏公开访问",
     valueType: "boolean",
     group: "权限",
     unit: "",

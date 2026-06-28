@@ -38,7 +38,7 @@ export async function requireSuperAdminUser(): Promise<CurrentUser> {
 
 export async function requireAdminUser(): Promise<CurrentUser> {
   const user = await requireSessionUser();
-  if (user.role !== "super_admin" && user.role !== "project_manager") {
+  if (user.role !== "super_admin" && user.role !== "project_manager" && user.role !== "development_manager") {
     throw new Error("Forbidden");
   }
   return user;

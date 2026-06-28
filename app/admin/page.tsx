@@ -13,7 +13,7 @@ export default async function AdminPage() {
     return <LoginPage />;
   }
 
-  if (user.role !== "super_admin" && user.role !== "project_manager") {
+  if (user.role !== "super_admin" && user.role !== "project_manager" && user.role !== "development_manager") {
     return (
       <main className="grid min-h-screen place-items-center bg-slate-50 px-6 text-slate-900">
         <section className="max-w-md rounded-2xl border border-slate-200 bg-white p-8 text-center shadow-sm">

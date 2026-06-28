@@ -171,7 +171,7 @@ export class KanbanRepository {
 
   async listUsers(actor?: CurrentUser): Promise<ManagedUser[]> {
     await this.ensureBootstrapData();
-    if (actor?.role === "project_manager") {
+    if (actor && isManagementRole(actor) && actor.role !== "super_admin") {
       return (await this.q("SELECT * FROM users WHERE role='team_member' ORDER BY username ASC")).map(managedUser);
     }
     return (await this.q("SELECT * FROM users ORDER BY role ASC, username ASC")).map(managedUser);
@@ -191,7 +191,7 @@ export class KanbanRepository {
     await this.ensureBootstrapData();
     const pmCanManageUsers = await this.projectManagerUserManagementEnabled();
     return {
-      canManageUsers: actor.role === "super_admin" || (actor.role === "project_manager" && pmCanManageUsers),
+      canManageUsers: actor.role === "super_admin" || (isManagementRole(actor) && pmCanManageUsers),
       canCreateSuperAdmin: actor.role === "super_admin",
       canManageAllBoards: actor.role === "super_admin",
     };
@@ -205,7 +205,7 @@ export class KanbanRepository {
     if (await this.findUserByUsername(username)) throw new Error("Username already exists");
 
     const desiredRole = normalizeUserRole(input.role, "team_member");
-    if (actor?.role === "project_manager" && desiredRole !== "team_member") {
+    if (actor && isManagementRole(actor) && actor.role !== "super_admin" && desiredRole !== "team_member") {
       throw new Error("Forbidden");
     }
 
@@ -262,10 +262,10 @@ export class KanbanRepository {
     const current = await this.getManagedUserRow(userId);
     if (!current) throw new Error("User not found");
     const currentRole = normalizeUserRole(current.role);
-    if (actor.role === "project_manager" && currentRole !== "team_member") throw new Error("Forbidden");
+    if (isManagementRole(actor) && actor.role !== "super_admin" && currentRole !== "team_member") throw new Error("Forbidden");
 
     const nextRole = input.role === undefined ? currentRole : normalizeUserRole(input.role, currentRole);
-    if (actor.role === "project_manager" && nextRole !== "team_member") throw new Error("Forbidden");
+    if (isManagementRole(actor) && actor.role !== "super_admin" && nextRole !== "team_member") throw new Error("Forbidden");
     if (currentRole === "super_admin" && nextRole !== "super_admin") {
       await this.ensureAnotherActiveSuperAdmin(userId);
     }
@@ -319,7 +319,7 @@ export class KanbanRepository {
     const row = await this.getManagedUserRow(userId);
     if (!row) throw new Error("User not found");
     const role = normalizeUserRole(row.role);
-    if (actor.role === "project_manager" && role !== "team_member") throw new Error("Forbidden");
+    if (isManagementRole(actor) && actor.role !== "super_admin" && role !== "team_member") throw new Error("Forbidden");
     const username = String(row.username);
     const password = `${username}@123`;
     await this.x("UPDATE users SET password_hash=?,updated_at=? WHERE id=?", [await hashPassword(password), iso(), userId]);
@@ -572,7 +572,7 @@ export class KanbanRepository {
     const rows =
       actor.role === "super_admin"
         ? await this.q("SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id ORDER BY t.updated_at DESC,t.created_at DESC")
-        : actor.role === "project_manager"
+        : isManagementRole(actor)
           ? await this.q(
               "SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id WHERE t.owner_user_id=? ORDER BY t.updated_at DESC,t.created_at DESC",
               [actor.id]
@@ -1754,29 +1754,28 @@ export class KanbanRepository {
 
   async requireBoardWrite(actor: CurrentUser, boardId: string) {
     if (actor.role === "super_admin") return;
-    if (actor.role !== "project_manager" && actor.role !== "development_manager") throw new Error("Forbidden");
+    if (!isManagementRole(actor)) throw new Error("Forbidden");
     if (!(await this.q("SELECT id FROM boards WHERE id=? AND owner_user_id=? LIMIT 1", [boardId, actor.id]))[0]) {
-      if (actor.role === "project_manager") {
-        throw new Error("Forbidden");
-      }
       await this.requireBoardRead(actor, boardId);
     }
   }
 
   async requireBoardAdmin(actor: CurrentUser, boardId: string) {
     if (actor.role === "super_admin") return;
-    if (actor.role !== "project_manager") throw new Error("Forbidden");
+    if (!isManagementRole(actor)) throw new Error("Forbidden");
     if (!(await this.q("SELECT id FROM boards WHERE id=? AND owner_user_id=? LIMIT 1", [boardId, actor.id]))[0]) {
       throw new Error("Forbidden");
     }
   }
 
   requireAdminAccess(actor: CurrentUser) {
-    if (actor.role !== "super_admin" && actor.role !== "project_manager") throw new Error("Forbidden");
+    if (!isManagementRole(actor)) throw new Error("Forbidden");
   }
 
   requireDashboardAccess(actor: CurrentUser) {
-    if (actor.role !== "super_admin" && actor.role !== "project_manager") throw new Error("Forbidden");
+    if (actor.role !== "super_admin" && actor.role !== "project_manager" && actor.role !== "development_manager" && actor.role !== "team_member") {
+      throw new Error("Forbidden");
+    }
   }
 
   async requireUserManagement(actor: CurrentUser) {
@@ -1924,10 +1923,10 @@ export class KanbanRepository {
     const sql =
       actor.role === "super_admin"
         ? `SELECT * FROM projects WHERE status='active' AND team_id IN (${placeholders}) ORDER BY name ASC`
-        : actor.role === "project_manager"
-          ? `SELECT DISTINCT p.* FROM projects p JOIN boards b ON b.id=p.board_id WHERE p.status='active' AND p.team_id IN (${placeholders}) AND b.owner_user_id=? ORDER BY p.name ASC`
+        : isManagementRole(actor)
+          ? `SELECT DISTINCT p.* FROM projects p WHERE p.status='active' AND p.team_id IN (${placeholders}) ORDER BY p.name ASC`
           : `SELECT DISTINCT p.* FROM projects p JOIN team_members tm ON tm.team_id=p.team_id WHERE p.status='active' AND p.team_id IN (${placeholders}) AND tm.user_id=? ORDER BY p.name ASC`;
-    return this.q(sql, actor.role === "super_admin" ? teamIds : actor.role === "project_manager" ? [...teamIds, actor.id] : [...teamIds, actor.id]);
+    return this.q(sql, actor.role === "super_admin" || isManagementRole(actor) ? teamIds : [...teamIds, actor.id]);
   }
 
   async dashboardMembers(teamIds: string[]) {
@@ -2545,15 +2544,19 @@ function requireBoardCreator(actor: CurrentUser) {
 }
 
 function canCreateBoards(actor: CurrentUser) {
-  return actor.role === "super_admin" || actor.role === "project_manager";
+  return isManagementRole(actor);
 }
 
 function canManageBoardTasks(actor: CurrentUser) {
-  return actor.role === "super_admin" || actor.role === "project_manager" || actor.role === "development_manager";
+  return isManagementRole(actor);
 }
 
 function canCreateTasks(actor: CurrentUser) {
   return canManageBoardTasks(actor) || actor.role === "team_member";
+}
+
+function isManagementRole(actor: CurrentUser) {
+  return actor.role === "super_admin" || actor.role === "project_manager" || actor.role === "development_manager";
 }
 
 function isTaskRelatedToUser(taskValue: { ownerUserId: string; testerUserId: string }, userId: string) {

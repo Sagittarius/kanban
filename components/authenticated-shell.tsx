@@ -39,7 +39,7 @@ export default function AuthenticatedShell({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const activeBoard = boardList.find((board) => board.id === activeBoardId);
   const readOnly = activeBoard?.role === "viewer";
-  const canUseAdmin = currentUser.role === "super_admin" || currentUser.role === "project_manager";
+  const canUseAdmin = currentUser.role === "super_admin" || currentUser.role === "project_manager" || currentUser.role === "development_manager";
   const [profileDraft, setProfileDraft] = useState({
     displayName: user.displayName || "",
     phone: user.phone || "",
@@ -213,9 +213,7 @@ export default function AuthenticatedShell({
                 </div>
 
                 <div className="space-y-2">
-                  {canUseAdmin ? (
-                    <MenuButton onClick={() => window.location.assign("/dashboard")}>项目负载</MenuButton>
-                  ) : null}
+                  <MenuButton onClick={() => window.location.assign("/dashboard")}>项目负载</MenuButton>
                   <MenuButton onClick={() => { setProfileOpen(true); setMenuOpen(false); }}>
                     个人设置
                   </MenuButton>
