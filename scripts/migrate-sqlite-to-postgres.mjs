@@ -125,6 +125,27 @@ const TABLES = [
     ],
   },
   {
+    name: "audit_logs",
+    keyColumns: ["id"],
+    columns: [
+      "id",
+      "actor_user_id",
+      "actor_username",
+      "actor_role",
+      "action",
+      "resource_type",
+      "resource_id",
+      "board_id",
+      "result",
+      "message",
+      "ip_address",
+      "user_agent",
+      "request_id",
+      "metadata",
+      "created_at",
+    ],
+  },
+  {
     name: "system_parameters",
     keyColumns: ["key"],
     columns: [

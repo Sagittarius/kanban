@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { errorMessage, errorStatus, requireAdminUser } from "@/lib/server-session";
 
-export async function GET() {
+export const GET = withApiLogging("admin.users.list", async function GET() {
   try {
     const user = await requireAdminUser();
     const repo = await getKanbanRepository();
@@ -15,9 +16,9 @@ export async function GET() {
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error, "加载用户失败") }, { status: errorStatus(error) });
   }
-}
+});
 
-export async function POST(request: Request) {
+export const POST = withApiLogging("admin.users.create", async function POST(request: Request) {
   try {
     const user = await requireAdminUser();
     const body = await request.json().catch(() => ({}));
@@ -26,4 +27,4 @@ export async function POST(request: Request) {
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error, "创建用户失败") }, { status: errorStatus(error) });
   }
-}
+});

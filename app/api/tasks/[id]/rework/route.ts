@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
 import { guardMaintenanceApi } from "@/lib/maintenance";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { errorMessage, errorStatus, requireActiveBoardContext } from "@/lib/server-session";
@@ -9,7 +10,7 @@ type RouteContext = {
   }>;
 };
 
-export async function POST(_request: Request, context: RouteContext) {
+export const POST = withApiLogging("tasks.rework", async function POST(_request: Request, context: RouteContext) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -26,4 +27,4 @@ export async function POST(_request: Request, context: RouteContext) {
       { status: errorStatus(error) }
     );
   }
-}
+});

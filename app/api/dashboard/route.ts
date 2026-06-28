@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { errorMessage, errorStatus, requireSessionUser } from "@/lib/server-session";
 
-export async function GET(request: Request) {
+export const GET = withApiLogging("dashboard.get", async function GET(request: Request) {
   try {
     const url = new URL(request.url);
     const repo = await getKanbanRepository();
@@ -33,4 +34,4 @@ export async function GET(request: Request) {
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error, "加载面板失败") }, { status: errorStatus(error) });
   }
-}
+});

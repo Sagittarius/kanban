@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { errorMessage, errorStatus, requireAdminUser } from "@/lib/server-session";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
-export async function PATCH(request: Request, context: RouteContext) {
+export const PATCH = withApiLogging("admin.users.update", async function PATCH(request: Request, context: RouteContext) {
   try {
     const user = await requireAdminUser();
     const { id } = await context.params;
@@ -14,9 +15,9 @@ export async function PATCH(request: Request, context: RouteContext) {
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error, "保存用户失败") }, { status: errorStatus(error) });
   }
-}
+});
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export const DELETE = withApiLogging("admin.users.delete", async function DELETE(_request: Request, context: RouteContext) {
   try {
     const user = await requireAdminUser();
     const { id } = await context.params;
@@ -25,4 +26,4 @@ export async function DELETE(_request: Request, context: RouteContext) {
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error, "删除用户失败") }, { status: errorStatus(error) });
   }
-}
+});

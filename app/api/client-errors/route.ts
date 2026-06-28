@@ -1,4 +1,8 @@
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
+import { getLogger } from "@/lib/logger";
+
+const clientErrorLogger = getLogger("client-error");
 
 type ClientErrorRequest = {
   source?: string;
@@ -10,7 +14,7 @@ type ClientErrorRequest = {
   timestamp?: string;
 };
 
-export async function POST(request: Request) {
+export const POST = withApiLogging("client.error", async function POST(request: Request) {
   try {
     const body = (await request.json()) as ClientErrorRequest;
     const payload = {
@@ -23,7 +27,7 @@ export async function POST(request: Request) {
       timestamp: body.timestamp ?? new Date().toISOString(),
     };
 
-    console.error("[kanban][client-error]", JSON.stringify(payload));
+    clientErrorLogger.error("client error reported", payload);
     return NextResponse.json({ ok: true });
   } catch (error) {
     const message =
@@ -34,4 +38,4 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-}
+});

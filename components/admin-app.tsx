@@ -7,6 +7,7 @@ import SharedSearchMultiSelect from "@/components/search-multi-select";
 import { isThemeId, jobTitleLabel, jobTitleOptions, techStackOptions, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type {
   AdminPermissions,
+  AuditLogEntry,
   BoardSummary,
   CurrentUser,
   ManagedUser,
@@ -15,7 +16,7 @@ import type {
   UserRole,
 } from "@/lib/auth-models";
 
-type TabId = "users" | "teams" | "boards";
+type TabId = "users" | "teams" | "boards" | "audit";
 
 type AdminBoard = BoardSummary & {
   members: Array<{
@@ -37,6 +38,10 @@ type TeamsResponse = {
   teams: TeamSummary[];
   assignableUsers: TeamMemberSummary[];
   permissions: AdminPermissions;
+};
+
+type AuditLogsResponse = {
+  auditLogs: AuditLogEntry[];
 };
 
 type SelectOption = {
@@ -97,12 +102,14 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const [assignableUsers, setAssignableUsers] = useState<TeamMemberSummary[]>([]);
   const [teams, setTeams] = useState<TeamSummary[]>([]);
   const [boards, setBoards] = useState<AdminBoard[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [permissions, setPermissions] = useState<AdminPermissions>(defaultPermissions);
   const [activeTab, setActiveTab] = useState<TabId>("users");
   const [message, setMessage] = useState("");
   const [userQuery, setUserQuery] = useState("");
   const [teamQuery, setTeamQuery] = useState("");
   const [boardQuery, setBoardQuery] = useState("");
+  const [auditQuery, setAuditQuery] = useState("");
   const [memberQuery, setMemberQuery] = useState("");
   const [selectedBoardId, setSelectedBoardId] = useState("");
   const [userDraft, setUserDraft] = useState(defaultUserDraft);
@@ -115,16 +122,18 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const initialized = useRef(false);
 
   async function refresh() {
-    const [userPayload, teamPayload, boardRows] = await Promise.all([
+    const [userPayload, teamPayload, boardRows, auditPayload] = await Promise.all([
       fetch("/api/admin/users").then((response) => response.json() as Promise<UsersResponse>),
       fetch("/api/admin/teams").then((response) => response.json() as Promise<TeamsResponse>),
       fetch("/api/admin/boards").then((response) => response.json() as Promise<AdminBoard[]>),
+      fetch("/api/admin/audit-logs").then((response) => response.json() as Promise<AuditLogsResponse>),
     ]);
     setUsers(userPayload.users ?? []);
     setAssignableUsers(teamPayload.assignableUsers ?? userPayload.assignableUsers ?? []);
     setTeams(teamPayload.teams ?? []);
     setPermissions(userPayload.permissions ?? teamPayload.permissions ?? defaultPermissions);
     setBoards(boardRows ?? []);
+    setAuditLogs(auditPayload.auditLogs ?? []);
     const nextBoard = boardRows?.find((board) => board.id === selectedBoardId) ?? boardRows?.[0];
     setSelectedBoardId(nextBoard?.id ?? "");
     setBoardTeamDraft(nextBoard?.teamIds ?? []);
@@ -141,6 +150,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
       ...(permissions.canManageUsers ? ([["users", "用户"]] as Array<[TabId, string]>) : []),
       ["teams", "团队"],
       ["boards", "看板"],
+      ["audit", "审计"],
     ],
     [permissions.canManageUsers]
   );
@@ -220,6 +230,26 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
       [board.name, board.description, board.ownerUsername].some((value) => value.toLowerCase().includes(query))
     );
   }, [boardQuery, boards]);
+
+  const filteredAuditLogs = useMemo(() => {
+    const query = auditQuery.trim().toLowerCase();
+    if (!query) return auditLogs;
+    return auditLogs.filter((item) => {
+      const values = [
+        item.actorUsername,
+        item.actorRole,
+        item.action,
+        item.resourceType,
+        item.resourceId,
+        item.boardId,
+        item.result,
+        item.message,
+        item.ipAddress,
+        item.requestId,
+      ];
+      return values.some((value) => value.toLowerCase().includes(query));
+    });
+  }, [auditLogs, auditQuery]);
 
   const selectedBoard = filteredBoards.find((board) => board.id === selectedBoardId) ?? filteredBoards[0] ?? null;
   const teamById = useMemo(() => new Map(teams.map((team) => [team.id, team])), [teams]);
@@ -941,6 +971,46 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
             </section>
           </div>
         ) : null}
+
+        {currentTab === "audit" ? (
+          <div className="mt-5">
+            <Panel title="审计日志" count={filteredAuditLogs.length}>
+              <SearchInput value={auditQuery} onChange={setAuditQuery} placeholder="搜索用户、动作、对象、IP、Request ID" />
+              <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)]">
+                <div className="grid grid-cols-[150px_160px_180px_minmax(0,1fr)_120px] gap-3 border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-semibold text-[var(--muted)]">
+                  <span>时间</span>
+                  <span>用户</span>
+                  <span>动作</span>
+                  <span>说明</span>
+                  <span>结果</span>
+                </div>
+                <div className="divide-y divide-[var(--border)]">
+                  {filteredAuditLogs.map((item) => (
+                    <div key={item.id} className="grid grid-cols-[150px_160px_180px_minmax(0,1fr)_120px] gap-3 px-4 py-3 text-sm">
+                      <span className="text-[var(--muted)]">{formatAuditTime(item.createdAt)}</span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-semibold text-[var(--text)]">{item.actorUsername || "-"}</span>
+                        <span className="block truncate text-xs text-[var(--muted)]">{item.actorRole || "-"}</span>
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium">{item.action}</span>
+                        <span className="block truncate text-xs text-[var(--muted)]">{item.resourceType}{item.resourceId ? ` · ${item.resourceId}` : ""}</span>
+                      </span>
+                      <span className="min-w-0">
+                        <span className="block truncate">{item.message || "-"}</span>
+                        <span className="block truncate text-xs text-[var(--muted)]">IP {item.ipAddress || "-"} · {item.requestId || "-"}</span>
+                      </span>
+                      <span className={`h-fit w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${item.result === "success" ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "bg-[var(--danger-soft)] text-[var(--danger)]"}`}>
+                        {item.result === "success" ? "成功" : "失败"}
+                      </span>
+                    </div>
+                  ))}
+                  {filteredAuditLogs.length === 0 ? <EmptyState text="暂无审计记录" /> : null}
+                </div>
+              </div>
+            </Panel>
+          </div>
+        ) : null}
       </section>
       {confirmState ? (
         <ConfirmDialog
@@ -968,6 +1038,19 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
       `}</style>
     </main>
   );
+}
+
+function formatAuditTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return date.toLocaleString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 function SummaryCard({ label, value }: { label: string; value: number }) {

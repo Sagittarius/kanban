@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
 import { guardMaintenanceApi } from "@/lib/maintenance";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { errorMessage, errorStatus, requireActiveBoardContext } from "@/lib/server-session";
@@ -10,7 +11,7 @@ type RouteContext = {
   }>;
 };
 
-export async function PATCH(request: Request, context: RouteContext) {
+export const PATCH = withApiLogging("subtasks.update", async function PATCH(request: Request, context: RouteContext) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -28,9 +29,9 @@ export async function PATCH(request: Request, context: RouteContext) {
       { status: errorStatus(error) }
     );
   }
-}
+});
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export const DELETE = withApiLogging("subtasks.delete", async function DELETE(_request: Request, context: RouteContext) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -47,4 +48,4 @@ export async function DELETE(_request: Request, context: RouteContext) {
       { status: errorStatus(error) }
     );
   }
-}
+});

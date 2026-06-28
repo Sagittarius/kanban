@@ -1,5 +1,7 @@
 import { spawn } from "node:child_process";
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
+import { getLogger } from "@/lib/logger";
 import { readMaintenanceState } from "@/lib/maintenance";
 
 export const dynamic = "force-dynamic";
@@ -8,7 +10,9 @@ type UpgradeRequest = {
   token?: string;
 };
 
-export async function POST(request: Request) {
+const maintenanceLogger = getLogger("maintenance");
+
+export const POST = withApiLogging("maintenance.upgrade", async function POST(request: Request) {
   const configuredToken = process.env.KANBAN_MAINTENANCE_TOKEN;
   if (!configuredToken) {
     return NextResponse.json(
@@ -48,6 +52,11 @@ export async function POST(request: Request) {
   });
 
   child.unref();
+  maintenanceLogger.warn("maintenance upgrade task started", {
+    pid: child.pid,
+    databasePath: state.databasePath,
+    appVersion: state.appVersion,
+  });
 
   return NextResponse.json(
     {
@@ -56,4 +65,4 @@ export async function POST(request: Request) {
     },
     { status: 202 }
   );
-}
+});

@@ -166,6 +166,29 @@ export const activityLog = sqliteTable("task_activity", {
   boardIdx: index("task_activity_board_id_idx").on(table.boardId),
 }));
 
+export const auditLogs = sqliteTable("audit_logs", {
+  id: text("id").primaryKey(),
+  actorUserId: text("actor_user_id").notNull().default(""),
+  actorUsername: text("actor_username").notNull().default(""),
+  actorRole: text("actor_role").notNull().default(""),
+  action: text("action").notNull(),
+  resourceType: text("resource_type").notNull().default("system"),
+  resourceId: text("resource_id").notNull().default(""),
+  boardId: text("board_id").notNull().default(""),
+  result: text("result").notNull().default("success"),
+  message: text("message").notNull().default(""),
+  ipAddress: text("ip_address").notNull().default(""),
+  userAgent: text("user_agent").notNull().default(""),
+  requestId: text("request_id").notNull().default(""),
+  metadata: text("metadata").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => ({
+  createdAtIdx: index("audit_logs_created_at_idx").on(table.createdAt),
+  actorIdx: index("audit_logs_actor_user_id_idx").on(table.actorUserId),
+  actionIdx: index("audit_logs_action_idx").on(table.action),
+  boardIdx: index("audit_logs_board_id_idx").on(table.boardId),
+}));
+
 export const systemParameters = sqliteTable("system_parameters", {
   key: text("key").primaryKey(),
   value: text("value").notNull().default(""),

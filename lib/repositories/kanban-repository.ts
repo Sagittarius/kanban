@@ -2,6 +2,7 @@ import { getDbAdapter, getStorageMode, type DatabaseAdapter, type SqlValue } fro
 import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import type {
   AdminPermissions,
+  AuditLogEntry,
   BoardSummary,
   CurrentUser,
   ManagedUser,
@@ -28,6 +29,7 @@ import {
   type SystemParameter,
   type SystemSettings,
 } from "@/lib/board-data";
+import { currentLogContext, errorFields, getLogger } from "@/lib/logger";
 import { hashPassword } from "@/lib/password";
 import { DEFAULT_TIMEZONE, normalizeTimeZone, todayKeyInTimeZone } from "@/lib/timezone";
 
@@ -93,10 +95,24 @@ export type CreateSubtaskInput = { title?: unknown };
 export type UpdateSubtaskInput = Partial<{ title: unknown; done: unknown }>;
 export type UpdateSystemSettingsInput = Partial<{ dueSoonDays: unknown; activityRetentionDays: unknown; parameters: unknown }>;
 export type WorkloadDashboardInput = Partial<{ teamId: unknown; projectId: unknown; teamIds: unknown; projectIds: unknown }>;
+export type AuditLogInput = {
+  actor?: CurrentUser | null;
+  actorUserId?: string;
+  actorUsername?: string;
+  actorRole?: string;
+  action: string;
+  resourceType?: string;
+  resourceId?: string;
+  boardId?: string;
+  result?: "success" | "failure";
+  message?: string;
+  metadata?: Record<string, unknown>;
+};
 
 export const USERNAME_PATTERN = /^[A-Za-z0-9_]+$/;
 export const DEFAULT_BOARD_ID = process.env.KANBAN_DEFAULT_BOARD_ID?.trim() || "default-board";
 let repositoryPromise: Promise<KanbanRepository> | null = null;
+const repositoryLogger = getLogger("repository");
 
 function statusLabel(status: BoardStatus) {
   return (
@@ -161,6 +177,16 @@ export class KanbanRepository {
     return (await this.q("SELECT * FROM users ORDER BY role ASC, username ASC")).map(managedUser);
   }
 
+  async listAuditLogs(actor: CurrentUser, limit = 120): Promise<AuditLogEntry[]> {
+    this.requireAdminAccess(actor);
+    const safeLimit = Math.min(500, Math.max(20, Math.round(limit)));
+    const rows =
+      actor.role === "super_admin"
+        ? await this.q("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?", [safeLimit])
+        : await this.q("SELECT * FROM audit_logs WHERE actor_user_id=? ORDER BY created_at DESC LIMIT ?", [actor.id, safeLimit]);
+    return rows.map(auditLogRow);
+  }
+
   async adminPermissions(actor: CurrentUser): Promise<AdminPermissions> {
     await this.ensureBootstrapData();
     const pmCanManageUsers = await this.projectManagerUserManagementEnabled();
@@ -217,6 +243,16 @@ export class KanbanRepository {
         row.updated_at,
       ]
     );
+    if (actor) {
+      await this.recordAuditLog({
+        actor,
+        action: "admin.user.create",
+        resourceType: "user",
+        resourceId: row.id,
+        message: `创建用户 ${row.username}`,
+        metadata: { username: row.username, role: row.role },
+      });
+    }
     return managedUser(row);
   }
 
@@ -261,6 +297,14 @@ export class KanbanRepository {
     );
     const updated = await this.getManagedUserRow(userId);
     if (!updated) throw new Error("User not found");
+    await this.recordAuditLog({
+      actor,
+      action: nextActive ? "admin.user.update" : "admin.user.disable",
+      resourceType: "user",
+      resourceId: userId,
+      message: `${nextActive ? "更新" : "停用"}用户 ${String(updated.username)}`,
+      metadata: { beforeRole: currentRole, afterRole: nextRole, active: Boolean(nextActive) },
+    });
     return managedUser(updated);
   }
 
@@ -279,6 +323,14 @@ export class KanbanRepository {
     const username = String(row.username);
     const password = `${username}@123`;
     await this.x("UPDATE users SET password_hash=?,updated_at=? WHERE id=?", [await hashPassword(password), iso(), userId]);
+    await this.recordAuditLog({
+      actor,
+      action: "admin.user.password.reset",
+      resourceType: "user",
+      resourceId: userId,
+      message: `重置用户 ${username} 的密码`,
+      metadata: { username },
+    });
     return { username, password };
   }
 
@@ -372,6 +424,15 @@ export class KanbanRepository {
     await this.ensureBoardDefaults(row.id, actor.username);
     const created = await this.getBoardSummaryById(actor, row.id);
     if (!created) throw new Error("Board not found");
+    await this.recordAuditLog({
+      actor,
+      action: "board.create",
+      resourceType: "board",
+      resourceId: row.id,
+      boardId: row.id,
+      message: `创建看板 ${row.name}`,
+      metadata: { teamIds: ids(input.teamIds) },
+    });
     return created;
   }
 
@@ -390,6 +451,15 @@ export class KanbanRepository {
     }
     const updated = await this.getBoardSummaryById(actor, boardId);
     if (!updated) throw new Error("Board not found");
+    await this.recordAuditLog({
+      actor,
+      action: "board.update",
+      resourceType: "board",
+      resourceId: boardId,
+      boardId,
+      message: `更新看板 ${updated.name}`,
+      metadata: { teamIds: input.teamIds === undefined ? undefined : ids(input.teamIds) },
+    });
     return updated;
   }
 
@@ -420,6 +490,14 @@ export class KanbanRepository {
     await this.x("DELETE FROM board_members WHERE board_id=?", [boardId]);
     await this.x("DELETE FROM board_teams WHERE board_id=?", [boardId]);
     await this.x("DELETE FROM boards WHERE id=?", [boardId]);
+    await this.recordAuditLog({
+      actor,
+      action: "board.delete",
+      resourceType: "board",
+      resourceId: boardId,
+      boardId,
+      message: `删除看板 ${existing.name}`,
+    });
     return { id: boardId };
   }
 
@@ -449,12 +527,30 @@ export class KanbanRepository {
       "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'viewer',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='viewer'",
       [boardId, userId, iso()]
     );
+    await this.recordAuditLog({
+      actor,
+      action: "board.member.grant",
+      resourceType: "board",
+      resourceId: boardId,
+      boardId,
+      message: "授权用户查看看板",
+      metadata: { userId },
+    });
     return { ok: true as const };
   }
 
   async revokeBoardViewer(actor: CurrentUser, boardId: string, userId: string) {
     await this.requireBoardAdmin(actor, boardId);
     await this.x("DELETE FROM board_members WHERE board_id=? AND user_id=? AND role='viewer'", [boardId, userId]);
+    await this.recordAuditLog({
+      actor,
+      action: "board.member.revoke",
+      resourceType: "board",
+      resourceId: boardId,
+      boardId,
+      message: "撤销用户看板查看授权",
+      metadata: { userId },
+    });
     return { ok: true as const };
   }
 
@@ -518,6 +614,14 @@ export class KanbanRepository {
       row.updated_at,
     ]);
     await this.replaceTeamMembers(row.id, ids(input.memberIds));
+    await this.recordAuditLog({
+      actor,
+      action: "team.create",
+      resourceType: "team",
+      resourceId: row.id,
+      message: `创建团队 ${row.name}`,
+      metadata: { memberIds: ids(input.memberIds) },
+    });
     return team({ ...row, owner_username: actor.username }, ids(input.memberIds));
   }
 
@@ -538,6 +642,14 @@ export class KanbanRepository {
     const updated = await this.getTeamRow(teamId);
     if (!updated) throw new Error("Team not found");
     const memberIds = (await this.teamMemberIds([teamId])).get(teamId) ?? [];
+    await this.recordAuditLog({
+      actor,
+      action: "team.update",
+      resourceType: "team",
+      resourceId: teamId,
+      message: `更新团队 ${String(updated.name)}`,
+      metadata: { memberIds },
+    });
     return team(updated, memberIds);
   }
 
@@ -548,6 +660,13 @@ export class KanbanRepository {
     await this.x("DELETE FROM board_teams WHERE team_id=?", [teamId]);
     await this.x("DELETE FROM team_members WHERE team_id=?", [teamId]);
     await this.x("DELETE FROM teams WHERE id=?", [teamId]);
+    await this.recordAuditLog({
+      actor,
+      action: "team.delete",
+      resourceType: "team",
+      resourceId: teamId,
+      message: "删除团队",
+    });
     return { id: teamId };
   }
 
@@ -630,6 +749,13 @@ export class KanbanRepository {
         ]);
       }
     }
+    await this.recordAuditLog({
+      actor,
+      action: "system.settings.update",
+      resourceType: "system_settings",
+      message: "更新系统参数",
+      metadata: { keys: Array.from(requests.keys()) },
+    });
     return this.getSystemSettings(actor);
   }
 
@@ -680,6 +806,15 @@ export class KanbanRepository {
       projectId: row.id,
       action: "project.create",
       message: `创建项目「${row.name}」。`,
+    });
+    await this.recordAuditLog({
+      actor,
+      action: "project.create",
+      resourceType: "project",
+      resourceId: row.id,
+      boardId,
+      message: `创建项目 ${row.name}`,
+      metadata: { teamId },
     });
     return project(row);
   }
@@ -746,6 +881,15 @@ export class KanbanRepository {
         changes,
       },
     });
+    await this.recordAuditLog({
+      actor,
+      action: status !== current.status ? (status === "archived" ? "project.archive" : "project.restore") : "project.update",
+      resourceType: "project",
+      resourceId: id,
+      boardId,
+      message: `更新项目 ${row.name}`,
+      metadata: { changes },
+    });
     return project(await this.getProjectRow(boardId, id));
   }
 
@@ -761,6 +905,14 @@ export class KanbanRepository {
       projectId: id,
       action: "project.delete",
       message: `删除项目「${old.name}」及其任务。`,
+    });
+    await this.recordAuditLog({
+      actor,
+      action: "project.delete",
+      resourceType: "project",
+      resourceId: id,
+      boardId,
+      message: `删除项目 ${String(old.name)}`,
     });
     return { id };
   }
@@ -843,6 +995,15 @@ export class KanbanRepository {
       message: `创建任务「${row.title}」。`,
       meta: { status: row.status },
     });
+    await this.recordAuditLog({
+      actor,
+      action: "task.create",
+      resourceType: "task",
+      resourceId: row.id,
+      boardId,
+      message: `创建任务 ${row.title}`,
+      metadata: { projectId, status: row.status, ownerUserId: row.owner_user_id, testerUserId: row.tester_user_id },
+    });
     return task(row, []);
   }
 
@@ -905,6 +1066,15 @@ export class KanbanRepository {
       action: "task.rework",
       message: `基于已完成任务「${current.title}」发起返工，新任务「${nextTitle}」已进入${statusLabel("backlog")}。`,
       meta: { sourceTaskId: current.id, sourceStatus: current.status, afterStatus: "backlog" },
+    });
+    await this.recordAuditLog({
+      actor,
+      action: "task.rework",
+      resourceType: "task",
+      resourceId: newTaskId,
+      boardId,
+      message: `发起返工任务 ${nextTitle}`,
+      metadata: { sourceTaskId: current.id },
     });
     return task(await this.getTaskRow(boardId, newTaskId), (await this.getSubtasks(newTaskId)).map(subtask));
   }
@@ -994,6 +1164,15 @@ export class KanbanRepository {
         changes,
       },
     });
+    await this.recordAuditLog({
+      actor,
+      action: status !== current.status ? "task.status" : "task.update",
+      resourceType: "task",
+      resourceId: id,
+      boardId,
+      message: `更新任务 ${text(input.title, current.title)}`,
+      metadata: { beforeStatus: current.status, afterStatus: status, changes },
+    });
     return task(await this.getTaskRow(boardId, id), (await this.getSubtasks(id)).map(subtask));
   }
 
@@ -1011,6 +1190,15 @@ export class KanbanRepository {
       taskId: id,
       action: "task.delete",
       message: `删除任务「${old.title}」。`,
+    });
+    await this.recordAuditLog({
+      actor,
+      action: "task.delete",
+      resourceType: "task",
+      resourceId: id,
+      boardId,
+      message: `删除任务 ${String(old.title)}`,
+      metadata: { projectId: old.project_id },
     });
     return { id };
   }
@@ -1056,6 +1244,15 @@ export class KanbanRepository {
           message: `移动任务「${old.title as string}」：${statusLabel(oldStatus)} -> ${statusLabel(item.status)}。`,
           meta: { beforeStatus: oldStatus, afterStatus: item.status },
         });
+        await this.recordAuditLog({
+          actor,
+          action: "task.status",
+          resourceType: "task",
+          resourceId: item.id,
+          boardId,
+          message: `移动任务 ${String(old.title)}`,
+          metadata: { beforeStatus: oldStatus, afterStatus: item.status },
+        });
       }
     }
     return { ok: true as const };
@@ -1095,6 +1292,15 @@ export class KanbanRepository {
       action: "subtask.create",
       message: `为「${taskRow.title}」添加任务拆解「${row.title}」。`,
     });
+    await this.recordAuditLog({
+      actor,
+      action: "subtask.create",
+      resourceType: "subtask",
+      resourceId: row.id,
+      boardId,
+      message: `创建任务拆解 ${row.title}`,
+      metadata: { taskId },
+    });
     return subtask(row);
   }
 
@@ -1128,6 +1334,15 @@ export class KanbanRepository {
       message: changes.length ? `更新任务拆解「${text(input.title, oldTitle)}」：${summarizeChanges(changes)}。` : `更新任务拆解「${text(input.title, oldTitle)}」。`,
       meta: { done: Boolean(done), changes },
     });
+    await this.recordAuditLog({
+      actor,
+      action: done !== old.done ? "subtask.toggle" : "subtask.update",
+      resourceType: "subtask",
+      resourceId: subtaskId,
+      boardId,
+      message: `更新任务拆解 ${text(input.title, oldTitle)}`,
+      metadata: { taskId, done: Boolean(done), changes },
+    });
     return subtask(await this.getSubtask(taskId, subtaskId));
   }
 
@@ -1147,6 +1362,15 @@ export class KanbanRepository {
       taskId,
       action: "subtask.delete",
       message: `删除任务拆解「${old.title}」。`,
+    });
+    await this.recordAuditLog({
+      actor,
+      action: "subtask.delete",
+      resourceType: "subtask",
+      resourceId: subtaskId,
+      boardId,
+      message: `删除任务拆解 ${String(old.title)}`,
+      metadata: { taskId },
     });
     return { id: subtaskId };
   }
@@ -1848,6 +2072,71 @@ export class KanbanRepository {
     );
   }
 
+  async recordAuditLog(input: AuditLogInput) {
+    const context = currentLogContext();
+    const actor = input.actor ?? null;
+    const row = {
+      id: crypto.randomUUID(),
+      actor_user_id: input.actorUserId ?? actor?.id ?? "",
+      actor_username: input.actorUsername ?? actor?.username ?? "",
+      actor_role: input.actorRole ?? actor?.role ?? "",
+      action: input.action,
+      resource_type: input.resourceType ?? "system",
+      resource_id: input.resourceId ?? "",
+      board_id: input.boardId ?? "",
+      result: input.result ?? "success",
+      message: input.message ?? "",
+      ip_address: typeof context.ip === "string" ? context.ip : "",
+      user_agent: typeof context.userAgent === "string" ? context.userAgent : "",
+      request_id: typeof context.requestId === "string" ? context.requestId : "",
+      metadata: JSON.stringify(input.metadata ?? {}),
+      created_at: iso(),
+    };
+
+    try {
+      await this.x(
+        "INSERT INTO audit_logs (id,actor_user_id,actor_username,actor_role,action,resource_type,resource_id,board_id,result,message,ip_address,user_agent,request_id,metadata,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+          row.id,
+          row.actor_user_id,
+          row.actor_username,
+          row.actor_role,
+          row.action,
+          row.resource_type,
+          row.resource_id,
+          row.board_id,
+          row.result,
+          row.message,
+          row.ip_address,
+          row.user_agent,
+          row.request_id,
+          row.metadata,
+          row.created_at,
+        ]
+      );
+
+      repositoryLogger.info("audit event recorded", {
+        auditId: row.id,
+        actorUserId: row.actor_user_id,
+        actorUsername: row.actor_username,
+        action: row.action,
+        resourceType: row.resource_type,
+        resourceId: row.resource_id,
+        boardId: row.board_id,
+        result: row.result,
+      });
+    } catch (error) {
+      repositoryLogger.error("audit event write failed", {
+        action: row.action,
+        resourceType: row.resource_type,
+        resourceId: row.resource_id,
+        boardId: row.board_id,
+        result: row.result,
+        ...errorFields(error),
+      });
+    }
+  }
+
   async ensureAnotherActiveSuperAdmin(excludedUserId: string) {
     const count = Number((await this.q("SELECT COUNT(*) AS count FROM users WHERE role='super_admin' AND is_active=1 AND id<>?", [excludedUserId]))[0]?.count ?? 0);
     if (count <= 0) throw new Error("At least one super admin is required");
@@ -2097,6 +2386,26 @@ function activityRow(row: Record<string, unknown>) {
     action: String(row.action),
     message: String(row.message),
     meta: json(String(row.meta ?? "{}")),
+    createdAt: String(row.created_at),
+  };
+}
+
+function auditLogRow(row: Record<string, unknown>): AuditLogEntry {
+  return {
+    id: String(row.id),
+    actorUserId: String(row.actor_user_id ?? ""),
+    actorUsername: String(row.actor_username ?? ""),
+    actorRole: String(row.actor_role ?? ""),
+    action: String(row.action),
+    resourceType: String(row.resource_type ?? "system"),
+    resourceId: String(row.resource_id ?? ""),
+    boardId: String(row.board_id ?? ""),
+    result: String(row.result ?? "success"),
+    message: String(row.message ?? ""),
+    ipAddress: String(row.ip_address ?? ""),
+    userAgent: String(row.user_agent ?? ""),
+    requestId: String(row.request_id ?? ""),
+    metadata: json(String(row.metadata ?? "{}")),
     createdAt: String(row.created_at),
   };
 }

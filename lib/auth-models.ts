@@ -71,3 +71,21 @@ export type TeamSummary = {
   createdAt: string;
   updatedAt: string;
 };
+
+export type AuditLogEntry = {
+  id: string;
+  actorUserId: string;
+  actorUsername: string;
+  actorRole: string;
+  action: string;
+  resourceType: string;
+  resourceId: string;
+  boardId: string;
+  result: string;
+  message: string;
+  ipAddress: string;
+  userAgent: string;
+  requestId: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};

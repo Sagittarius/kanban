@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0 - 2026-06-28
+- 引入统一结构化 JSON 运行日志，API 请求自动记录 requestId、方法、路径、状态码、耗时、IP 和 UA。
+- 支持通过 `KANBAN_LOG_LEVEL`、`KANBAN_LOG_CONSOLE`、`KANBAN_LOG_FILE`、`KANBAN_LOG_DIR` 配置控制台和文件日志。
+- 新增 `audit_logs` 审计表，记录登录、退出、用户管理、看板、团队、系统参数、项目、任务和拆解任务等关键操作。
+- 后台管理新增 `审计` 页签，支持查看和搜索最近审计记录。
+- SQLite、PostgreSQL 和 SQLite 到 PostgreSQL 迁移链路补齐审计日志表。
+- Docker 运行镜像改为只安装生产依赖，并默认将容器日志文件写入 `/data/logs/kanban.log`。
+- `.dockerignore` 排除 `_deliverables`、本地构建缓存和系统临时文件，避免内网部署包和本地文件进入构建上下文。
+
 ## 1.3.1 - 2026-06-28
 - 增加 `开发经理` 角色，并补充用户职位、技术栈画像字段。
 - 用户信息增加手机号，后台用户管理与个人名片同步展示。

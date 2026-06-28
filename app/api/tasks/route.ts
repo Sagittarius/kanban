@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
 import { guardMaintenanceApi } from "@/lib/maintenance";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { errorMessage, errorStatus, requireActiveBoardContext } from "@/lib/server-session";
 
-export async function POST(request: Request) {
+export const POST = withApiLogging("tasks.create", async function POST(request: Request) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -20,4 +21,4 @@ export async function POST(request: Request) {
       { status: errorStatus(error) }
     );
   }
-}
+});

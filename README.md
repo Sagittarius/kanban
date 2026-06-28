@@ -25,7 +25,9 @@
 - 团队工作饱和度 dashboard，支持多团队、多项目筛选、浅色/暗色方案和公开访问开关
 - 系统参数表，可配置临期天数和活动记录保留天数
 - 独立全局活动记录面板，记录项目、任务、任务拆解和跨阶段移动，并按保留天数自动清理
-- SQLite/PostgreSQL 持久化项目、任务、任务拆解、系统参数和活动记录
+- 结构化 JSON 运行日志，支持控制台和文件输出，API 请求自动记录 requestId、耗时、状态码、IP 和 UA
+- 登录用户审计日志，记录认证、后台管理、看板、团队、系统参数、项目、任务和拆解任务等关键操作
+- SQLite/PostgreSQL 持久化项目、任务、任务拆解、系统参数、活动记录和审计日志
 
 ## 版本维护
 
@@ -345,6 +347,8 @@ Start-Service project-kanban-board
 
 项目支持在 `amd64` 和 `arm64` 架构上构建。
 
+运行镜像使用多阶段构建：builder 阶段安装完整依赖并编译，runner 阶段只安装生产依赖，避免 eslint、wrangler、tailwind、drizzle-kit、typescript 等开发依赖进入最终镜像。
+
 本地单平台构建：
 
 ```bash
@@ -629,11 +633,21 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 | `KANBAN_MAINTENANCE_TOKEN` | - | 维护页手工升级口令，`KANBAN_AUTO_UPGRADE=false` 时建议配置 |
 | `KANBAN_IMAGE_TAG` | `kanban:<version>` | 维护页和 footer 展示的运行镜像标识，支持 `{version}` 占位符 |
 | `KANBAN_DEFAULT_BOARD_ID` | `default-board` | 新部署初始化默认看板时使用的看板 ID |
+| `KANBAN_LOG_LEVEL` | `info`/开发为 `debug` | 结构化运行日志级别：`debug`、`info`、`warn`、`error` |
+| `KANBAN_LOG_CONSOLE` | `true` | 是否输出 JSON 日志到 stdout/stderr，设置为 `false` 可关闭 |
+| `KANBAN_LOG_FILE` | - | 指定完整日志文件路径，例如 `/data/logs/kanban.log` |
+| `KANBAN_LOG_DIR` | Docker 为 `/data/logs` | 未设置 `KANBAN_LOG_FILE` 时，日志写入该目录下的 `kanban.log` |
 | `POSTGRES_URL` | - | PostgreSQL 连接字符串，仅 PostgreSQL 模式使用 |
 
 ## 活动记录
 
-活动记录是全局审计日志，不属于某个任务详情。项目创建、项目更新、归档/恢复、任务创建、任务更新、状态变更、删除、跨阶段移动、任务拆解创建/勾选/删除会写入 `task_activity` 表。纯拖拽排序只保存卡片位置，不写活动记录。跨阶段移动会记录任务名称和阶段变化。访问看板或活动接口时会按系统参数 `activity_retention_days` 自动清理过期记录，默认保留 180 天。
+活动记录是面向看板协作的业务动态，不属于某个任务详情。项目创建、项目更新、归档/恢复、任务创建、任务更新、状态变更、删除、跨阶段移动、任务拆解创建/勾选/删除会写入 `task_activity` 表。纯拖拽排序只保存卡片位置，不写活动记录。跨阶段移动会记录任务名称和阶段变化。访问看板或活动接口时会按系统参数 `activity_retention_days` 自动清理过期记录，默认保留 180 天。
+
+## 日志与审计
+
+服务端运行日志统一输出为结构化 JSON。API 入口会记录 `requestId`、`operation`、HTTP 方法、路径、状态码、耗时、IP 和 User-Agent；未捕获异常和前端运行时上报的 client error 会记录错误名称、消息和堆栈。生产 Docker 镜像默认设置 `KANBAN_LOG_DIR=/data/logs`，因此会同时输出控制台日志并写入 `/data/logs/kanban.log`。
+
+审计日志存放在 `audit_logs` 表，和普通协作活动记录分离。登录成功/失败、退出登录、修改密码、用户管理、看板管理、团队管理、系统参数、项目、任务、任务拆解和跨阶段移动等关键操作都会写入审计表。后台管理提供 `审计` 页签，超管可查看最近全局审计记录，项目经理只查看自己的审计记录。
 
 ## 数据库
 
@@ -644,7 +658,7 @@ pnpm run db:migrate:sqlite-to-postgres:check
 pnpm run db:migrate:sqlite-to-postgres
 ```
 
-schema 位于 `db/schema.ts`，SQLite 迁移文件位于 `drizzle/`，PostgreSQL 迁移文件位于 `migrations/postgres/`。系统参数存放在 `system_parameters` 表，当前包含 `due_soon_days`、`activity_retention_days`、`task_card_stripe_enabled`、看板名称和阶段名称等参数，前端系统参数抽屉和 `/api/settings` 会读写这些值。任务完成时间存放在 `tasks.completed_at`，用于判断已完成任务是否超期完成。
+schema 位于 `db/schema.ts`，SQLite 迁移文件位于 `drizzle/`，PostgreSQL 迁移文件位于 `migrations/postgres/`。系统参数存放在 `system_parameters` 表，当前包含 `due_soon_days`、`activity_retention_days`、`task_card_stripe_enabled`、看板名称和阶段名称等参数，前端系统参数抽屉和 `/api/settings` 会读写这些值。任务完成时间存放在 `tasks.completed_at`，用于判断已完成任务是否超期完成。登录用户审计记录存放在 `audit_logs` 表，SQLite 到 PostgreSQL 迁移脚本会同步迁移该表。
 
 ## 镜像版本
 

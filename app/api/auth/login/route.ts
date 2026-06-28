@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
+import { withApiLogging } from "@/lib/api-logging";
 import { createSessionToken, SESSION_COOKIE, sessionCookieOptions } from "@/lib/auth";
 import { verifyPassword } from "@/lib/password";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 
-export async function POST(request: Request) {
+export const POST = withApiLogging("auth.login", async function POST(request: Request) {
   try {
     const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
     const username = typeof body.username === "string" ? body.username.trim() : "";
@@ -17,6 +18,14 @@ export async function POST(request: Request) {
     const active = row?.is_active === 1 || row?.is_active === true;
     const passwordHash = typeof row?.password_hash === "string" ? row.password_hash : "";
     if (!row || !active || !(await verifyPassword(password, passwordHash))) {
+      await repo.recordAuditLog({
+        actorUsername: username,
+        action: "auth.login",
+        resourceType: "user",
+        result: "failure",
+        message: "登录失败：用户名或密码错误",
+        metadata: { active: Boolean(row && active) },
+      });
       return NextResponse.json({ error: "用户名或密码错误" }, { status: 401 });
     }
 
@@ -28,6 +37,13 @@ export async function POST(request: Request) {
 
     const response = NextResponse.json({ user });
     response.cookies.set(SESSION_COOKIE, await createSessionToken(user.id), sessionCookieOptions());
+    await repo.recordAuditLog({
+      actor: user,
+      action: "auth.login",
+      resourceType: "user",
+      resourceId: user.id,
+      message: "用户登录成功",
+    });
     return response;
   } catch (error) {
     return NextResponse.json(
@@ -35,4 +51,4 @@ export async function POST(request: Request) {
       { status: 500 }
     );
   }
-}
+});
