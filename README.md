@@ -635,8 +635,12 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 | `KANBAN_DEFAULT_BOARD_ID` | `default-board` | 新部署初始化默认看板时使用的看板 ID |
 | `KANBAN_LOG_LEVEL` | `info`/开发为 `debug` | 结构化运行日志级别：`debug`、`info`、`warn`、`error` |
 | `KANBAN_LOG_CONSOLE` | `true` | 是否输出 JSON 日志到 stdout/stderr，设置为 `false` 可关闭 |
+| `KANBAN_LOG_FILE_ENABLED` | `true` | 是否写入文件日志，设置为 `false` 时即使配置了 `KANBAN_LOG_DIR` 也不会写 `kanban.log` |
 | `KANBAN_LOG_FILE` | - | 指定完整日志文件路径，例如 `/data/logs/kanban.log` |
 | `KANBAN_LOG_DIR` | Docker 为 `/data/logs` | 未设置 `KANBAN_LOG_FILE` 时，日志写入该目录下的 `kanban.log` |
+| `KANBAN_LOG_MAX_SIZE_MB` | `50` | 单个日志文件超过该大小后滚动，设置为 `0` 可关闭按大小滚动 |
+| `KANBAN_LOG_MAX_FILES` | `10` | 最多保留的滚动日志文件数，设置为 `0` 可关闭按数量清理 |
+| `KANBAN_LOG_RETENTION_DAYS` | `30` | 滚动日志保留天数，设置为 `0` 可关闭按时间清理 |
 | `POSTGRES_URL` | - | PostgreSQL 连接字符串，仅 PostgreSQL 模式使用 |
 
 ## 活动记录
@@ -645,7 +649,7 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 
 ## 日志与审计
 
-服务端运行日志统一输出为结构化 JSON。API 入口会记录 `requestId`、`operation`、HTTP 方法、路径、状态码、耗时、IP 和 User-Agent；未捕获异常和前端运行时上报的 client error 会记录错误名称、消息和堆栈。生产 Docker 镜像默认设置 `KANBAN_LOG_DIR=/data/logs`，因此会同时输出控制台日志并写入 `/data/logs/kanban.log`。
+服务端运行日志统一输出为结构化 JSON。API 入口会记录 `requestId`、`operation`、HTTP 方法、路径、状态码、耗时、IP 和 User-Agent；未捕获异常和前端运行时上报的 client error 会记录错误名称、消息和堆栈。生产 Docker 镜像默认设置 `KANBAN_LOG_DIR=/data/logs`，因此会同时输出控制台日志并写入 `/data/logs/kanban.log`。如只依赖 Docker 控制台日志，可设置 `KANBAN_LOG_FILE_ENABLED=false` 关闭文件日志。文件日志默认单文件 50MB 滚动，最多保留 10 个滚动文件，并清理超过 30 天的滚动日志。
 
 审计日志存放在 `audit_logs` 表，和普通协作活动记录分离。登录成功/失败、退出登录、修改密码、用户管理、看板管理、团队管理、系统参数、项目、任务、任务拆解和跨阶段移动等关键操作都会写入审计表。后台管理提供 `审计` 页签，超管可查看最近全局审计记录，项目经理只查看自己的审计记录。
 
