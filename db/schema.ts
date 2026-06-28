@@ -98,6 +98,7 @@ export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
   boardId: text("board_id").notNull().default("default-board"),
   teamId: text("team_id").notNull().default(""),
+  ownerUserId: text("owner_user_id").notNull().default(""),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   owner: text("owner").notNull(),
@@ -111,6 +112,7 @@ export const projects = sqliteTable("projects", {
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 }, (table) => ({
   boardIdx: index("projects_board_id_idx").on(table.boardId),
+  ownerIdx: index("projects_owner_user_id_idx").on(table.ownerUserId),
 }));
 
 export const tasks = sqliteTable("tasks", {

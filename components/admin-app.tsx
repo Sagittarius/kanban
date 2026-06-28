@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
-import { Check, UserMinus } from "lucide-react";
+import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
 import SharedSearchMultiSelect from "@/components/search-multi-select";
 import { isThemeId, jobTitleLabel, jobTitleOptions, techStackOptions, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type {
@@ -50,19 +50,35 @@ type SelectOption = {
   meta?: string;
 };
 
-type ConfirmState = {
-  title: string;
-  message: string;
-  tone?: "danger" | "default";
-  actionLabel?: string;
-  onConfirm: () => Promise<void> | void;
-} | null;
+type ConfirmState = ConfirmDialogAction | null;
 
 const defaultPermissions: AdminPermissions = {
   canManageUsers: false,
   canCreateSuperAdmin: false,
   canManageAllBoards: false,
 };
+
+function clientErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+async function fetchAdminJson<T>(url: string, fallback: T, errors: string[], fallbackMessage: string): Promise<T> {
+  try {
+    const response = await fetch(url);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+          ? payload.error
+          : fallbackMessage;
+      throw new Error(message);
+    }
+    return (payload ?? fallback) as T;
+  } catch (error) {
+    errors.push(clientErrorMessage(error, fallbackMessage));
+    return fallback;
+  }
+}
 
 const roleLabels: Record<UserRole, string> = {
   super_admin: "超管",
@@ -122,19 +138,35 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const initialized = useRef(false);
 
   async function refresh() {
-    const [userPayload, teamPayload, boardRows, auditPayload] = await Promise.all([
-      fetch("/api/admin/users").then((response) => response.json() as Promise<UsersResponse>),
-      fetch("/api/admin/teams").then((response) => response.json() as Promise<TeamsResponse>),
-      fetch("/api/admin/boards").then((response) => response.json() as Promise<AdminBoard[]>),
-      fetch("/api/admin/audit-logs").then((response) => response.json() as Promise<AuditLogsResponse>),
+    const errors: string[] = [];
+    const emptyUsers: UsersResponse = { users: [], assignableUsers: [], permissions: defaultPermissions };
+    const emptyTeams: TeamsResponse = { teams: [], assignableUsers: [], permissions: defaultPermissions };
+    const emptyAuditLogs: AuditLogsResponse = { auditLogs: [] };
+    const [userPayload, teamPayload, boardPayload, auditPayload] = await Promise.all([
+      fetchAdminJson("/api/admin/users", emptyUsers, errors, "加载用户失败"),
+      fetchAdminJson("/api/admin/teams", emptyTeams, errors, "加载团队失败"),
+      fetchAdminJson("/api/admin/boards", [] as AdminBoard[], errors, "加载看板失败"),
+      fetchAdminJson("/api/admin/audit-logs", emptyAuditLogs, errors, "加载审计日志失败"),
     ]);
-    setUsers(userPayload.users ?? []);
-    setAssignableUsers(teamPayload.assignableUsers ?? userPayload.assignableUsers ?? []);
-    setTeams(teamPayload.teams ?? []);
+    const userRows = Array.isArray(userPayload.users) ? userPayload.users : [];
+    const assignableRows = Array.isArray(teamPayload.assignableUsers)
+      ? teamPayload.assignableUsers
+      : Array.isArray(userPayload.assignableUsers)
+        ? userPayload.assignableUsers
+        : [];
+    const teamRows = Array.isArray(teamPayload.teams) ? teamPayload.teams : [];
+    const boardRows = Array.isArray(boardPayload) ? boardPayload : [];
+    const auditRows = Array.isArray(auditPayload.auditLogs) ? auditPayload.auditLogs : [];
+    setUsers(userRows);
+    setAssignableUsers(assignableRows);
+    setTeams(teamRows);
     setPermissions(userPayload.permissions ?? teamPayload.permissions ?? defaultPermissions);
-    setBoards(boardRows ?? []);
-    setAuditLogs(auditPayload.auditLogs ?? []);
-    const nextBoard = boardRows?.find((board) => board.id === selectedBoardId) ?? boardRows?.[0];
+    setBoards(boardRows);
+    setAuditLogs(auditRows);
+    if (errors.length > 0) {
+      setMessage([...new Set(errors)].join("；"));
+    }
+    const nextBoard = boardRows.find((board) => board.id === selectedBoardId) ?? boardRows[0];
     setSelectedBoardId(nextBoard?.id ?? "");
     setBoardTeamDraft(nextBoard?.teamIds ?? []);
   }
@@ -479,7 +511,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               onChange={(value) => changeTheme(value as ThemeId)}
               placeholder="配色方案"
             />
-            <Link href="/" className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
+            <Link href="/" prefetch={false} className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
               返回看板
             </Link>
           </div>
@@ -504,6 +536,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
           ))}
           <Link
             href="/dashboard"
+            prefetch={false}
             className="ml-auto inline-flex h-10 items-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--hover)]"
           >
             项目负载大屏
@@ -1242,50 +1275,6 @@ function EmptyState({ text }: { text: string }) {
   return (
     <div className="grid min-h-[180px] place-items-center rounded-xl border border-dashed border-[var(--border)] bg-[var(--panel-soft)] text-sm text-[var(--muted)]">
       {text}
-    </div>
-  );
-}
-
-function ConfirmDialog({
-  title,
-  message,
-  tone = "default",
-  actionLabel = "确认",
-  onClose,
-  onConfirm,
-}: {
-  title: string;
-  message: string;
-  tone?: "danger" | "default";
-  actionLabel?: string;
-  onClose: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-[140] flex items-center justify-center bg-slate-950/30 px-4">
-      <div className="w-full max-w-[420px] rounded-[24px] border border-white/70 bg-white p-6 shadow-2xl">
-        <div className="flex items-start gap-3">
-          <div className={`grid h-10 w-10 place-items-center rounded-2xl ${tone === "danger" ? "bg-[#fff1ef] text-[#c7523d]" : "bg-slate-100 text-slate-700"}`}>
-            {tone === "danger" ? <UserMinus size={18} /> : <Check size={18} />}
-          </div>
-          <div className="min-w-0">
-            <h3 className="text-lg font-semibold text-slate-900">{title}</h3>
-            <p className="mt-2 text-sm leading-6 text-slate-600">{message}</p>
-          </div>
-        </div>
-        <div className="mt-6 flex justify-end gap-3">
-          <button type="button" onClick={onClose} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
-            取消
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className={`h-10 rounded-xl px-4 text-sm font-semibold text-white ${tone === "danger" ? "bg-[#c7523d]" : "bg-[var(--accent)]"}`}
-          >
-            {actionLabel}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

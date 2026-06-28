@@ -24,6 +24,7 @@ import {
   Copyright,
   Download,
   Edit3,
+  Eye,
   FolderPlus,
   LayoutGrid,
   PanelRightOpen,
@@ -37,15 +38,18 @@ import {
   X,
 } from "lucide-react";
 import { utils, writeFileXLSX } from "xlsx";
+import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
 import SearchMultiSelect, { type MultiSelectOption } from "@/components/search-multi-select";
 import {
   useEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import {
   columnsFromSettings,
   defaultSystemSettings,
@@ -107,6 +111,7 @@ type ProjectForm = {
   name: string;
   description: string;
   teamId: string;
+  ownerUserId: string;
   owner: string;
   color: string;
   health: ProjectHealth;
@@ -160,6 +165,7 @@ const themePresets: Array<{ id: ThemeId; label: string }> = [
 const fallbackProject: Project = {
   id: "unassigned",
   teamId: "",
+  ownerUserId: "",
   name: "未归属",
   description: "",
   owner: "未分配",
@@ -553,6 +559,15 @@ function membersForProject(projects: Project[], teams: BoardTeamOption[], projec
   return teamForProject(teams, project)?.members ?? [];
 }
 
+function membersForTeam(teams: BoardTeamOption[], teamId: string) {
+  return teams.find((team) => team.id === teamId)?.members ?? [];
+}
+
+function projectOwnerUserIdFromOwner(teams: BoardTeamOption[], teamId: string, owner: string) {
+  const normalizedOwner = owner.trim();
+  return membersForTeam(teams, teamId).find((member) => userName(member) === normalizedOwner || member.username === normalizedOwner)?.id ?? "";
+}
+
 function userName(user: BoardUserOption | null | undefined) {
   return user ? user.displayName || user.username : "";
 }
@@ -747,6 +762,7 @@ export default function KanbanApp({
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogAction | null>(null);
   const localIdCounter = useRef(0);
   const metricRef = useRef<HTMLDivElement>(null);
   const dragStartTasksRef = useRef<BoardTask[] | null>(null);
@@ -770,6 +786,7 @@ export default function KanbanApp({
     name: "",
     description: "",
     teamId: "",
+    ownerUserId: "",
     owner: "",
     color: "#1f6f68",
     health: "normal",
@@ -998,6 +1015,7 @@ export default function KanbanApp({
     setProjectDraft({
       name: project?.name ?? "",
       description: project?.description ?? "",
+      ownerUserId: project ? project.ownerUserId || projectOwnerUserIdFromOwner(boardTeams, project.teamId, project.owner) : "",
       owner: project?.owner ?? "",
       teamId: project?.teamId ?? "",
       color: project?.color ?? "#1f6f68",
@@ -1033,6 +1051,16 @@ export default function KanbanApp({
     window.setTimeout(() => {
       setToasts((current) => current.filter((toast) => toast.id !== id));
     }, 2800);
+  }
+
+  function showNotice(message: string, title = "提示") {
+    setConfirmDialog({
+      title,
+      message,
+      actionLabel: "知道了",
+      showCancel: false,
+      onConfirm: () => setConfirmDialog(null),
+    });
   }
 
   async function persistProject(projectId: string, patch: Partial<Project>, successMessage = "项目已保存") {
@@ -1089,6 +1117,10 @@ export default function KanbanApp({
       notify("请选择团队", "error");
       return;
     }
+    if (!projectDraft.ownerUserId) {
+      notify("请选择负责人", "error");
+      return;
+    }
 
     if (selectedProject) {
       await persistProject(selectedProject.id, projectDraft, "项目已保存");
@@ -1098,9 +1130,10 @@ export default function KanbanApp({
     const optimistic: Project = {
       id: nextLocalId("local-project"),
       teamId: projectDraft.teamId,
+      ownerUserId: projectDraft.ownerUserId,
       name: projectDraft.name.trim(),
       description: projectDraft.description.trim(),
-      owner: projectDraft.owner.trim() || "未分配",
+      owner: projectDraft.owner.trim(),
       color: projectDraft.color,
       health: projectDraft.health,
       status: "active",
@@ -1144,11 +1177,24 @@ export default function KanbanApp({
     }
   }
 
-  async function removeProject(projectId: string) {
+  function removeProject(projectId: string) {
     const project = board.projects.find((item) => item.id === projectId);
-    if (!project || !window.confirm(`删除项目「${project.name}」及其任务？`)) {
+    if (!project) {
       return;
     }
+    setConfirmDialog({
+      title: "删除项目",
+      message: `确认删除项目「${project.name}」及其任务？此操作会同时移除项目下的任务。`,
+      tone: "danger",
+      actionLabel: "删除",
+      onConfirm: () => void executeRemoveProject(projectId),
+    });
+  }
+
+  async function executeRemoveProject(projectId: string) {
+    const project = board.projects.find((item) => item.id === projectId);
+    if (!project) return;
+    setConfirmDialog(null);
 
     setBoard((current) => ({
       ...current,
@@ -1220,16 +1266,20 @@ export default function KanbanApp({
   async function createTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    const projectId = newTask.projectId;
+    const projectId = newTask.projectId || activeProjects[0]?.id || sortedProjects[0]?.id || "";
     const projectMembers = membersForProject(board.projects, boardTeams, projectId);
     const owner = projectMembers.find((member) => member.id === newTask.ownerUserId);
     const tester = projectMembers.find((member) => member.id === newTask.testerUserId);
-    if (!newTask.title.trim() || !projectId) {
-      notify(!projectId ? "请选择项目" : "请输入任务名称", "error");
+    if (!newTask.title.trim()) {
+      showNotice("请输入任务名称。", "无法添加任务");
       return;
     }
-    if (!owner) {
-      notify("请选择负责人", "error");
+    if (!newTask.description.trim()) {
+      showNotice("请输入任务描述。", "无法添加任务");
+      return;
+    }
+    if (!projectId) {
+      showNotice("当前没有可用项目，请先创建项目。", "无法添加任务");
       return;
     }
     const optimistic: BoardTask = {
@@ -1658,7 +1708,7 @@ export default function KanbanApp({
       statusLabel: column.title,
     }))
   );
-  const newTaskProjectId = newTask.projectId;
+  const newTaskProjectId = newTask.projectId || activeProjects[0]?.id || sortedProjects[0]?.id || "";
   const newTaskMembers = membersForProject(board.projects, boardTeams, newTaskProjectId);
   const themeOptions = themePresets.map((theme) => ({ value: theme.id, label: theme.label }));
   const activeProjectOptions = activeProjects.map((project) => ({
@@ -1804,51 +1854,53 @@ export default function KanbanApp({
         </header>
 
         <section className="grid min-h-0 gap-4 lg:grid-cols-[320px_minmax(0,1fr)] 2xl:grid-cols-[340px_minmax(0,1fr)]">
-          <aside className="min-h-0 space-y-4 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-4">
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <h2 className="text-sm font-semibold">项目</h2>
-                {canManageProjects ? (
-                  <button
-                    type="button"
-                    title="新建项目"
-                    onClick={() => openProject(null)}
-                    className="rounded-md border border-[var(--border)] p-2 text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
-                  >
-                    <FolderPlus size={16} />
-                  </button>
-                ) : null}
-              </div>
+          <aside className="min-h-0 space-y-3 overflow-y-auto rounded-lg border border-[var(--border)] bg-[var(--panel)] p-3">
+            <SidebarSection
+              title="项目导航"
+              icon={<LayoutGrid size={15} />}
+              action={canManageProjects ? (
+                <button
+                  type="button"
+                  title="新建项目"
+                  onClick={() => openProject(null)}
+                  className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-2 text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
+                >
+                  <FolderPlus size={16} />
+                </button>
+              ) : null}
+            >
               <button
                 type="button"
                 onClick={() => setProjectFilter("all")}
-                className={`flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm transition ${
+                className={`flex w-full items-center justify-between rounded-md px-3 py-2.5 text-left text-sm transition ${
                   projectFilter === "all"
                     ? "bg-[var(--text)] text-[var(--panel)]"
-                    : "text-[var(--text)] hover:bg-[var(--panel-soft)]"
+                    : "bg-[var(--panel)] text-[var(--text)] hover:bg-[var(--panel-soft)]"
                 }`}
               >
-                <span>全部活跃项目</span>
-                <span>{activeProjects.length}</span>
+                <span className="font-medium">全部活跃项目</span>
+                <span className="rounded bg-black/10 px-2 py-0.5 text-xs font-semibold">{activeProjects.length}</span>
               </button>
-              {activeProjects.map((project) => (
-                <ProjectRow
-                  key={project.id}
-                  project={project}
-                  selected={projectFilter === project.id}
-                  taskCount={board.tasks.filter((task) => task.projectId === project.id).length}
-                  onSelect={() => {
-                    setProjectFilter(project.id);
-                    setSelectedProjectId(project.id);
-                  }}
-                  onEdit={canManageProjects ? () => openProject(project) : undefined}
-                  onArchive={canManageProjects ? () => void persistProject(project.id, { status: "archived" }, "项目已归档") : undefined}
-                />
-              ))}
-            </div>
+              <div className="grid gap-2">
+                {activeProjects.map((project) => (
+                  <ProjectRow
+                    key={project.id}
+                    project={project}
+                    selected={projectFilter === project.id}
+                    taskCount={board.tasks.filter((task) => task.projectId === project.id).length}
+                    onSelect={() => {
+                      setProjectFilter(project.id);
+                      setSelectedProjectId(project.id);
+                    }}
+                    onView={!canManageProjects ? () => openProject(project) : undefined}
+                    onEdit={canManageProjects ? () => openProject(project) : undefined}
+                    onArchive={canManageProjects ? () => void persistProject(project.id, { status: "archived" }, "项目已归档") : undefined}
+                  />
+                ))}
+              </div>
+            </SidebarSection>
 
-            <div className="space-y-2 border-t border-[var(--border)] pt-4">
-              <h2 className="text-sm font-semibold">筛选</h2>
+            <SidebarSection title="任务筛选" icon={<SlidersHorizontal size={15} />}>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-3 top-2.5 text-[var(--muted)]" size={15} />
                 <input
@@ -1869,16 +1921,17 @@ export default function KanbanApp({
                   </button>
                 ) : null}
               </div>
-              <div className="grid grid-cols-3 gap-1">
+              <div className="grid grid-cols-4 gap-1 rounded-lg border border-[var(--border)] bg-[var(--input)] p-1 shadow-inner">
                 {(["all", "high", "medium", "low"] as const).map((priority) => (
                   <button
                     key={priority}
                     type="button"
+                    aria-pressed={priorityFilter === priority}
                     onClick={() => setPriorityFilter(priority)}
-                    className={`rounded-md px-2 py-2 text-sm transition ${
+                    className={`rounded-md border px-2 py-2 text-sm font-semibold shadow-sm transition active:scale-[0.98] ${
                       priorityFilter === priority
-                        ? "bg-[var(--text)] text-[var(--panel)]"
-                        : "bg-[var(--panel-soft)] text-[var(--text)] hover:bg-[var(--hover)]"
+                        ? "border-[var(--text)] bg-[var(--text)] text-[var(--panel)]"
+                        : "border-[var(--border)] bg-[var(--panel)] text-[var(--text)] hover:border-[var(--accent)] hover:bg-[var(--panel-soft)]"
                     }`}
                   >
                     {priority === "all" ? "全部" : priorityLabels[priority]}
@@ -1890,65 +1943,68 @@ export default function KanbanApp({
                 selected={tagFilters}
                 onChange={setTagFilters}
               />
-            </div>
+            </SidebarSection>
 
-            <form onSubmit={createTask} className="space-y-3 border-t border-[var(--border)] pt-4">
-              <div className="flex items-center gap-2">
-                <Plus size={16} />
-                <h2 className="text-sm font-semibold">新任务</h2>
-              </div>
-              <input
-                name="newTaskTitle"
-                value={newTask.title}
-                onChange={(event) => setNewTask((current) => ({ ...current, title: event.target.value }))}
-                placeholder="任务名称"
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
-              />
-              <textarea
-                name="newTaskDescription"
-                value={newTask.description}
-                onChange={(event) => setNewTask((current) => ({ ...current, description: event.target.value }))}
-                placeholder="任务描述"
-                rows={5}
-                className="min-h-[132px] w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
-              />
-              <div>
-                {activeProjectOptions.length > 0 ? (
-                  <SearchableSelect
-                    value={newTaskProjectId}
-                    options={activeProjectOptions}
-                    onChange={(value) =>
-                      setNewTask((current) => ({
-                        ...current,
-                        projectId: value,
-                        ownerUserId: "",
-                        owner: "",
-                        testerUserId: "",
-                        tester: "",
-                      }))
-                    }
-                    placeholder="选择项目"
-                    clearable
+            <SidebarSection title="新任务" icon={<Plus size={15} />}>
+              <form onSubmit={createTask} className="grid gap-3.5">
+                <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                  <span>任务名称<RequiredMark /></span>
+                  <input
+                    name="newTaskTitle"
+                    value={newTask.title}
+                    onChange={(event) => setNewTask((current) => ({ ...current, title: event.target.value }))}
+                    placeholder="输入任务名称"
+                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
                   />
-                ) : canManageProjects ? (
-                  <button
-                    type="button"
-                    onClick={() => openProject(null)}
-                    className="h-10 w-full rounded-md border border-dashed border-[var(--border)] bg-[var(--panel-soft)] text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--text)]"
-                  >
-                    创建项目
-                  </button>
-                ) : (
-                  <div className="grid h-10 place-items-center rounded-md border border-dashed border-[var(--border)] bg-[var(--panel-soft)] text-sm text-[var(--muted)]">
-                    暂无可选项目
-                  </div>
-                )}
-              </div>
-              {newTaskProjectId && newTaskMemberOptions.length === 0 ? (
-                <div className="rounded-md border border-dashed border-[var(--border)] bg-[var(--panel-soft)] px-3 py-3 text-sm text-[var(--muted)]">
-                  当前项目没有可用团队成员，请先在后台管理创建团队并把项目绑定到团队。
+                </label>
+                <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                  <span>任务描述<RequiredMark /></span>
+                  <textarea
+                    name="newTaskDescription"
+                    value={newTask.description}
+                    onChange={(event) => setNewTask((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="输入任务描述"
+                    rows={4}
+                    className="min-h-[112px] w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                  />
+                </label>
+                <div className="grid gap-1.5 text-sm text-[var(--muted)]">
+                  <span>项目<RequiredMark /></span>
+                  {activeProjectOptions.length > 0 ? (
+                    <SearchableSelect
+                      value={newTaskProjectId || activeProjectOptions[0]?.value || ""}
+                      options={activeProjectOptions}
+                      onChange={(value) =>
+                        setNewTask((current) => ({
+                          ...current,
+                          projectId: value,
+                          ownerUserId: "",
+                          owner: "",
+                          testerUserId: "",
+                          tester: "",
+                        }))
+                      }
+                      placeholder="选择项目"
+                    />
+                  ) : canManageProjects ? (
+                    <button
+                      type="button"
+                      onClick={() => openProject(null)}
+                      className="h-10 w-full rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--text)]"
+                    >
+                      创建项目
+                    </button>
+                  ) : (
+                    <div className="grid h-10 place-items-center rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] text-sm text-[var(--muted)]">
+                      暂无可选项目
+                    </div>
+                  )}
+                  {newTaskProjectId && newTaskMemberOptions.length === 0 ? (
+                    <div className="rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] px-3 py-3 text-xs leading-5 text-[var(--muted)]">
+                      当前项目没有可用团队成员，可先创建任务，稍后在后台管理维护团队成员。
+                    </div>
+                  ) : null}
                 </div>
-              ) : (
                 <div className="grid grid-cols-2 gap-2">
                   <SearchableSelect
                     value={newTask.ownerUserId}
@@ -1957,8 +2013,9 @@ export default function KanbanApp({
                       const member = newTaskMembers.find((item) => item.id === value);
                       setNewTask((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
                     }}
-                    placeholder="负责人"
+                    placeholder={newTaskProjectId ? "负责人" : "先选择项目"}
                     clearable
+                    disabled={!newTaskProjectId}
                   />
                   <SearchableSelect
                     value={newTask.testerUserId}
@@ -1967,55 +2024,54 @@ export default function KanbanApp({
                       const member = newTaskMembers.find((item) => item.id === value);
                       setNewTask((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
                     }}
-                    placeholder="测试员"
+                    placeholder={newTaskProjectId ? "测试员" : "先选择项目"}
                     clearable
+                    disabled={!newTaskProjectId}
                   />
                 </div>
-              )}
-              <div className="grid grid-cols-2 gap-2">
-                <SearchableSelect
-                  value={newTask.priority}
-                  options={priorityOptions}
-                  onChange={(value) => setNewTask((current) => ({ ...current, priority: value as Priority }))}
-                  placeholder="优先级"
-                />
-                <input
-                  name="newTaskWorkloadDays"
-                  type="number"
-                  min="0.5"
-                  step="0.5"
-                  value={newTask.workloadDays}
-                  onChange={(event) => setNewTask((current) => ({ ...current, workloadDays: event.target.value }))}
-                  placeholder="工作量（人日）"
-                  className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
-                />
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="space-y-1 text-sm text-[var(--muted)]">
-                  <span>设计截止</span>
-                  <input
-                    name="newTaskDesignDueDate"
-                    type="date"
-                    placeholder="yyyy-mm-dd"
-                    value={newTask.designDueDate}
-                    onChange={(event) => setNewTask((current) => ({ ...current, designDueDate: event.target.value }))}
-                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                <div className="grid grid-cols-2 gap-2">
+                  <SearchableSelect
+                    value={newTask.priority}
+                    options={priorityOptions}
+                    onChange={(value) => setNewTask((current) => ({ ...current, priority: value as Priority }))}
+                    placeholder="优先级"
                   />
-                </label>
-                <label className="space-y-1 text-sm text-[var(--muted)]">
-                  <span>提测日期</span>
                   <input
-                    name="newTaskTestDueDate"
-                    type="date"
-                    placeholder="yyyy-mm-dd"
-                    value={newTask.testDueDate}
-                    onChange={(event) => setNewTask((current) => ({ ...current, testDueDate: event.target.value }))}
-                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                    name="newTaskWorkloadDays"
+                    type="number"
+                    min="0.5"
+                    step="0.5"
+                    value={newTask.workloadDays}
+                    onChange={(event) => setNewTask((current) => ({ ...current, workloadDays: event.target.value }))}
+                    placeholder="工作量（人日）"
+                    className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
                   />
-                </label>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <label className="space-y-1 text-sm text-[var(--muted)]">
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                    <span>设计截止</span>
+                    <input
+                      name="newTaskDesignDueDate"
+                      type="date"
+                      placeholder="yyyy-mm-dd"
+                      value={newTask.designDueDate}
+                      onChange={(event) => setNewTask((current) => ({ ...current, designDueDate: event.target.value }))}
+                      className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                    />
+                  </label>
+                  <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                    <span>提测日期</span>
+                    <input
+                      name="newTaskTestDueDate"
+                      type="date"
+                      placeholder="yyyy-mm-dd"
+                      value={newTask.testDueDate}
+                      onChange={(event) => setNewTask((current) => ({ ...current, testDueDate: event.target.value }))}
+                      className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                    />
+                  </label>
+                </div>
+                <label className="grid gap-1.5 text-sm text-[var(--muted)]">
                   <span>交付日期</span>
                   <input
                     name="newTaskDueDate"
@@ -2026,26 +2082,28 @@ export default function KanbanApp({
                     className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
                   />
                 </label>
-              </div>
-              <input
-                name="newTaskTags"
-                value={newTask.tags}
-                onChange={(event) => setNewTask((current) => ({ ...current, tags: event.target.value }))}
-                placeholder="标签，用空格或逗号分隔"
-                className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm"
-              />
-              <button
-                type="submit"
-                className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-3 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]"
-              >
-                <Plus size={15} />
-                添加任务
-              </button>
-            </form>
+                <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                  <span>标签</span>
+                  <input
+                    name="newTaskTags"
+                    value={newTask.tags}
+                    onChange={(event) => setNewTask((current) => ({ ...current, tags: event.target.value }))}
+                    placeholder="用空格或逗号分隔"
+                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                  />
+                </label>
+                <button
+                  type="submit"
+                  className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]"
+                >
+                  <Plus size={15} />
+                  添加任务
+                </button>
+              </form>
+            </SidebarSection>
 
             {archivedProjects.length > 0 ? (
-              <div className="space-y-2 border-t border-[var(--border)] pt-4">
-                <h2 className="text-sm font-semibold">归档项目</h2>
+              <SidebarSection title="归档项目" icon={<Archive size={15} />}>
                 {archivedProjects.map((project) => (
                   <button
                     key={project.id}
@@ -2057,7 +2115,7 @@ export default function KanbanApp({
                     <Archive size={14} />
                   </button>
                 ))}
-              </div>
+              </SidebarSection>
             ) : null}
           </aside>
 
@@ -2240,6 +2298,7 @@ export default function KanbanApp({
               currentUser={currentUser}
               editable={selectedTaskEditable}
               onSave={(patch) => persistTask(selectedTask.id, patch)}
+              onInvalid={showNotice}
               onRework={() => reworkTask(selectedTask.id)}
               onDelete={() => void removeTask(selectedTask.id)}
               onCreateSubtask={createSubtask}
@@ -2293,7 +2352,51 @@ export default function KanbanApp({
           ) : null}
         </Drawer>
       ) : null}
+      {confirmDialog ? (
+        <ConfirmDialog
+          title={confirmDialog.title}
+          message={confirmDialog.message}
+          tone={confirmDialog.tone}
+          actionLabel={confirmDialog.actionLabel}
+          cancelLabel={confirmDialog.cancelLabel}
+          showCancel={confirmDialog.showCancel}
+          onClose={() => setConfirmDialog(null)}
+          onConfirm={confirmDialog.onConfirm}
+        />
+      ) : null}
     </main>
+  );
+}
+
+function SidebarSection({
+  title,
+  icon,
+  action,
+  description,
+  children,
+}: {
+  title: string;
+  icon: ReactNode;
+  action?: ReactNode;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-3 rounded-lg border border-[var(--border)] bg-[var(--panel-soft)] p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold text-[var(--text)]">
+            <span className="grid h-7 w-7 shrink-0 place-items-center rounded-md bg-[var(--panel)] text-[var(--accent)]">
+              {icon}
+            </span>
+            <span>{title}</span>
+          </div>
+          {description ? <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{description}</p> : null}
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      {children}
+    </section>
   );
 }
 
@@ -2819,6 +2922,7 @@ function ProjectRow({
   selected,
   taskCount,
   onSelect,
+  onView,
   onEdit,
   onArchive,
 }: {
@@ -2826,6 +2930,7 @@ function ProjectRow({
   selected: boolean;
   taskCount: number;
   onSelect: () => void;
+  onView?: () => void;
   onEdit?: () => void;
   onArchive?: () => void;
 }) {
@@ -2840,24 +2945,45 @@ function ProjectRow({
       }}
       role="button"
       tabIndex={0}
-      className={`cursor-pointer rounded-md px-2 py-2 transition ${
-        selected ? "bg-[var(--text)] text-[var(--panel)]" : "hover:bg-[var(--panel-soft)]"
+      className={`group relative cursor-pointer overflow-hidden rounded-lg border px-3 py-2.5 shadow-sm transition ${
+        selected
+          ? "border-[var(--text)] bg-[var(--text)] text-[var(--panel)] shadow-md"
+          : "border-[var(--border)] bg-[var(--panel-soft)] text-[var(--text)] hover:border-[var(--accent)] hover:bg-[var(--hover)] hover:shadow-md"
       }`}
     >
-      <div className="flex w-full cursor-pointer items-center gap-2 text-left">
-        <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: project.color }} />
+      <span className="absolute bottom-2 left-0 top-2 w-1 rounded-r-full" style={{ backgroundColor: project.color }} />
+      <div className="flex w-full cursor-pointer items-center gap-2 pl-1 text-left">
         <span className="min-w-0 flex-1 truncate text-sm font-medium">{project.name}</span>
-        <span className="text-xs opacity-70">{taskCount}</span>
+        <span
+          className={`rounded-full border px-2 py-0.5 text-xs font-semibold ${
+            selected ? "border-white/20 bg-white/15 text-[var(--panel)]" : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)]"
+          }`}
+        >
+          {taskCount}
+        </span>
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs opacity-80">
-        <div className="flex items-center gap-2">
-          <span>{project.owner}</span>
+      <div className="mt-2 flex items-center justify-between gap-2 pl-1 text-xs">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="truncate opacity-80">{project.owner}</span>
           <span className={`rounded px-1.5 py-0.5 ${healthTone[project.health]}`}>
             {healthLabels[project.health]}
           </span>
         </div>
-        {onEdit || onArchive ? (
+        {onView || onEdit || onArchive ? (
           <div className="flex gap-1">
+            {onView ? (
+              <button
+                type="button"
+                title="查看项目"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onView();
+                }}
+                className={`rounded p-1 transition ${selected ? "hover:bg-white/20" : "hover:bg-[var(--panel)]"}`}
+              >
+                <Eye size={13} />
+              </button>
+            ) : null}
             {onEdit ? (
               <button
                 type="button"
@@ -2866,7 +2992,7 @@ function ProjectRow({
                   event.stopPropagation();
                   onEdit();
                 }}
-                className="rounded p-1 hover:bg-white/20"
+                className={`rounded p-1 transition ${selected ? "hover:bg-white/20" : "hover:bg-[var(--panel)]"}`}
               >
                 <Edit3 size={13} />
               </button>
@@ -2879,7 +3005,7 @@ function ProjectRow({
                   event.stopPropagation();
                   onArchive();
                 }}
-                className="rounded p-1 hover:bg-white/20"
+                className={`rounded p-1 transition ${selected ? "hover:bg-white/20" : "hover:bg-[var(--panel)]"}`}
               >
                 <Archive size={13} />
               </button>
@@ -3162,6 +3288,7 @@ function TaskDrawer({
   newSubtaskTitle,
   setNewSubtaskTitle,
   onSave,
+  onInvalid,
   onRework,
   onDelete,
   onCreateSubtask,
@@ -3178,6 +3305,7 @@ function TaskDrawer({
   newSubtaskTitle: string;
   setNewSubtaskTitle: (value: string) => void;
   onSave: (patch: Partial<BoardTask>) => Promise<boolean>;
+  onInvalid: (message: string, title?: string) => void;
   onRework: () => Promise<void>;
   onDelete: () => void;
   onCreateSubtask: (event: FormEvent<HTMLFormElement>) => void;
@@ -3212,18 +3340,25 @@ function TaskDrawer({
   async function saveTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!draft.title.trim()) {
+      onInvalid("请输入任务名称。", "无法保存任务");
       return;
     }
-    if (!draft.projectId || !draft.ownerUserId) {
-      window.alert(!draft.projectId ? "请选择项目" : "请选择负责人");
+    if (!draft.description.trim()) {
+      onInvalid("请输入任务描述。", "无法保存任务");
       return;
     }
+    if (!draft.projectId) {
+      onInvalid("请选择项目。", "无法保存任务");
+      return;
+    }
+    const hasDraftAssignee = Boolean(draft.ownerUserId || draft.testerUserId);
     if (
       currentUser?.role === "team_member" &&
+      hasDraftAssignee &&
       draft.ownerUserId !== currentUser.id &&
       draft.testerUserId !== currentUser.id
     ) {
-      window.alert("团队成员只能保存跟自己有关的任务");
+      onInvalid("团队成员只能保存跟自己有关的任务", "无法保存任务");
       return;
     }
 
@@ -3264,7 +3399,7 @@ function TaskDrawer({
 
       <form id="task-edit-form" onSubmit={saveTask} className="flex flex-col gap-5">
         <fieldset disabled={!editable} className="flex flex-col gap-5">
-          <Field label="任务名称">
+          <Field label="任务名称" required>
             <input
               name="taskTitle"
               value={draft.title}
@@ -3272,7 +3407,7 @@ function TaskDrawer({
             />
           </Field>
           <div className="grid grid-cols-2 gap-4">
-            <Field label="项目">
+            <Field label="项目" required>
               <SearchableSelect
                 value={draft.projectId}
                 options={taskProjectOptions}
@@ -3324,8 +3459,9 @@ function TaskDrawer({
                   const member = taskMembers.find((item) => item.id === value);
                   setDraft((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
                 }}
-                placeholder="选择负责人"
+                placeholder={draft.projectId ? "选择负责人" : "先选择项目"}
                 clearable
+                disabled={!draft.projectId}
               />
             </Field>
             <Field label="测试员">
@@ -3336,8 +3472,9 @@ function TaskDrawer({
                   const member = taskMembers.find((item) => item.id === value);
                   setDraft((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
                 }}
-                placeholder="选择测试员"
+                placeholder={draft.projectId ? "选择测试员" : "先选择项目"}
                 clearable
+                disabled={!draft.projectId}
               />
             </Field>
             <Field label="设计截止">
@@ -3366,7 +3503,7 @@ function TaskDrawer({
             </Field>
           </div>
 
-          <Field label="描述">
+          <Field label="描述" required>
             <textarea
               name="taskDescription"
               value={draft.description}
@@ -3605,6 +3742,12 @@ function ProjectDrawer({
     label: team.name,
     meta: `${team.members.length} 人`,
   }));
+  const projectMembers = membersForTeam(teams, draft.teamId);
+  const ownerOptions = projectMembers.map((member) => ({
+    value: member.id,
+    label: userName(member),
+    meta: `@${member.username}`,
+  }));
   const healthOptions: SelectOption[] = [
     { value: "good", label: healthLabels.good },
     { value: "normal", label: healthLabels.normal },
@@ -3614,7 +3757,7 @@ function ProjectDrawer({
   return (
     <section className="space-y-5 pr-10">
       <div>
-        <h2 className="text-base font-semibold">{project ? "项目修改" : "创建项目"}</h2>
+        <h2 className="text-base font-semibold">{project ? (editable ? "项目修改" : "项目详情") : "创建项目"}</h2>
       </div>
 
       <form onSubmit={onSubmit} className="space-y-5">
@@ -3636,7 +3779,7 @@ function ProjectDrawer({
               <SearchableSelect
                 value={draft.teamId}
                 options={teamOptions}
-                onChange={(value) => setDraft({ ...draft, teamId: value })}
+                onChange={(value) => setDraft({ ...draft, teamId: value, ownerUserId: "", owner: "" })}
                 placeholder="选择团队"
                 clearable
               />
@@ -3648,7 +3791,22 @@ function ProjectDrawer({
           </Field>
           <div className="grid grid-cols-2 gap-4">
             <Field label="负责人">
-              <input name="projectOwner" value={draft.owner} onChange={(event) => setDraft({ ...draft, owner: event.target.value })} />
+              <SearchableSelect
+                value={draft.ownerUserId}
+                options={ownerOptions}
+                onChange={(value) => {
+                  const member = projectMembers.find((item) => item.id === value);
+                  setDraft({ ...draft, ownerUserId: value, owner: userName(member) });
+                }}
+                placeholder={draft.teamId ? "选择负责人" : "先选择团队"}
+                clearable
+                disabled={!draft.teamId}
+              />
+              {draft.teamId && ownerOptions.length === 0 ? (
+                <span className="rounded-md border border-dashed border-[var(--border)] bg-[var(--panel-soft)] px-3 py-2 text-xs leading-5 text-[var(--muted)]">
+                  当前团队没有可用成员，请先在后台管理维护团队成员。
+                </span>
+              ) : null}
             </Field>
             <Field label="健康度">
               <SearchableSelect
@@ -3946,10 +4104,14 @@ function OwnerTag({ name }: { name: string }) {
   );
 }
 
-function Field({ label, children }: { label: string; children: ReactNode }) {
+function RequiredMark() {
+  return <span className="ml-1 font-semibold text-[var(--danger)]">*</span>;
+}
+
+function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
   return (
     <label className="flex flex-col gap-1.5 text-sm text-[var(--muted)] [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-[var(--border)] [&_input]:bg-[var(--input)] [&_input]:px-2 [&_input]:py-2 [&_input]:text-sm [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--input)] [&_select]:px-2 [&_select]:py-2 [&_select]:text-sm [&_textarea]:w-full [&_textarea]:rounded-md [&_textarea]:border [&_textarea]:border-[var(--border)] [&_textarea]:bg-[var(--input)] [&_textarea]:px-2 [&_textarea]:py-2 [&_textarea]:text-sm">
-      <span>{label}</span>
+      <span>{label}{required ? <RequiredMark /> : null}</span>
       {children}
     </label>
   );
@@ -3961,6 +4123,7 @@ function SearchableSelect({
   onChange,
   placeholder,
   clearable = false,
+  disabled = false,
   className = "",
 }: {
   value: string;
@@ -3968,11 +4131,15 @@ function SearchableSelect({
   onChange: (value: string) => void;
   placeholder: string;
   clearable?: boolean;
+  disabled?: boolean;
   className?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({});
+  const [portalHost, setPortalHost] = useState<Element | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const selected = options.find((option) => option.value === value);
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = normalizedQuery
@@ -3983,7 +4150,10 @@ function SearchableSelect({
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+      const target = event.target as Node;
+      const insideTrigger = containerRef.current?.contains(target);
+      const insideDropdown = dropdownRef.current?.contains(target);
+      if (!insideTrigger && !insideDropdown) {
         setOpen(false);
       }
     }
@@ -3993,66 +4163,133 @@ function SearchableSelect({
     }
   }, [open]);
 
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    function updateDropdownPosition() {
+      const rect = containerRef.current?.getBoundingClientRect();
+      if (!rect) {
+        return;
+      }
+      setPortalHost(containerRef.current?.closest(".kanban-theme") ?? document.body);
+      const viewportPadding = 12;
+      const width = Math.min(Math.max(rect.width, 260), window.innerWidth - viewportPadding * 2);
+      const left = Math.min(Math.max(rect.left, viewportPadding), window.innerWidth - width - viewportPadding);
+      setDropdownStyle({
+        left,
+        top: rect.bottom + 4,
+        width,
+      });
+    }
+
+    updateDropdownPosition();
+    window.addEventListener("resize", updateDropdownPosition);
+    window.addEventListener("scroll", updateDropdownPosition, true);
+    return () => {
+      window.removeEventListener("resize", updateDropdownPosition);
+      window.removeEventListener("scroll", updateDropdownPosition, true);
+    };
+  }, [open]);
+
   function pick(nextValue: string) {
     onChange(nextValue);
     setOpen(false);
     setQuery("");
   }
 
+  const dropdown = open && !disabled ? (
+    <div
+      ref={dropdownRef}
+      className="fixed z-[80] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--panel)] shadow-lg"
+      style={dropdownStyle}
+    >
+      <div className="flex gap-2 border-b border-[var(--border)] p-2">
+        <div className="relative min-w-0 flex-1">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索"
+            className="w-full rounded border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 pr-8 text-xs outline-none focus:border-[var(--accent)]"
+            autoFocus
+          />
+          {query ? (
+            <button
+              type="button"
+              title="清空搜索"
+              aria-label="清空搜索"
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => setQuery("")}
+              className="absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
+            >
+              <X size={13} />
+            </button>
+          ) : null}
+        </div>
+        {clearable && value ? (
+          <button
+            type="button"
+            title="重置选择"
+            onClick={() => pick("")}
+            className="grid h-8 w-8 shrink-0 place-items-center rounded border border-[var(--border)] text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
+          >
+            <X size={14} />
+          </button>
+        ) : null}
+      </div>
+      <div className="max-h-[220px] overflow-y-auto p-1">
+        {filtered.length === 0 ? (
+          <p className="px-3 py-3 text-center text-xs text-[var(--muted)]">无匹配项</p>
+        ) : (
+          filtered.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => pick(option.value)}
+              className={`flex w-full min-w-0 items-baseline gap-2 rounded px-3 py-2 text-left text-xs transition ${
+                option.value === value ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "hover:bg-[var(--panel-soft)]"
+              }`}
+            >
+              <span className="min-w-0 truncate font-medium">{option.label}</span>
+              {option.meta ? <span className="shrink-0 text-[11px] text-[var(--muted)]">{option.meta}</span> : null}
+            </button>
+          ))
+        )}
+      </div>
+    </div>
+  ) : null;
+
   return (
     <div ref={containerRef} className={`relative ${className}`}>
       <button
         type="button"
-        onClick={() => setOpen((current) => !current)}
-        className="flex w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 py-2 text-left text-sm text-[var(--text)] outline-none transition hover:bg-[var(--panel-soft)]"
+        disabled={disabled}
+        onClick={() => {
+          if (!disabled) {
+            const rect = containerRef.current?.getBoundingClientRect();
+            if (!open && rect) {
+              setPortalHost(containerRef.current?.closest(".kanban-theme") ?? document.body);
+              const viewportPadding = 12;
+              const width = Math.min(Math.max(rect.width, 260), window.innerWidth - viewportPadding * 2);
+              const left = Math.min(Math.max(rect.left, viewportPadding), window.innerWidth - width - viewportPadding);
+              setDropdownStyle({
+                left,
+                top: rect.bottom + 4,
+                width,
+              });
+            }
+            setOpen((current) => !current);
+          }
+        }}
+        className="flex w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 py-2 text-left text-sm text-[var(--text)] outline-none transition hover:bg-[var(--panel-soft)] disabled:cursor-not-allowed disabled:opacity-60"
       >
         <span className={`min-w-0 truncate ${selected ? "" : "text-[var(--muted)]"}`}>
           {selected?.label ?? placeholder}
         </span>
         <ChevronDown size={14} className="shrink-0 text-[var(--muted)]" />
       </button>
-      {open ? (
-        <div className="absolute left-0 top-full z-40 mt-1 w-full min-w-[220px] rounded-md border border-[var(--border)] bg-[var(--panel)] shadow-lg">
-          <div className="flex gap-2 border-b border-[var(--border)] p-2">
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索"
-              className="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 text-sm outline-none focus:border-[var(--accent)]"
-              autoFocus
-            />
-            {clearable && value ? (
-              <button
-                type="button"
-                title="重置选择"
-                onClick={() => pick("")}
-                className="grid h-8 w-8 shrink-0 place-items-center rounded border border-[var(--border)] text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
-              >
-                <X size={14} />
-              </button>
-            ) : null}
-          </div>
-          <div className="max-h-[220px] overflow-y-auto p-1">
-            {filtered.length === 0 ? (
-              <p className="px-3 py-3 text-center text-sm text-[var(--muted)]">无匹配项</p>
-            ) : (
-              filtered.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => pick(option.value)}
-                  className={`block w-full rounded px-3 py-2 text-left text-sm transition ${
-                    option.value === value ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "hover:bg-[var(--panel-soft)]"
-                  }`}
-                >
-                  <span className="font-medium">{option.label}</span>
-                  {option.meta ? <span className="ml-2 text-xs text-[var(--muted)]">{option.meta}</span> : null}
-                </button>
-              ))
-            )}
-          </div>
-        </div>
-      ) : null}
+      {dropdown && portalHost ? createPortal(dropdown, portalHost) : dropdown}
     </div>
   );
 }

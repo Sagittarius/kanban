@@ -20,7 +20,7 @@ export default async function AdminPage() {
           <p className="text-sm font-semibold uppercase tracking-[0.24em] text-[#0f766e]">403</p>
           <h1 className="mt-3 text-2xl font-semibold">无权访问后台管理</h1>
           <p className="mt-3 text-slate-500">当前账号无访问权限。</p>
-          <Link href="/" className="mt-6 inline-flex rounded-full bg-[#0f766e] px-5 py-2 text-sm font-semibold text-white">返回看板</Link>
+          <Link href="/" prefetch={false} className="mt-6 inline-flex rounded-full bg-[#0f766e] px-5 py-2 text-sm font-semibold text-white">进入看板</Link>
         </section>
       </main>
     );

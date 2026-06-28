@@ -38,8 +38,8 @@ export default function AuthenticatedShell({
   });
   const menuRef = useRef<HTMLDivElement | null>(null);
   const activeBoard = boardList.find((board) => board.id === activeBoardId);
-  const readOnly = activeBoard?.role === "viewer";
   const canUseAdmin = currentUser.role === "super_admin" || currentUser.role === "project_manager" || currentUser.role === "development_manager";
+  const readOnly = activeBoard?.role === "viewer" && !canUseAdmin;
   const [profileDraft, setProfileDraft] = useState({
     displayName: user.displayName || "",
     phone: user.phone || "",

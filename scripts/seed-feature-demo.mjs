@@ -84,6 +84,7 @@ const projects = [
     teamId: "demo-team-product",
     name: "演示项目-商城改版",
     description: "用于测试需求池到完成的完整流转。",
+    ownerUserId: "demo-user-pm",
     owner: "项目经理A",
     color: "#0f766e",
     health: "normal",
@@ -97,6 +98,7 @@ const projects = [
     teamId: "demo-team-product",
     name: "演示项目-移动端升级",
     description: "用于测试标签、提测日期和交付日期显示。",
+    ownerUserId: "demo-user-po",
     owner: "产品经理A",
     color: "#d97706",
     health: "risk",
@@ -110,6 +112,7 @@ const projects = [
     teamId: "demo-team-platform",
     name: "演示项目-数据治理",
     description: "用于测试工作饱和度与团队筛选。",
+    ownerUserId: "demo-user-pm",
     owner: "项目经理A",
     color: "#7c3aed",
     health: "good",
@@ -123,6 +126,7 @@ const projects = [
     teamId: "demo-team-platform",
     name: "演示项目-基础设施优化",
     description: "用于测试多看板、多团队的任务分布。",
+    ownerUserId: "demo-user-dev-b",
     owner: "开发B",
     color: "#2563eb",
     health: "normal",
@@ -338,12 +342,13 @@ function insertBoards(db) {
 
 function insertProjects(db) {
   const stmt = db.prepare(
-    "INSERT INTO projects (id, name, owner, color, health, created_at, updated_at, description, status, summary, archived_at, order_index, board_id, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO projects (id, name, owner_user_id, owner, color, health, created_at, updated_at, description, status, summary, archived_at, order_index, board_id, team_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   for (const project of projects) {
     stmt.run(
       project.id,
       project.name,
+      project.ownerUserId,
       project.owner,
       project.color,
       project.health,

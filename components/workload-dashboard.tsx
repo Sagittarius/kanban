@@ -3,9 +3,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { AlertTriangle, ChartNoAxesCombined, ChevronDown, ChevronRight, Clock3, Moon, ShieldAlert, Sun, Tag, TrendingUp, X } from "lucide-react";
+import { AlertTriangle, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
 import SearchMultiSelect from "@/components/search-multi-select";
-import { avatarOptions, jobTitleLabel } from "@/lib/ui-options";
+import { avatarOptions, jobTitleLabel, roleLabel } from "@/lib/ui-options";
 import type { CurrentUser, TeamSummary } from "@/lib/auth-models";
 import type { BoardStatus } from "@/lib/board-data";
 
@@ -209,6 +209,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
             {!publicView ? (
               <Link
                 href="/"
+                prefetch={false}
                 className="inline-flex h-11 items-center rounded-2xl bg-[linear-gradient(135deg,var(--dash-accent),var(--dash-hot))] px-4 text-sm font-semibold text-[var(--dash-accent-text)] shadow-[0_18px_38px_var(--dash-shadow)] transition hover:opacity-95"
               >
                 进入看板
@@ -232,7 +233,12 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
         <section className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_460px]">
           <div className="rounded-3xl border border-[var(--dash-line)] bg-[var(--dash-panel)] p-4 shadow-[0_24px_70px_var(--dash-shadow-soft)] backdrop-blur-xl">
             <div className="mb-4 flex items-center justify-between gap-3">
-              <h2 className="text-lg font-semibold">人员状态</h2>
+              <h2 className="flex items-center gap-2 text-lg font-semibold">
+                <span className="grid h-7 w-7 place-items-center rounded-xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
+                  <UsersRound size={17} />
+                </span>
+                人员状态
+              </h2>
               <div className="rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-3 py-1 text-xs text-[var(--dash-muted)]">
                 提测临期阈值 {data.dueSoonDays} 天
               </div>
@@ -241,6 +247,8 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
               {data.members.map((member) => {
                 const expanded = expandedMemberId === member.id;
                 const width = Math.min(100, Math.max(0, member.progress));
+                const previewTechStacks = member.techStacks.slice(0, 2);
+                const hiddenTechStackCount = member.techStacks.length - previewTechStacks.length;
                 return (
                   <article
                     key={member.id}
@@ -269,9 +277,14 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                           </span>
                           <span className="flex min-w-0 items-center justify-between gap-3">
                             <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px]">
-                              {member.techStacks.slice(0, 2).map((item) => (
+                              {previewTechStacks.map((item) => (
                                 <span key={item} className="rounded-full border border-[var(--dash-hot)] bg-[var(--dash-hot-glow)] px-2 py-0.5 font-semibold text-[var(--dash-hot)]">{item}</span>
                               ))}
+                              {hiddenTechStackCount > 0 ? (
+                                <span className="rounded-full border border-[var(--dash-line)] bg-[var(--dash-track)] px-2 py-0.5 font-semibold text-[var(--dash-muted)]">
+                                  +{hiddenTechStackCount}
+                                </span>
+                              ) : null}
                               {member.techStacks.length === 0 ? (
                                 <span className="rounded-full bg-[var(--dash-track)] px-2 py-0.5 text-[var(--dash-muted)]">未设置技术栈</span>
                               ) : null}
@@ -298,34 +311,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                       <div className="mt-4 grid gap-2 border-t border-[var(--dash-line)] pt-4">
                         {member.tasks.length > 0 ? (
                           member.tasks.map((task) => (
-                            <button
-                              key={task.id}
-                              type="button"
-                              title={task.description || task.title}
-                              onClick={() => setSelectedTask(task)}
-                              className={`group rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] px-3 py-3 text-sm transition ${taskWarningFrameClass(task)}`}
-                            >
-                              <span className="flex min-w-0 items-center justify-between gap-3 text-left">
-                                <span className="flex min-w-0 items-baseline gap-2">
-                                  <span className="truncate font-medium text-[var(--dash-text)]">{task.title}</span>
-                                  <span className="truncate text-[11px] text-[var(--dash-muted)]">{task.description || task.projectName}</span>
-                                </span>
-                                <span className="flex shrink-0 flex-wrap justify-end gap-1.5">
-                                  {task.dueSoon ? <WarningDot tone="info" label="临期" /> : null}
-                                  {task.overdue ? <WarningDot tone="danger" label="超期" /> : null}
-                                  {task.blocked ? <WarningDot tone="warning" label="阻塞" /> : null}
-                                </span>
-                              </span>
-                              <span className="mt-2 flex items-center gap-2">
-                                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--dash-track)]">
-                                  <span
-                                    className="block h-full rounded-full bg-[var(--dash-accent)] transition-all duration-500"
-                                    style={{ width: `${Math.min(100, Math.max(0, task.progress))}%` }}
-                                  />
-                                </span>
-                                <span className="w-9 text-right text-[11px] font-semibold text-[var(--dash-muted)]">{task.progress}%</span>
-                              </span>
-                            </button>
+                            <DashboardCompactTaskRow key={task.id} task={task} onSelect={setSelectedTask} />
                           ))
                         ) : (
                           <div className="rounded-xl border border-dashed border-[var(--dash-line)] px-3 py-5 text-center text-sm text-[var(--dash-muted)]">
@@ -346,7 +332,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
           </div>
 
           <aside className="space-y-4">
-            <SidePanel title="分布">
+            <SidePanel title="分布" icon={<ChartPie size={17} />}>
               <div className="grid grid-cols-2 gap-3">
                 <MiniStat label="空闲" value={idleCount} />
                 <MiniStat label="最高负载" value={busiest ? busiest.taskCount : 0} />
@@ -354,7 +340,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                 <MiniStat label="超期" value={data.totals.overdue} tone="danger" />
               </div>
             </SidePanel>
-            <SidePanel title="负载排行">
+            <SidePanel title="负载排行" icon={<Trophy size={17} />}>
               <div className="space-y-3">
                 {rankedMembers.length > 0 ? (
                   rankedMembers.map((member, index) => (
@@ -390,7 +376,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                 )}
               </div>
             </SidePanel>
-            <SidePanel title="任务池">
+            <SidePanel title="任务池" icon={<ClipboardList size={17} />}>
               <div className="space-y-3">
                 {data.projects.slice(0, 10).map((project) => (
                   <button
@@ -453,11 +439,13 @@ function Metric({
   );
 }
 
-function SidePanel({ title, children }: { title: string; children: ReactNode }) {
+function SidePanel({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
     <section className="rounded-3xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] p-4 shadow-[0_18px_48px_var(--dash-shadow)] backdrop-blur-xl">
       <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold">
-        <TrendingUp size={17} className="text-[var(--dash-accent)]" />
+        <span className="grid h-7 w-7 place-items-center rounded-xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
+          {icon}
+        </span>
         {title}
       </h2>
       {children}
@@ -613,6 +601,60 @@ function DashboardTaskDialog({
   );
 }
 
+function DashboardCompactTaskRow({
+  task,
+  onSelect,
+}: {
+  task: DashboardTask;
+  onSelect: (task: DashboardTask) => void;
+}) {
+  return (
+    <button
+      type="button"
+      title={task.description || task.title}
+      onClick={() => onSelect(task)}
+      className={`group flex w-full flex-col rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] px-3 py-3 text-sm transition ${taskWarningFrameClass(task)}`}
+    >
+      <span className="flex w-full min-w-0 items-center gap-3 text-left">
+        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+          <span className="shrink-0 truncate font-medium text-[var(--dash-text)]">{task.title}</span>
+          <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-[var(--dash-muted)]">
+            <span className="truncate">{task.description || task.projectName}</span>
+            {task.tags.slice(0, 3).map((tag) => (
+              <span
+                key={tag}
+                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--dash-line)] bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-text)]"
+              >
+                <Tag size={10} />
+                {tag}
+              </span>
+            ))}
+            {task.tags.length > 3 ? (
+              <span className="shrink-0 rounded-full bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-muted)]">
+                +{task.tags.length - 3}
+              </span>
+            ) : null}
+          </span>
+        </span>
+        <span className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5">
+          {task.dueSoon ? <WarningDot tone="info" label="临期" /> : null}
+          {task.overdue ? <WarningDot tone="danger" label="超期" /> : null}
+          {task.blocked ? <WarningDot tone="warning" label="阻塞" /> : null}
+        </span>
+      </span>
+      <span className="mt-2 flex items-center gap-2">
+        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--dash-track)]">
+          <span
+            className="block h-full rounded-full bg-[var(--dash-accent)] transition-all duration-500"
+            style={{ width: `${Math.min(100, Math.max(0, task.progress))}%` }}
+          />
+        </span>
+        <span className="w-9 text-right text-[11px] font-semibold text-[var(--dash-muted)]">{task.progress}%</span>
+      </span>
+    </button>
+  );
+}
+
 function DashboardProjectDialog({
   project,
   onClose,
@@ -646,27 +688,7 @@ function DashboardProjectDialog({
       <div className="mt-5 space-y-2">
         {project.tasks.length > 0 ? (
           project.tasks.map((task) => (
-            <button
-              key={task.id}
-              type="button"
-              onClick={() => onSelectTask(task)}
-              className={`flex w-full items-start justify-between gap-3 rounded-2xl border bg-[var(--dash-card)] px-4 py-3 text-left transition ${taskWarningFrameClass(task)}`}
-            >
-              <span className="min-w-0 flex-1">
-                <span className="block truncate font-medium">{task.title}</span>
-                <span className="mt-1 flex flex-wrap gap-2 text-[11px] text-[var(--dash-muted)]">
-                  <span>{statusLabel(task.status)}</span>
-                  <span>{task.progress}%</span>
-                  <span>{task.effectiveWorkloadDays} 人日</span>
-                  {task.tags.length > 0 ? <span>{task.tags.join(" / ")}</span> : null}
-                </span>
-              </span>
-              <span className="shrink-0 space-y-1">
-                {task.dueSoon ? <WarningDot tone="info" label="临期" /> : null}
-                {task.overdue ? <WarningDot tone="danger" label="超期" /> : null}
-                {task.blocked ? <WarningDot tone="warning" label="阻塞" /> : null}
-              </span>
-            </button>
+            <DashboardCompactTaskRow key={task.id} task={task} onSelect={onSelectTask} />
           ))
         ) : (
           <div className="rounded-xl border border-dashed border-[var(--dash-line)] px-3 py-5 text-center text-sm text-[var(--dash-muted)]">
@@ -689,27 +711,31 @@ function DashboardMemberDialog({
     <DialogShell onClose={onClose} maxWidth="max-w-[520px]">
       <div className="flex items-stretch gap-4">
         <DashboardAvatar member={member} size="xl" />
-        <div className="grid min-w-0 flex-1 content-between py-0.5">
-          <p className="truncate text-xl font-semibold text-[var(--dash-name)]">{member.displayName || member.username}</p>
-          <span className="w-fit rounded-full border border-[var(--dash-rim)] bg-[var(--dash-accent-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--dash-accent)]">
-            {jobTitleLabel(member.jobTitle)}
+        <div className="grid h-[88px] min-w-0 flex-1 content-center gap-3 py-0.5">
+          <p className="truncate text-xl font-semibold leading-none text-[var(--dash-name)]">{member.displayName || member.username}</p>
+          <span className="inline-flex w-fit items-center overflow-hidden rounded-full border border-[var(--dash-rim)] text-xs font-semibold leading-none">
+            <span className="border-r border-[var(--dash-line)] bg-[var(--dash-card)] px-2 py-1 text-[var(--dash-muted)]">系统角色</span>
+            <span className="bg-[var(--dash-accent-soft)] px-2.5 py-1 text-[var(--dash-accent)]">{roleLabel(member.role)}</span>
           </span>
-          <div className="flex flex-wrap gap-2">
-            {member.techStacks.length > 0 ? (
-              member.techStacks.map((item) => (
-                <span key={item} className="rounded-full border border-[var(--dash-hot)] bg-[var(--dash-hot-glow)] px-2.5 py-1 text-xs font-semibold text-[var(--dash-hot)]">
-                  {item}
-                </span>
-              ))
-            ) : (
-              <span className="rounded-full bg-[var(--dash-track)] px-2.5 py-1 text-xs text-[var(--dash-muted)]">未设置技术栈</span>
-            )}
-          </div>
         </div>
       </div>
       <div className="mt-5 grid gap-3 sm:grid-cols-2">
         <DashInfo label="职位" value={jobTitleLabel(member.jobTitle)} />
         <DashInfo label="手机" value={member.phone || "-"} />
+      </div>
+      <div className="mt-3 rounded-2xl border border-[var(--dash-line)] bg-[var(--dash-card)] px-4 py-3">
+        <div className="text-xs text-[var(--dash-muted)]">技术栈</div>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {member.techStacks.length > 0 ? (
+            member.techStacks.map((item) => (
+              <span key={item} className="rounded-full border border-[var(--dash-hot)] bg-[var(--dash-hot-glow)] px-2.5 py-1 text-xs font-semibold text-[var(--dash-hot)]">
+                {item}
+              </span>
+            ))
+          ) : (
+            <span className="rounded-full bg-[var(--dash-track)] px-2.5 py-1 text-xs text-[var(--dash-muted)]">未设置技术栈</span>
+          )}
+        </div>
       </div>
     </DialogShell>
   );

@@ -34,7 +34,11 @@ CREATE INDEX IF NOT EXISTS board_teams_team_id_idx ON board_teams (team_id);
 --> statement-breakpoint
 ALTER TABLE projects ADD COLUMN IF NOT EXISTS team_id TEXT NOT NULL DEFAULT '';
 --> statement-breakpoint
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS owner_user_id TEXT NOT NULL DEFAULT '';
+--> statement-breakpoint
 CREATE INDEX IF NOT EXISTS projects_team_id_idx ON projects (team_id);
+--> statement-breakpoint
+CREATE INDEX IF NOT EXISTS projects_owner_user_id_idx ON projects (owner_user_id);
 --> statement-breakpoint
 ALTER TABLE tasks ADD COLUMN IF NOT EXISTS owner_user_id TEXT NOT NULL DEFAULT '';
 --> statement-breakpoint

@@ -14,6 +14,7 @@ export type BoardColumn = {
 export type Project = {
   id: string;
   teamId: string;
+  ownerUserId: string;
   name: string;
   description: string;
   owner: string;

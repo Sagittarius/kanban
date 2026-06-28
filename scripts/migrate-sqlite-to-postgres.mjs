@@ -59,6 +59,7 @@ const TABLES = [
       "id",
       "board_id",
       "team_id",
+      "owner_user_id",
       "name",
       "description",
       "owner",
@@ -434,6 +435,9 @@ function sqliteColumns(database, tableName) {
 
 function defaultSqliteValue(tableName, column) {
   if (tableName === "projects" && column === "team_id") {
+    return "";
+  }
+  if (tableName === "projects" && column === "owner_user_id") {
     return "";
   }
   if (tableName === "tasks" && (column === "owner_user_id" || column === "tester_user_id")) {

@@ -58,6 +58,7 @@ export type UpdateUserProfileInput = Partial<{ displayName: unknown; phone: unkn
 export type CreateProjectInput = {
   name?: unknown;
   description?: unknown;
+  ownerUserId?: unknown;
   owner?: unknown;
   color?: unknown;
   health?: unknown;
@@ -154,7 +155,7 @@ export class KanbanRepository {
   async getBootstrapUser(): Promise<CurrentUser> {
     await this.ensureBootstrapData();
     const user = await this.getUserById("super-admin");
-    if (!user) throw new Error("Bootstrap user not found");
+    if (!user) throw new Error("初始化用户不存在");
     return user;
   }
 
@@ -260,7 +261,7 @@ export class KanbanRepository {
     await this.ensureBootstrapData();
     await this.requireUserManagement(actor);
     const current = await this.getManagedUserRow(userId);
-    if (!current) throw new Error("User not found");
+    if (!current) throw new Error("用户不存在");
     const currentRole = normalizeUserRole(current.role);
     if (isManagementRole(actor) && actor.role !== "super_admin" && currentRole !== "team_member") throw new Error("Forbidden");
 
@@ -296,7 +297,7 @@ export class KanbanRepository {
       ]
     );
     const updated = await this.getManagedUserRow(userId);
-    if (!updated) throw new Error("User not found");
+    if (!updated) throw new Error("用户不存在");
     await this.recordAuditLog({
       actor,
       action: nextActive ? "admin.user.update" : "admin.user.disable",
@@ -317,7 +318,7 @@ export class KanbanRepository {
     await this.ensureBootstrapData();
     await this.requireUserManagement(actor);
     const row = await this.getManagedUserRow(userId);
-    if (!row) throw new Error("User not found");
+    if (!row) throw new Error("用户不存在");
     const role = normalizeUserRole(row.role);
     if (isManagementRole(actor) && actor.role !== "super_admin" && role !== "team_member") throw new Error("Forbidden");
     const username = String(row.username);
@@ -337,7 +338,7 @@ export class KanbanRepository {
   async updateUserProfile(userId: string, input: UpdateUserProfileInput): Promise<CurrentUser> {
     await this.ensureBootstrapData();
     const current = await this.getUserById(userId);
-    if (!current) throw new Error("User not found");
+    if (!current) throw new Error("用户不存在");
     await this.x("UPDATE users SET display_name=?,phone=?,avatar_key=?,job_title=?,tech_stacks=?,timezone=?,updated_at=? WHERE id=?", [
       current.displayName,
       opt(input.phone, current.phone),
@@ -349,7 +350,7 @@ export class KanbanRepository {
       userId,
     ]);
     const updated = await this.getUserById(userId);
-    if (!updated) throw new Error("User not found");
+    if (!updated) throw new Error("用户不存在");
     return updated;
   }
 
@@ -385,7 +386,7 @@ export class KanbanRepository {
     const selected = (requestedBoardId && boards.find((item) => item.id === requestedBoardId)) || boards[0];
     if (selected) return selected;
     if (canCreateBoards(actor)) return this.createBoard(actor, { name: `${actor.displayName || actor.username} 的看板` });
-    throw new Error("Board not found");
+    throw new Error("看板不存在");
   }
 
   async resolvePublicBoard(actor: CurrentUser) {
@@ -393,7 +394,7 @@ export class KanbanRepository {
     const selected = await this.firstBoardSummary(actor);
     if (selected) return selected;
     if (canCreateBoards(actor)) return this.createBoard(actor, { name: await this.defaultBoardTitle() });
-    throw new Error("Board not found");
+    throw new Error("看板不存在");
   }
 
   async createBoard(actor: CurrentUser, input: CreateBoardInput): Promise<BoardSummary> {
@@ -423,7 +424,7 @@ export class KanbanRepository {
     await this.setBoardTeams(actor, row.id, ids(input.teamIds));
     await this.ensureBoardDefaults(row.id, actor.username);
     const created = await this.getBoardSummaryById(actor, row.id);
-    if (!created) throw new Error("Board not found");
+    if (!created) throw new Error("看板不存在");
     await this.recordAuditLog({
       actor,
       action: "board.create",
@@ -439,7 +440,7 @@ export class KanbanRepository {
   async updateBoard(actor: CurrentUser, boardId: string, input: UpdateBoardInput): Promise<BoardSummary> {
     await this.requireBoardAdmin(actor, boardId);
     const current = await this.getBoardSummaryById(actor, boardId);
-    if (!current) throw new Error("Board not found");
+    if (!current) throw new Error("看板不存在");
     await this.x("UPDATE boards SET name=?,description=?,updated_at=? WHERE id=?", [
       text(input.name, current.name),
       opt(input.description, current.description),
@@ -450,7 +451,7 @@ export class KanbanRepository {
       await this.setBoardTeams(actor, boardId, ids(input.teamIds));
     }
     const updated = await this.getBoardSummaryById(actor, boardId);
-    if (!updated) throw new Error("Board not found");
+    if (!updated) throw new Error("看板不存在");
     await this.recordAuditLog({
       actor,
       action: "board.update",
@@ -470,7 +471,7 @@ export class KanbanRepository {
     }
     const existing = await this.getBoardSummaryById(actor, boardId);
     if (!existing) {
-      throw new Error("Board not found");
+      throw new Error("看板不存在");
     }
 
     const projectRows = await this.q("SELECT id FROM projects WHERE board_id=?", [boardId]);
@@ -514,15 +515,22 @@ export class KanbanRepository {
 
   async listBoardMembers(boardId: string) {
     await this.ensureBootstrapData();
-    return this.q(
-      "SELECT bm.user_id,u.username,u.display_name,u.role,bm.role AS board_role FROM board_members bm JOIN users u ON u.id=bm.user_id WHERE bm.board_id=? ORDER BY u.username ASC",
-      [boardId]
-    );
+    try {
+      return await this.q(
+        "SELECT bm.user_id,u.username,u.display_name,u.role,bm.role AS board_role FROM board_members bm JOIN users u ON u.id=bm.user_id WHERE bm.board_id=? ORDER BY u.username ASC",
+        [boardId]
+      );
+    } catch (error) {
+      if (isMissingTableError(error, "board_members")) {
+        return [];
+      }
+      throw error;
+    }
   }
 
   async grantBoardViewer(actor: CurrentUser, boardId: string, userId: string) {
     await this.requireBoardAdmin(actor, boardId);
-    if (!(await this.getUserById(userId))) throw new Error("User not found");
+    if (!(await this.getUserById(userId))) throw new Error("用户不存在");
     await this.x(
       "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'viewer',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='viewer'",
       [boardId, userId, iso()]
@@ -574,8 +582,8 @@ export class KanbanRepository {
         ? await this.q("SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id ORDER BY t.updated_at DESC,t.created_at DESC")
         : isManagementRole(actor)
           ? await this.q(
-              "SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id WHERE t.owner_user_id=? ORDER BY t.updated_at DESC,t.created_at DESC",
-              [actor.id]
+              "SELECT DISTINCT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id LEFT JOIN team_members tm ON tm.team_id=t.id AND tm.user_id=? WHERE t.owner_user_id=? OR tm.user_id=? ORDER BY t.updated_at DESC,t.created_at DESC",
+              [actor.id, actor.id, actor.id]
             )
           : await this.q(
               "SELECT DISTINCT t.*,u.username AS owner_username FROM teams t JOIN team_members tm ON tm.team_id=t.id LEFT JOIN users u ON u.id=t.owner_user_id WHERE tm.user_id=? ORDER BY t.updated_at DESC,t.created_at DESC",
@@ -628,7 +636,7 @@ export class KanbanRepository {
   async updateTeam(actor: CurrentUser, teamId: string, input: UpdateTeamInput): Promise<TeamSummary> {
     await this.requireTeamWrite(actor, teamId);
     const current = await this.getTeamRow(teamId);
-    if (!current) throw new Error("Team not found");
+    if (!current) throw new Error("团队不存在");
     await this.x("UPDATE teams SET name=?,description=?,color=?,updated_at=? WHERE id=?", [
       text(input.name, String(current.name)),
       opt(input.description, String(current.description ?? "")),
@@ -640,7 +648,7 @@ export class KanbanRepository {
       await this.replaceTeamMembers(teamId, ids(input.memberIds));
     }
     const updated = await this.getTeamRow(teamId);
-    if (!updated) throw new Error("Team not found");
+    if (!updated) throw new Error("团队不存在");
     const memberIds = (await this.teamMemberIds([teamId])).get(teamId) ?? [];
     await this.recordAuditLog({
       actor,
@@ -762,16 +770,18 @@ export class KanbanRepository {
   async createProject(actor: CurrentUser, boardId: string, input: CreateProjectInput) {
     await this.requireBoardWrite(actor, boardId);
     const teamId = text(input.teamId);
-    if (!teamId) throw new Error("Team is required");
+    if (!teamId) throw new Error("请选择团队");
     await this.requireBoardTeam(boardId, teamId);
+    const owner = await this.resolveProjectOwner(teamId, input);
     const now = iso();
     const row = {
       id: crypto.randomUUID(),
       board_id: boardId,
       team_id: teamId,
+      owner_user_id: owner.ownerUserId,
       name: text(input.name, "未命名项目"),
       description: opt(input.description),
-      owner: text(input.owner, "未分配"),
+      owner: owner.ownerName,
       color: text(input.color, "#1f6f68"),
       health: isProjectHealth(input.health) ? input.health : "normal",
       status: "active",
@@ -782,11 +792,12 @@ export class KanbanRepository {
       updated_at: now,
     };
     await this.x(
-      "INSERT INTO projects (id,board_id,team_id,name,description,owner,color,health,status,summary,archived_at,order_index,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO projects (id,board_id,team_id,owner_user_id,name,description,owner,color,health,status,summary,archived_at,order_index,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         row.id,
         row.board_id,
         row.team_id,
+        row.owner_user_id,
         row.name,
         row.description,
         row.owner,
@@ -822,17 +833,19 @@ export class KanbanRepository {
   async updateProject(actor: CurrentUser, boardId: string, id: string, input: UpdateProjectInput) {
     await this.requireBoardWrite(actor, boardId);
     const old = await this.getProjectRow(boardId, id);
-    if (!old) throw new Error("Project not found");
+    if (!old) throw new Error("项目不存在");
     const current = project(old);
     const status = isProjectStatus(input.status) ? input.status : current.status;
     const teamId = text(input.teamId, current.teamId);
-    if (!teamId) throw new Error("Team is required");
+    if (!teamId) throw new Error("请选择团队");
     await this.requireBoardTeam(boardId, teamId);
+    const owner = await this.resolveProjectOwner(teamId, input, current);
     const row = {
       team_id: teamId,
+      owner_user_id: owner.ownerUserId,
       name: text(input.name, current.name),
       description: opt(input.description, current.description),
-      owner: text(input.owner, current.owner),
+      owner: owner.ownerName,
       color: text(input.color, current.color),
       health: isProjectHealth(input.health) ? input.health : current.health,
       status,
@@ -841,9 +854,10 @@ export class KanbanRepository {
       updated_at: iso(),
     };
     await this.x(
-      "UPDATE projects SET team_id=?,name=?,description=?,owner=?,color=?,health=?,status=?,summary=?,archived_at=?,updated_at=? WHERE id=? AND board_id=?",
+      "UPDATE projects SET team_id=?,owner_user_id=?,name=?,description=?,owner=?,color=?,health=?,status=?,summary=?,archived_at=?,updated_at=? WHERE id=? AND board_id=?",
       [
         row.team_id,
+        row.owner_user_id,
         row.name,
         row.description,
         row.owner,
@@ -896,7 +910,7 @@ export class KanbanRepository {
   async deleteProject(actor: CurrentUser, boardId: string, id: string) {
     await this.requireBoardWrite(actor, boardId);
     const old = await this.getProjectRow(boardId, id);
-    if (!old) throw new Error("Project not found");
+    if (!old) throw new Error("项目不存在");
     await this.x("UPDATE tasks SET deleted_at=?,updated_at=? WHERE project_id=?", [iso(), iso(), id]);
     await this.x("DELETE FROM projects WHERE id=? AND board_id=?", [id, boardId]);
     await this.recordActivity(boardId, {
@@ -921,16 +935,20 @@ export class KanbanRepository {
     await this.requireBoardRead(actor, boardId);
     if (!canCreateTasks(actor)) throw new Error("Forbidden");
     const projectId = text(input.projectId);
-    if (!projectId) throw new Error("Project is required");
+    if (!projectId) throw new Error("请选择项目");
     const projectRow = await this.getProjectRow(boardId, projectId);
-    if (!projectRow) throw new Error("Project not found");
+    if (!projectRow) throw new Error("项目不存在");
     const assignees = await this.resolveTaskAssignees(project(projectRow), input);
+    const title = text(input.title);
+    const description = text(input.description);
+    if (!title) throw new Error("任务名称不能为空");
+    if (!description) throw new Error("任务描述不能为空");
     const now = iso();
     const row = {
       id: crypto.randomUUID(),
       project_id: projectId,
-      title: text(input.title, "未命名任务"),
-      description: opt(input.description),
+      title,
+      description,
       status: "backlog",
       priority: isPriority(input.priority) ? input.priority : "medium",
       owner_user_id: assignees.ownerUserId,
@@ -1007,7 +1025,7 @@ export class KanbanRepository {
   async createReworkTask(actor: CurrentUser, boardId: string, id: string) {
     await this.requireBoardWrite(actor, boardId);
     const old = await this.getTaskRow(boardId, id);
-    if (!old || old.deleted_at) throw new Error("Task not found");
+    if (!old || old.deleted_at) throw new Error("任务不存在");
     const current = task(old, (await this.getSubtasks(id)).map(subtask));
     if (current.status !== "done") throw new Error("Only completed tasks can be reworked");
     const now = iso();
@@ -1079,18 +1097,23 @@ export class KanbanRepository {
   async updateTask(actor: CurrentUser, boardId: string, id: string, input: UpdateTaskInput) {
     await this.requireBoardRead(actor, boardId);
     const old = await this.getTaskRow(boardId, id);
-    if (!old || old.deleted_at) throw new Error("Task not found");
+    if (!old || old.deleted_at) throw new Error("任务不存在");
     const current = task(old, (await this.getSubtasks(id)).map(subtask));
     if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     const status = input.status === undefined ? current.status : normalizeBoardStatus(input.status);
     const projectId = text(input.projectId, current.projectId);
     const projectRow = await this.getProjectRow(boardId, projectId);
-    if (!projectRow) throw new Error("Project not found");
+    if (!projectRow) throw new Error("项目不存在");
     const currentProjectRow = await this.getProjectRow(boardId, current.projectId);
     const assignees = await this.resolveTaskAssignees(project(projectRow), input, current);
-    if (actor.role === "team_member" && assignees.ownerUserId !== actor.id && assignees.testerUserId !== actor.id) {
+    const hasNextAssignee = Boolean(assignees.ownerUserId || assignees.testerUserId);
+    if (actor.role === "team_member" && hasNextAssignee && assignees.ownerUserId !== actor.id && assignees.testerUserId !== actor.id) {
       throw new Error("Forbidden");
     }
+    const nextTitle = text(input.title, current.title);
+    const nextDescription = opt(input.description, current.description);
+    if (input.title !== undefined && !nextTitle) throw new Error("任务名称不能为空");
+    if (input.description !== undefined && !nextDescription.trim()) throw new Error("任务描述不能为空");
     const nextTags = JSON.stringify(tags(input.tags, current.tags));
     const completed = status === "done" ? (current.status === "done" ? current.completedAt : iso()) : null;
     const order = status !== current.status ? await this.nextTaskOrderIndex(status, projectId) : current.orderIndex;
@@ -1100,8 +1123,8 @@ export class KanbanRepository {
     await this.x(
       "UPDATE tasks SET title=?,description=?,project_id=?,status=?,priority=?,owner_user_id=?,owner=?,tester_user_id=?,tester=?,workload_days=?,start_date=?,test_due_date=?,design_due_date=?,due_date=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,completed_at=?,updated_at=? WHERE id=?",
       [
-        text(input.title, current.title),
-        opt(input.description, current.description),
+        nextTitle,
+        nextDescription,
         projectId,
         status,
         isPriority(input.priority) ? input.priority : current.priority,
@@ -1130,8 +1153,8 @@ export class KanbanRepository {
     }
     const changes = compactChanges([
       changeEntry("项目", currentProjectRow ? String(currentProjectRow.name ?? current.projectId) : current.projectId, String(projectRow.name ?? projectId)),
-      changeEntry("任务名称", current.title, text(input.title, current.title)),
-      changeEntry("任务描述", current.description, opt(input.description, current.description)),
+      changeEntry("任务名称", current.title, nextTitle),
+      changeEntry("任务描述", current.description, nextDescription),
       changeEntry("状态", statusLabel(current.status), statusLabel(status)),
       changeEntry("优先级", priorityLabel(current.priority), priorityLabel(isPriority(input.priority) ? input.priority : current.priority)),
       changeEntry("负责人", current.owner || "空", assignees.ownerName || "空"),
@@ -1153,8 +1176,8 @@ export class KanbanRepository {
       action: status !== current.status ? "task.status" : "task.update",
       message:
         changes.length > 0
-          ? `更新任务「${text(input.title, current.title)}」：${summarizeChanges(changes)}。`
-          : `更新任务「${text(input.title, current.title)}」。`,
+          ? `更新任务「${nextTitle}」：${summarizeChanges(changes)}。`
+          : `更新任务「${nextTitle}」。`,
       meta: {
         beforeStatus: current.status,
         afterStatus: status,
@@ -1167,7 +1190,7 @@ export class KanbanRepository {
       resourceType: "task",
       resourceId: id,
       boardId,
-      message: `更新任务 ${text(input.title, current.title)}`,
+      message: `更新任务 ${nextTitle}`,
       metadata: { beforeStatus: current.status, afterStatus: status, changes },
     });
     return task(await this.getTaskRow(boardId, id), (await this.getSubtasks(id)).map(subtask));
@@ -1176,7 +1199,7 @@ export class KanbanRepository {
   async deleteTask(actor: CurrentUser, boardId: string, id: string) {
     await this.requireBoardRead(actor, boardId);
     const old = await this.getTaskRow(boardId, id);
-    if (!old || old.deleted_at) throw new Error("Task not found");
+    if (!old || old.deleted_at) throw new Error("任务不存在");
     const current = task(old, (await this.getSubtasks(id)).map(subtask));
     if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     await this.x("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=?", [iso(), iso(), id]);
@@ -1254,7 +1277,7 @@ export class KanbanRepository {
   async createSubtask(actor: CurrentUser, boardId: string, taskId: string, input: CreateSubtaskInput) {
     await this.requireBoardRead(actor, boardId);
     const taskRow = await this.getTaskRow(boardId, taskId);
-    if (!taskRow || taskRow.deleted_at) throw new Error("Task not found");
+    if (!taskRow || taskRow.deleted_at) throw new Error("任务不存在");
     const current = task(taskRow, []);
     if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     const now = iso();
@@ -1301,7 +1324,7 @@ export class KanbanRepository {
     await this.requireBoardRead(actor, boardId);
     const taskRow = await this.getTaskRow(boardId, taskId);
     const old = await this.getSubtask(taskId, subtaskId);
-    if (!taskRow || taskRow.deleted_at || !old) throw new Error("Subtask not found");
+    if (!taskRow || taskRow.deleted_at || !old) throw new Error("任务拆解不存在");
     const current = task(taskRow, []);
     if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     const oldTitle = String(old.title ?? "");
@@ -1343,7 +1366,7 @@ export class KanbanRepository {
     await this.requireBoardRead(actor, boardId);
     const taskRow = await this.getTaskRow(boardId, taskId);
     const old = await this.getSubtask(taskId, subtaskId);
-    if (!taskRow || taskRow.deleted_at || !old) throw new Error("Subtask not found");
+    if (!taskRow || taskRow.deleted_at || !old) throw new Error("任务拆解不存在");
     const current = task(taskRow, []);
     if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
     await this.x("DELETE FROM subtasks WHERE id=? AND task_id=?", [subtaskId, taskId]);
@@ -1672,10 +1695,24 @@ export class KanbanRepository {
         now,
       ]);
     }
-    await this.x(
-      "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'owner',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='owner'",
-      [boardId, adminId, now]
-    );
+    try {
+      await this.x(
+        "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'owner',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='owner'",
+        [boardId, adminId, now]
+      );
+    } catch (error) {
+      if (!isMissingTableError(error, "board_members")) {
+        if (!isConflictTargetError(error)) {
+          throw error;
+        }
+        const existing = (await this.q("SELECT board_id FROM board_members WHERE board_id=? AND user_id=? LIMIT 1", [boardId, adminId]))[0];
+        if (existing) {
+          await this.x("UPDATE board_members SET role='owner' WHERE board_id=? AND user_id=?", [boardId, adminId]);
+        } else {
+          await this.x("INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'owner',?)", [boardId, adminId, now]);
+        }
+      }
+    }
     await this.x("UPDATE projects SET board_id=? WHERE board_id='' OR board_id IS NULL", [boardId]);
     await this.x("UPDATE task_activity SET board_id=? WHERE board_id='' OR board_id IS NULL", [boardId]);
   }
@@ -1719,13 +1756,19 @@ export class KanbanRepository {
 
   async ensureBoardDefaults(boardId: string, ownerName: string) {
     if (Number((await this.q("SELECT COUNT(*) AS count FROM projects WHERE board_id=?", [boardId]))[0]?.count) > 0) return;
-    const firstTeam = (await this.q("SELECT team_id FROM board_teams WHERE board_id=? ORDER BY created_at ASC LIMIT 1", [boardId]))[0];
+    const firstTeam = (
+      await this.q(
+        "SELECT bt.team_id,t.owner_user_id FROM board_teams bt JOIN teams t ON t.id=bt.team_id WHERE bt.board_id=? ORDER BY bt.created_at ASC LIMIT 1",
+        [boardId]
+      )
+    )[0];
     const teamId = typeof firstTeam?.team_id === "string" ? firstTeam.team_id : "";
     if (!teamId) return;
+    const ownerUserId = typeof firstTeam?.owner_user_id === "string" ? firstTeam.owner_user_id : "";
     const now = iso();
     await this.x(
-      "INSERT INTO projects (id,board_id,team_id,name,description,owner,color,health,status,summary,archived_at,order_index,created_at,updated_at) VALUES (?,?,?,'默认项目','用于承载本看板的默认任务集合。',?,'#1f6f68','normal','active','',NULL,10,?,?)",
-      [crypto.randomUUID(), boardId, teamId, ownerName || "未分配", now, now]
+      "INSERT INTO projects (id,board_id,team_id,owner_user_id,name,description,owner,color,health,status,summary,archived_at,order_index,created_at,updated_at) VALUES (?,?,?,?,'默认项目','用于承载本看板的默认任务集合。',?,'#1f6f68','normal','active','',NULL,10,?,?)",
+      [crypto.randomUUID(), boardId, teamId, ownerUserId, ownerName || "未分配", now, now]
     );
   }
 
@@ -1786,7 +1829,7 @@ export class KanbanRepository {
 
   async requireBoardTeam(boardId: string, teamId: string) {
     if (!(await this.q("SELECT team_id FROM board_teams WHERE board_id=? AND team_id=? LIMIT 1", [boardId, teamId]))[0]) {
-      throw new Error("Team is required");
+      throw new Error("请选择团队");
     }
   }
 
@@ -1803,7 +1846,15 @@ export class KanbanRepository {
   async boardTeamIds(boardIds: string[]) {
     const result = new Map<string, string[]>();
     if (!boardIds.length) return result;
-    const rows = await this.q(`SELECT board_id,team_id FROM board_teams WHERE board_id IN (${boardIds.map(() => "?").join(",")})`, boardIds);
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await this.q(`SELECT board_id,team_id FROM board_teams WHERE board_id IN (${boardIds.map(() => "?").join(",")})`, boardIds);
+    } catch (error) {
+      if (isMissingTableError(error, "board_teams")) {
+        return result;
+      }
+      throw error;
+    }
     for (const row of rows) {
       const boardId = String(row.board_id);
       const list = result.get(boardId) ?? [];
@@ -1890,23 +1941,52 @@ export class KanbanRepository {
   }
 
   async resolveTaskAssignees(projectValue: ReturnType<typeof project>, input: CreateTaskInput | UpdateTaskInput, current?: ReturnType<typeof task>) {
-    if (!projectValue.teamId) throw new Error("Team is required");
+    if (!projectValue.teamId) throw new Error("请选择团队");
     const teamMembers = await this.q(
       "SELECT u.* FROM team_members tm JOIN users u ON u.id=tm.user_id WHERE tm.team_id=? AND u.is_active=1 ORDER BY u.username ASC",
       [projectValue.teamId]
     );
     const byId = new Map(teamMembers.map((row) => [String(row.id), row]));
     const ownerUserId = text(input.ownerUserId, current?.ownerUserId ?? "");
-    if (!ownerUserId || !byId.has(ownerUserId)) throw new Error("Owner is required");
+    if (ownerUserId && !byId.has(ownerUserId)) throw new Error("负责人不存在或不属于当前项目团队");
     const testerUserId = text(input.testerUserId, current?.testerUserId ?? "");
-    if (testerUserId && !byId.has(testerUserId)) throw new Error("Tester not found");
-    const ownerRow = byId.get(ownerUserId)!;
+    if (testerUserId && !byId.has(testerUserId)) throw new Error("测试员不存在或不属于当前项目团队");
+    const ownerRow = ownerUserId ? byId.get(ownerUserId) : null;
     const testerRow = testerUserId ? byId.get(testerUserId) : null;
     return {
       ownerUserId,
-      ownerName: displayName(ownerRow),
+      ownerName: ownerRow ? displayName(ownerRow) : "",
       testerUserId,
       testerName: testerRow ? displayName(testerRow) : "",
+    };
+  }
+
+  async resolveProjectOwner(projectTeamId: string, input: CreateProjectInput | UpdateProjectInput, current?: ReturnType<typeof project>) {
+    if (!projectTeamId) throw new Error("请选择团队");
+    const projectFieldsTouched =
+      input.ownerUserId !== undefined ||
+      input.teamId !== undefined ||
+      input.name !== undefined ||
+      input.description !== undefined ||
+      input.color !== undefined ||
+      input.health !== undefined;
+    if (current && !projectFieldsTouched) {
+      return { ownerUserId: current.ownerUserId, ownerName: current.owner };
+    }
+    const ownerUserId = input.ownerUserId !== undefined ? text(input.ownerUserId) : current?.ownerUserId ?? "";
+    if (!ownerUserId) {
+      throw new Error("请选择负责人");
+    }
+    const ownerRow = (
+      await this.q(
+        "SELECT u.* FROM team_members tm JOIN users u ON u.id=tm.user_id WHERE tm.team_id=? AND u.id=? AND u.is_active=1 LIMIT 1",
+        [projectTeamId, ownerUserId]
+      )
+    )[0];
+    if (!ownerRow) throw new Error("负责人不存在或不属于所选团队");
+    return {
+      ownerUserId,
+      ownerName: displayName(ownerRow),
     };
   }
 
@@ -2131,7 +2211,7 @@ export class KanbanRepository {
 
   async ensureAnotherActiveSuperAdmin(excludedUserId: string) {
     const count = Number((await this.q("SELECT COUNT(*) AS count FROM users WHERE role='super_admin' AND is_active=1 AND id<>?", [excludedUserId]))[0]?.count ?? 0);
-    if (count <= 0) throw new Error("At least one super admin is required");
+    if (count <= 0) throw new Error("至少需要保留一个超管");
   }
 }
 
@@ -2265,6 +2345,7 @@ function project(row: Record<string, unknown>) {
   return {
     id: String(row.id),
     teamId: typeof row.team_id === "string" ? row.team_id : "",
+    ownerUserId: typeof row.owner_user_id === "string" ? row.owner_user_id : "",
     name: String(row.name),
     description: String(row.description ?? ""),
     owner: String(row.owner ?? ""),
@@ -2711,4 +2792,18 @@ function reorderItem(value: unknown) {
 
 function isReorderItem(value: ReturnType<typeof reorderItem>): value is NonNullable<ReturnType<typeof reorderItem>> {
   return value !== null;
+}
+
+function isMissingTableError(error: unknown, tableName: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes(`no such table: ${tableName}`) ||
+    message.includes(`relation "${tableName}" does not exist`) ||
+    message.includes(`relation '${tableName}' does not exist`)
+  );
+}
+
+function isConflictTargetError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("ON CONFLICT clause does not match") || message.includes("no unique or exclusion constraint matching");
 }

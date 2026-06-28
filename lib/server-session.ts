@@ -64,12 +64,16 @@ export function errorStatus(error: unknown) {
   const message = error instanceof Error ? error.message : "Request failed";
   if (message === "Unauthorized") return 401;
   if (message === "Forbidden") return 403;
-  if (message.endsWith("not found") || message.endsWith("Not found")) return 404;
+  if (message.endsWith("not found") || message.endsWith("Not found") || message.endsWith("不存在")) return 404;
   if (
     message === "Username already exists" ||
     message.includes("Username must contain") ||
     message.includes("required") ||
-    message.includes("At least one")
+    message.includes("At least one") ||
+    message.includes("请选择") ||
+    message.includes("不能为空") ||
+    message.includes("不属于") ||
+    message.includes("至少")
   ) {
     return 400;
   }
