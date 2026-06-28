@@ -209,6 +209,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
             {!publicView ? (
               <Link
                 href="/"
+                prefetch={false}
                 className="inline-flex h-11 items-center rounded-2xl bg-[linear-gradient(135deg,var(--dash-accent),var(--dash-hot))] px-4 text-sm font-semibold text-[var(--dash-accent-text)] shadow-[0_18px_38px_var(--dash-shadow)] transition hover:opacity-95"
               >
                 进入看板

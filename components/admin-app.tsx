@@ -485,7 +485,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               onChange={(value) => changeTheme(value as ThemeId)}
               placeholder="配色方案"
             />
-            <Link href="/" className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
+            <Link href="/" prefetch={false} className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
               返回看板
             </Link>
           </div>
@@ -510,6 +510,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
           ))}
           <Link
             href="/dashboard"
+            prefetch={false}
             className="ml-auto inline-flex h-10 items-center rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--hover)]"
           >
             项目负载大屏
