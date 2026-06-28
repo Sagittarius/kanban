@@ -46,7 +46,7 @@ export default async function DashboardPage() {
           <p className="text-sm font-semibold uppercase tracking-[0.24em] text-cyan-300">403</p>
           <h1 className="mt-3 text-2xl font-semibold">无权访问</h1>
           <Link href="/" className="mt-6 inline-flex rounded-full bg-cyan-300 px-5 py-2 text-sm font-semibold text-slate-950">
-            返回看板
+            进入看板
           </Link>
         </section>
       </main>

@@ -232,7 +232,7 @@ export default function AuthenticatedShell({
 
       {currentUser.role !== "super_admin" ? <style>{'button[title="系统参数"]{display:none!important}'}</style> : null}
       {readOnly ? (
-        <style>{'main.kanban-theme aside form,button[title="新建项目"],button[title="编辑项目"],button[title="归档项目"]{display:none!important}'}</style>
+        <style>{'button[title="新建项目"],button[title="编辑项目"],button[title="归档项目"]{display:none!important}'}</style>
       ) : null}
       {flash ? (
         <div className={`fixed left-1/2 top-5 z-[130] -translate-x-1/2 rounded-2xl border px-4 py-3 text-sm shadow-xl ${

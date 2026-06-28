@@ -773,9 +773,6 @@ export class KanbanRepository {
     const projectRow = await this.getProjectRow(boardId, projectId);
     if (!projectRow) throw new Error("Project not found");
     const assignees = await this.resolveTaskAssignees(project(projectRow), input);
-    if (actor.role === "team_member" && assignees.ownerUserId !== actor.id && assignees.testerUserId !== actor.id) {
-      throw new Error("Forbidden");
-    }
     const now = iso();
     const row = {
       id: crypto.randomUUID(),
@@ -1024,10 +1021,6 @@ export class KanbanRepository {
     for (const item of items) {
       const old = byId.get(item.id);
       if (!old) continue;
-      const current = task(old, []);
-      if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) {
-        throw new Error("Forbidden");
-      }
       const oldStatus = normalizeBoardStatus(old?.status);
       const completed = item.status === "done" ? (oldStatus === "done" ? String(old?.completed_at ?? iso()) : iso()) : null;
       const nextProgress = item.status === "done" ? 100 : num(old.progress, 0, 0, 100);
