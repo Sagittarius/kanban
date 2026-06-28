@@ -12,6 +12,28 @@ export async function GET() {
     );
     return NextResponse.json(withMembers);
   } catch (error) {
-    return NextResponse.json({ error: errorMessage(error, "加载看板失败") }, { status: errorStatus(error) });
+    const status = errorStatus(error);
+    if (status >= 500) {
+      console.error("[kanban][api-error]", JSON.stringify(apiErrorLog("GET /api/admin/boards", status, error)));
+    }
+    return NextResponse.json({ error: errorMessage(error, "加载看板失败") }, { status });
   }
+}
+
+function apiErrorLog(route: string, status: number, error: unknown) {
+  if (error instanceof Error) {
+    return {
+      route,
+      status,
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+      cause: error.cause instanceof Error ? { name: error.cause.name, message: error.cause.message, stack: error.cause.stack } : error.cause,
+    };
+  }
+  return {
+    route,
+    status,
+    message: String(error),
+  };
 }

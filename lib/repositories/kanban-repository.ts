@@ -436,10 +436,17 @@ export class KanbanRepository {
 
   async listBoardMembers(boardId: string) {
     await this.ensureBootstrapData();
-    return this.q(
-      "SELECT bm.user_id,u.username,u.display_name,u.role,bm.role AS board_role FROM board_members bm JOIN users u ON u.id=bm.user_id WHERE bm.board_id=? ORDER BY u.username ASC",
-      [boardId]
-    );
+    try {
+      return await this.q(
+        "SELECT bm.user_id,u.username,u.display_name,u.role,bm.role AS board_role FROM board_members bm JOIN users u ON u.id=bm.user_id WHERE bm.board_id=? ORDER BY u.username ASC",
+        [boardId]
+      );
+    } catch (error) {
+      if (isMissingTableError(error, "board_members")) {
+        return [];
+      }
+      throw error;
+    }
   }
 
   async grantBoardViewer(actor: CurrentUser, boardId: string, userId: string) {
@@ -1448,10 +1455,24 @@ export class KanbanRepository {
         now,
       ]);
     }
-    await this.x(
-      "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'owner',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='owner'",
-      [boardId, adminId, now]
-    );
+    try {
+      await this.x(
+        "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'owner',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='owner'",
+        [boardId, adminId, now]
+      );
+    } catch (error) {
+      if (!isMissingTableError(error, "board_members")) {
+        if (!isConflictTargetError(error)) {
+          throw error;
+        }
+        const existing = (await this.q("SELECT board_id FROM board_members WHERE board_id=? AND user_id=? LIMIT 1", [boardId, adminId]))[0];
+        if (existing) {
+          await this.x("UPDATE board_members SET role='owner' WHERE board_id=? AND user_id=?", [boardId, adminId]);
+        } else {
+          await this.x("INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'owner',?)", [boardId, adminId, now]);
+        }
+      }
+    }
     await this.x("UPDATE projects SET board_id=? WHERE board_id='' OR board_id IS NULL", [boardId]);
     await this.x("UPDATE task_activity SET board_id=? WHERE board_id='' OR board_id IS NULL", [boardId]);
   }
@@ -1580,7 +1601,15 @@ export class KanbanRepository {
   async boardTeamIds(boardIds: string[]) {
     const result = new Map<string, string[]>();
     if (!boardIds.length) return result;
-    const rows = await this.q(`SELECT board_id,team_id FROM board_teams WHERE board_id IN (${boardIds.map(() => "?").join(",")})`, boardIds);
+    let rows: Record<string, unknown>[];
+    try {
+      rows = await this.q(`SELECT board_id,team_id FROM board_teams WHERE board_id IN (${boardIds.map(() => "?").join(",")})`, boardIds);
+    } catch (error) {
+      if (isMissingTableError(error, "board_teams")) {
+        return result;
+      }
+      throw error;
+    }
     for (const row of rows) {
       const boardId = String(row.board_id);
       const list = result.get(boardId) ?? [];
@@ -2399,4 +2428,18 @@ function reorderItem(value: unknown) {
 
 function isReorderItem(value: ReturnType<typeof reorderItem>): value is NonNullable<ReturnType<typeof reorderItem>> {
   return value !== null;
+}
+
+function isMissingTableError(error: unknown, tableName: string) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes(`no such table: ${tableName}`) ||
+    message.includes(`relation "${tableName}" does not exist`) ||
+    message.includes(`relation '${tableName}' does not exist`)
+  );
+}
+
+function isConflictTargetError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("ON CONFLICT clause does not match") || message.includes("no unique or exclusion constraint matching");
 }

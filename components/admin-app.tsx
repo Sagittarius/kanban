@@ -59,6 +59,28 @@ const defaultPermissions: AdminPermissions = {
   canManageAllBoards: false,
 };
 
+function clientErrorMessage(error: unknown, fallback: string) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+async function fetchAdminJson<T>(url: string, fallback: T, errors: string[], fallbackMessage: string): Promise<T> {
+  try {
+    const response = await fetch(url);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const message =
+        payload && typeof payload === "object" && "error" in payload && typeof payload.error === "string"
+          ? payload.error
+          : fallbackMessage;
+      throw new Error(message);
+    }
+    return (payload ?? fallback) as T;
+  } catch (error) {
+    errors.push(clientErrorMessage(error, fallbackMessage));
+    return fallback;
+  }
+}
+
 const roleLabels: Record<UserRole, string> = {
   super_admin: "超管",
   project_manager: "项目经理",
@@ -115,17 +137,31 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const initialized = useRef(false);
 
   async function refresh() {
-    const [userPayload, teamPayload, boardRows] = await Promise.all([
-      fetch("/api/admin/users").then((response) => response.json() as Promise<UsersResponse>),
-      fetch("/api/admin/teams").then((response) => response.json() as Promise<TeamsResponse>),
-      fetch("/api/admin/boards").then((response) => response.json() as Promise<AdminBoard[]>),
+    const errors: string[] = [];
+    const emptyUsers: UsersResponse = { users: [], assignableUsers: [], permissions: defaultPermissions };
+    const emptyTeams: TeamsResponse = { teams: [], assignableUsers: [], permissions: defaultPermissions };
+    const [userPayload, teamPayload, boardPayload] = await Promise.all([
+      fetchAdminJson("/api/admin/users", emptyUsers, errors, "加载用户失败"),
+      fetchAdminJson("/api/admin/teams", emptyTeams, errors, "加载团队失败"),
+      fetchAdminJson("/api/admin/boards", [] as AdminBoard[], errors, "加载看板失败"),
     ]);
-    setUsers(userPayload.users ?? []);
-    setAssignableUsers(teamPayload.assignableUsers ?? userPayload.assignableUsers ?? []);
-    setTeams(teamPayload.teams ?? []);
+    const userRows = Array.isArray(userPayload.users) ? userPayload.users : [];
+    const assignableRows = Array.isArray(teamPayload.assignableUsers)
+      ? teamPayload.assignableUsers
+      : Array.isArray(userPayload.assignableUsers)
+        ? userPayload.assignableUsers
+        : [];
+    const teamRows = Array.isArray(teamPayload.teams) ? teamPayload.teams : [];
+    const boardRows = Array.isArray(boardPayload) ? boardPayload : [];
+    setUsers(userRows);
+    setAssignableUsers(assignableRows);
+    setTeams(teamRows);
     setPermissions(userPayload.permissions ?? teamPayload.permissions ?? defaultPermissions);
-    setBoards(boardRows ?? []);
-    const nextBoard = boardRows?.find((board) => board.id === selectedBoardId) ?? boardRows?.[0];
+    setBoards(boardRows);
+    if (errors.length > 0) {
+      setMessage([...new Set(errors)].join("；"));
+    }
+    const nextBoard = boardRows.find((board) => board.id === selectedBoardId) ?? boardRows[0];
     setSelectedBoardId(nextBoard?.id ?? "");
     setBoardTeamDraft(nextBoard?.teamIds ?? []);
   }
