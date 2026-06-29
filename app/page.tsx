@@ -1,5 +1,6 @@
 import AuthenticatedShell from "@/components/authenticated-shell";
 import MaintenancePage from "@/components/maintenance-page";
+import AppErrorPage from "@/components/app-error-page";
 import KanbanRuntimeGuard from "@/components/kanban-runtime-guard";
 import LoginPage from "@/components/login-page";
 import { cookies } from "next/headers";
@@ -50,30 +51,40 @@ export default async function Home() {
   }
 
   const user = optionalUser ?? (await requireSessionUser());
-  const activeBoard = await resolveActiveBoard(user);
   const repo = await getKanbanRepository();
-  const board = await repo.getBoard(user, activeBoard.id);
 
-  const runtime = (
-    <KanbanRuntimeGuard
-      initialBoard={board}
-      todayKey={board.todayKey ?? todayKeyInChina()}
-      appVersion={appVersion}
-      initialThemeId={initialThemeId}
-    />
-  );
+  try {
+    const activeBoard = await resolveActiveBoard(user);
+    const board = await repo.getBoard(user, activeBoard.id);
 
-  if (!isAuthFeatureEnabled()) {
-    return runtime;
+    const runtime = (
+      <KanbanRuntimeGuard
+        initialBoard={board}
+        todayKey={board.todayKey ?? todayKeyInChina()}
+        appVersion={appVersion}
+        initialThemeId={initialThemeId}
+      />
+    );
+
+    if (!isAuthFeatureEnabled()) {
+      return runtime;
+    }
+
+    return (
+      <AuthenticatedShell
+        user={user}
+        boards={board.boards ?? []}
+        activeBoardId={board.activeBoardId ?? activeBoard.id}
+      >
+        {runtime}
+      </AuthenticatedShell>
+    );
+  } catch (error) {
+    return (
+      <AppErrorPage
+        title="当前账号没有可访问的看板"
+        detail={error instanceof Error ? error.message : "加载看板失败"}
+      />
+    );
   }
-
-  return (
-    <AuthenticatedShell
-      user={user}
-      boards={board.boards ?? []}
-      activeBoardId={board.activeBoardId ?? activeBoard.id}
-    >
-      {runtime}
-    </AuthenticatedShell>
-  );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { AlertTriangle, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
@@ -100,6 +100,8 @@ const emptyDashboard: DashboardData = {
   todayKey: "",
 };
 
+const dashboardRefreshEventKey = "kanban:dashboard-refresh";
+
 export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean }) {
   const { publicView = false } = props;
   const [data, setData] = useState<DashboardData>(emptyDashboard);
@@ -153,17 +155,21 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
     []
   );
 
-  useEffect(() => {
-    let active = true;
-    const controller = new AbortController();
+  const loadDashboard = useCallback(async (signal?: AbortSignal) => {
     const params = new URLSearchParams();
     for (const teamId of selectedTeamIds) params.append("teamId", teamId);
     for (const projectId of selectedProjectIds) params.append("projectId", projectId);
-    fetch(`/api/dashboard?${params.toString()}`, { signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`Dashboard request failed: ${response.status}`);
-        return response.json() as Promise<DashboardData>;
-      })
+    const response = await fetch(`/api/dashboard?${params.toString()}`, { signal });
+    if (!response.ok) {
+      throw new Error(`Dashboard request failed: ${response.status}`);
+    }
+    return response.json() as Promise<DashboardData>;
+  }, [selectedProjectIds, selectedTeamIds]);
+
+  useEffect(() => {
+    let active = true;
+    const controller = new AbortController();
+    loadDashboard(controller.signal)
       .then((payload) => {
         if (active) setData(payload);
       })
@@ -175,7 +181,46 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
       active = false;
       controller.abort();
     };
-  }, [selectedProjectIds, selectedTeamIds]);
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    const handleRefresh = () => {
+      void loadDashboard()
+        .then((payload) => {
+          setData(payload);
+        })
+        .catch((error: unknown) => {
+          console.error(error);
+        });
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === dashboardRefreshEventKey) {
+        handleRefresh();
+      }
+    };
+
+    const handleBroadcast = (event: MessageEvent) => {
+      if (typeof event.data === "string") {
+        handleRefresh();
+      }
+    };
+
+    const handleWindow = () => handleRefresh();
+
+    window.addEventListener(dashboardRefreshEventKey, handleWindow as EventListener);
+    window.addEventListener("storage", handleStorage);
+
+    const channel = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(dashboardRefreshEventKey) : null;
+    channel?.addEventListener("message", handleBroadcast);
+
+    return () => {
+      window.removeEventListener(dashboardRefreshEventKey, handleWindow as EventListener);
+      window.removeEventListener("storage", handleStorage);
+      channel?.removeEventListener("message", handleBroadcast);
+      channel?.close();
+    };
+  }, [loadDashboard]);
 
   const teamOptions = useMemo(
     () =>
@@ -720,16 +765,23 @@ function DashboardCompactTaskRow({
   return (
     <button
       type="button"
-      title={task.description || task.title}
+      title={[task.title, task.projectName, task.description].filter(Boolean).join(" · ")}
       onClick={() => onSelect(task)}
-      className={`group flex w-full flex-col rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] px-3 py-3 text-sm transition ${taskWarningFrameClass(task)}`}
+      className={`group flex w-full flex-col overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] px-3 py-2.5 text-sm transition ${taskWarningFrameClass(task)}`}
     >
-      <span className="flex w-full min-w-0 items-center gap-3 text-left">
-        <span className="flex min-w-0 flex-1 items-baseline gap-2">
+      <span className="flex w-full min-w-0 items-start gap-3 text-left">
+        <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <span className="shrink-0 truncate font-medium text-[var(--dash-text)]">{task.title}</span>
-          <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[11px] text-[var(--dash-muted)]">
-            <span className="truncate">{task.description || task.projectName}</span>
-            {task.tags.slice(0, 3).map((tag) => (
+          <span className="shrink-0 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2 py-0.5 text-[11px] font-semibold text-[var(--dash-muted)]">
+            {task.projectName}
+          </span>
+          {task.description ? (
+            <span className="min-w-0 max-w-[34%] truncate text-[11px] text-[var(--dash-muted)]">
+              {task.description}
+            </span>
+          ) : null}
+          <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-[var(--dash-muted)]">
+            {task.tags.slice(0, 2).map((tag) => (
               <span
                 key={tag}
                 className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--dash-line)] bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-text)]"
@@ -738,27 +790,27 @@ function DashboardCompactTaskRow({
                 {tag}
               </span>
             ))}
-            {task.tags.length > 3 ? (
+            {task.tags.length > 2 ? (
               <span className="shrink-0 rounded-full bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-muted)]">
-                +{task.tags.length - 3}
+                +{task.tags.length - 2}
               </span>
             ) : null}
           </span>
         </span>
-        <span className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5">
+        <span className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5 whitespace-nowrap">
           {task.dueSoon ? <WarningDot tone="info" label="临期" /> : null}
           {task.overdue ? <WarningDot tone="danger" label="超期" /> : null}
           {task.blocked ? <WarningDot tone="warning" label="阻塞" /> : null}
         </span>
       </span>
-      <span className="mt-2 flex items-center gap-2">
-        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-[var(--dash-track)]">
+      <span className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_42px] items-center gap-2">
+        <span className="h-1.5 min-w-0 overflow-hidden rounded-full bg-[var(--dash-track)]">
           <span
-            className="block h-full rounded-full bg-[var(--dash-accent)] transition-all duration-500"
+            className="block h-full rounded-full bg-[var(--dash-accent)]"
             style={{ width: `${Math.min(100, Math.max(0, task.progress))}%` }}
           />
         </span>
-        <span className="w-9 text-right text-[11px] font-semibold text-[var(--dash-muted)]">{task.progress}%</span>
+        <span className="text-right text-[11px] font-semibold text-[var(--dash-muted)]">{task.progress}%</span>
       </span>
     </button>
   );

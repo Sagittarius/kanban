@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  AlertTriangle,
-  RefreshCw,
-} from "lucide-react";
+import AppErrorPage from "@/components/app-error-page";
 import {
   Component,
   useEffect,
@@ -125,31 +122,10 @@ function RuntimeErrorMonitor() {
 
 function ErrorFallback() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-6 py-10 text-[var(--text)]">
-      <section className="w-full max-w-xl rounded-xl border border-[var(--danger)] bg-[var(--panel)] p-8 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="rounded-lg bg-[var(--danger-soft)] p-3 text-[var(--danger)]">
-            <AlertTriangle size={22} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-semibold">页面发生异常</h1>
-            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              当前界面未能继续稳定渲染。系统已记录错误信息。建议刷新页面后继续操作，避免在当前状态下继续拖拽。
-            </p>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-                className="inline-flex items-center gap-2 rounded-md border border-[var(--text)] bg-[var(--text)] px-4 py-2 text-sm font-medium text-[var(--panel)] transition hover:opacity-90"
-              >
-                <RefreshCw size={15} />
-                刷新页面
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-    </main>
+    <AppErrorPage
+      title="页面发生异常"
+      message="当前界面未能继续稳定渲染。系统已记录错误信息。建议先刷新页面继续操作；如果问题仍然存在，可以直接退出登录后重新进入。"
+    />
   );
 }
 

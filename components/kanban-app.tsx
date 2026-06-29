@@ -724,6 +724,30 @@ async function apiRequest<T>(url: string, method: string, body?: unknown) {
   return (await response.json()) as T;
 }
 
+const dashboardRefreshEventKey = "kanban:dashboard-refresh";
+
+function notifyDashboardRefresh() {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  const payload = String(Date.now());
+  window.dispatchEvent(new CustomEvent(dashboardRefreshEventKey, { detail: payload }));
+
+  try {
+    window.localStorage.setItem(dashboardRefreshEventKey, payload);
+    window.localStorage.removeItem(dashboardRefreshEventKey);
+  } catch {
+    // noop
+  }
+
+  if (typeof BroadcastChannel !== "undefined") {
+    const channel = new BroadcastChannel(dashboardRefreshEventKey);
+    channel.postMessage(payload);
+    channel.close();
+  }
+}
+
 export default function KanbanApp({
   initialBoard,
   todayKey,
@@ -753,7 +777,6 @@ export default function KanbanApp({
   );
   const [crossDragTarget, setCrossDragTarget] = useState<BoardStatus | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
-  const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogAction | null>(null);
   const localIdCounter = useRef(0);
@@ -1246,6 +1269,7 @@ export default function KanbanApp({
         tasks: current.tasks.map((task) => (task.id === taskId ? saved : task)),
       }));
       await refreshBoard();
+      notifyDashboardRefresh();
       notify("任务已保存");
       return true;
     } catch (error) {
@@ -1352,6 +1376,7 @@ export default function KanbanApp({
       }));
       openTask(saved.id);
       await refreshBoard();
+      notifyDashboardRefresh();
       notify("任务已创建");
     } catch {
       appendLocalActivity(`创建任务「${optimistic.title}」。`);
@@ -1386,6 +1411,7 @@ export default function KanbanApp({
     try {
       await apiRequest(`/api/tasks/${taskId}`, "DELETE");
       await refreshBoard();
+      notifyDashboardRefresh();
       notify("任务已删除");
     } catch {
       appendLocalActivity(`删除任务「${task.title}」。`);
@@ -1406,6 +1432,7 @@ export default function KanbanApp({
     try {
       const created = await apiRequest<BoardTask>(`/api/tasks/${taskId}/rework`, "POST");
       await refreshBoard(false);
+      notifyDashboardRefresh();
       openTask(created.id);
       notify("已发起返工");
     } catch {
@@ -1537,159 +1564,81 @@ export default function KanbanApp({
     }
   }
 
-  async function createSubtask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!selectedTask || !newSubtaskTitle.trim()) {
-      return;
+  async function syncTaskSubtasks(taskId: string, nextSubtasks: SubtaskDraft[]) {
+    const currentTask = board.tasks.find((task) => task.id === taskId);
+    if (!currentTask) {
+      return false;
     }
 
-    const optimistic: Subtask = {
-      id: nextLocalId("local-step"),
-      taskId: selectedTask.id,
-      title: newSubtaskTitle.trim(),
-      done: false,
-      orderIndex: selectedTask.subtasks.length * 10 + 10,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    setNewSubtaskTitle("");
-    setBoard((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) =>
-        task.id === selectedTask.id
-          ? { ...task, subtasks: [...task.subtasks, optimistic] }
-          : task
-      ),
+    const normalizedSubtasks = nextSubtasks.map((step, index) => ({
+      ...step,
+      title: step.title.trim(),
+      orderIndex: (index + 1) * 10,
     }));
+    const progress = progressFromSubtasks(normalizedSubtasks, currentTask.progress);
+    const updatedAt = new Date().toISOString();
 
     if (isLocalPreview) {
-      appendLocalActivity(`添加任务拆解「${optimistic.title}」。`, "subtask");
-      setSyncState("local");
-      return;
-    }
-
-    try {
-      const saved = await apiRequest<Subtask>(
-        `/api/tasks/${selectedTask.id}/subtasks`,
-        "POST",
-        { title: optimistic.title }
-      );
       setBoard((current) => ({
         ...current,
         tasks: current.tasks.map((task) =>
-          task.id === selectedTask.id
+          task.id === taskId
             ? {
                 ...task,
-                subtasks: task.subtasks.map((step) =>
-                  step.id === optimistic.id ? saved : step
-                ),
+                subtasks: normalizedSubtasks,
+                progress,
+                updatedAt,
               }
             : task
         ),
       }));
-      await refreshBoard(false);
-    } catch {
-      appendLocalActivity(`添加任务拆解「${optimistic.title}」。`, "subtask");
+      appendLocalActivity(`更新任务「${currentTask.title}」的任务拆解。`, "subtask");
       setSyncState("local");
+      return true;
     }
-  }
 
-  async function toggleSubtask(taskId: string, subtask: Subtask) {
-    setBoard((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) => {
-        if (task.id !== taskId) {
-          return task;
+    const previousById = new Map(currentTask.subtasks.map((step) => [step.id, step]));
+    const nextIds = new Set(normalizedSubtasks.map((step) => step.id));
+
+    try {
+      for (const step of currentTask.subtasks) {
+        if (!nextIds.has(step.id)) {
+          await apiRequest(`/api/tasks/${taskId}/subtasks/${step.id}`, "DELETE");
         }
-        const subtasks = task.subtasks.map((step) =>
-          step.id === subtask.id
-            ? { ...step, done: !step.done, updatedAt: new Date().toISOString() }
-            : step
-        );
-        return {
-          ...task,
-          subtasks,
-          progress: progressFromSubtasks(subtasks, task.progress),
-          updatedAt: new Date().toISOString(),
-        };
-      }),
-    }));
+      }
 
-    if (isLocalPreview) {
-      appendLocalActivity(
-        `${subtask.done ? "取消完成" : "完成"}任务拆解「${subtask.title}」。`,
-        "subtask"
-      );
-      setSyncState("local");
-      return;
-    }
+      for (const step of normalizedSubtasks) {
+        const previous = previousById.get(step.id);
+        if (!previous) {
+          const created = await apiRequest<Subtask>(`/api/tasks/${taskId}/subtasks`, "POST", {
+            title: step.title,
+          });
+          if (step.done) {
+            await apiRequest(`/api/tasks/${taskId}/subtasks/${created.id}`, "PATCH", { done: true });
+          }
+          continue;
+        }
 
-    try {
-      await apiRequest(`/api/tasks/${taskId}/subtasks/${subtask.id}`, "PATCH", {
-        done: !subtask.done,
-      });
+        const patch: { title?: string; done?: boolean } = {};
+        if (previous.title !== step.title) {
+          patch.title = step.title;
+        }
+        if (previous.done !== step.done) {
+          patch.done = step.done;
+        }
+        if (Object.keys(patch).length > 0) {
+          await apiRequest(`/api/tasks/${taskId}/subtasks/${step.id}`, "PATCH", patch);
+        }
+      }
+
       await refreshBoard(false);
-    } catch {
-      setSyncState("local");
-    }
-  }
-
-  async function updateSubtaskTitle(taskId: string, subtask: Subtask, title: string) {
-    if (!title.trim()) return;
-    setBoard((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) => {
-        if (task.id !== taskId) return task;
-        return {
-          ...task,
-          subtasks: task.subtasks.map((s) =>
-            s.id === subtask.id ? { ...s, title: title.trim(), updatedAt: new Date().toISOString() } : s
-          ),
-          updatedAt: new Date().toISOString(),
-        };
-      }),
-    }));
-
-    if (isLocalPreview) {
-      appendLocalActivity(`更新任务拆解「${title.trim()}」。`, "subtask");
-      setSyncState("local");
-      return;
-    }
-
-    try {
-      await apiRequest(`/api/tasks/${taskId}/subtasks/${subtask.id}`, "PATCH", { title: title.trim() });
+      notifyDashboardRefresh();
+      return true;
+    } catch (error) {
       await refreshBoard(false);
-    } catch {
       setSyncState("local");
-    }
-  }
-
-  async function deleteSubtaskItem(taskId: string, subtask: Subtask) {
-    setBoard((current) => ({
-      ...current,
-      tasks: current.tasks.map((task) => {
-        if (task.id !== taskId) return task;
-        const subtasks = task.subtasks.filter((s) => s.id !== subtask.id);
-        return {
-          ...task,
-          subtasks,
-          progress: progressFromSubtasks(subtasks, task.progress),
-          updatedAt: new Date().toISOString(),
-        };
-      }),
-    }));
-
-    if (isLocalPreview) {
-      appendLocalActivity(`删除任务拆解「${subtask.title}」。`, "subtask");
-      setSyncState("local");
-      return;
-    }
-
-    try {
-      await apiRequest(`/api/tasks/${taskId}/subtasks/${subtask.id}`, "DELETE");
-      await refreshBoard(false);
-    } catch {
-      setSyncState("local");
+      notify(error instanceof Error ? error.message : "任务拆解保存失败", "error");
+      return false;
     }
   }
 
@@ -2293,19 +2242,14 @@ export default function KanbanApp({
               task={selectedTask}
               projects={activeProjectChoices}
               teams={boardTeams}
-              newSubtaskTitle={newSubtaskTitle}
-              setNewSubtaskTitle={setNewSubtaskTitle}
               columns={board.columns}
               currentUser={currentUser ?? undefined}
               editable={selectedTaskEditable}
               onSave={(patch) => persistTask(selectedTask.id, patch)}
+              onSyncSubtasks={(subtasks) => syncTaskSubtasks(selectedTask.id, subtasks)}
               onInvalid={showNotice}
               onRework={() => reworkTask(selectedTask.id)}
               onDelete={() => void removeTask(selectedTask.id)}
-              onCreateSubtask={createSubtask}
-              onToggleSubtask={(subtask) => void toggleSubtask(selectedTask.id, subtask)}
-              onUpdateSubtask={(subtask, title) => void updateSubtaskTitle(selectedTask.id, subtask, title)}
-              onDeleteSubtask={(subtask) => void deleteSubtaskItem(selectedTask.id, subtask)}
             />
           ) : null}
           {drawerMode === "project" ? (
@@ -2593,7 +2537,7 @@ function KanbanListView({
   return (
     <div className="min-h-[760px] overflow-auto bg-[var(--lane-bg)] p-3 2xl:min-h-[900px]">
       <div className="min-w-[1200px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
-        <div className="grid grid-cols-[180px_minmax(280px,1.6fr)_140px_110px_110px_130px_130px_220px_140px_110px_110px] gap-3 border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">
+        <div className="grid grid-cols-[180px_minmax(280px,1.6fr)_140px_110px_110px_130px_130px_140px_110px_110px] gap-3 border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">
           <span>项目 / 状态</span>
           <span>任务</span>
           <span>负责人</span>
@@ -2601,7 +2545,6 @@ function KanbanListView({
           <span>工作量（人日）</span>
           <span>标签</span>
           <span>截止</span>
-          <span>拆解</span>
           <span>更新时间</span>
           <span>进度</span>
           <span>阻塞</span>
@@ -2615,7 +2558,7 @@ function KanbanListView({
                   key={task.id}
                   type="button"
                   onClick={() => onOpenTask(task.id)}
-                  className="grid w-full grid-cols-[180px_minmax(280px,1.6fr)_140px_110px_110px_130px_130px_220px_140px_110px_110px] gap-3 px-4 py-3 text-left transition hover:bg-[var(--hover)]"
+                  className="grid w-full grid-cols-[180px_minmax(280px,1.6fr)_140px_110px_110px_130px_130px_140px_110px_110px] gap-3 px-4 py-3 text-left transition hover:bg-[var(--hover)]"
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-semibold text-[var(--text)]">{project.name}</span>
@@ -2630,9 +2573,6 @@ function KanbanListView({
                   <span className="text-sm font-semibold text-[var(--text)]">{task.workloadDays ?? "-"}</span>
                   <span className="truncate text-xs text-[var(--muted)]">{task.tags.join(" / ") || "-"}</span>
                   <span className="truncate text-xs text-[var(--muted)]">{deadlineText}</span>
-                  <span className="truncate text-xs text-[var(--muted)]">
-                    {task.subtasks.length > 0 ? `${task.subtasks.filter((step) => step.done).length}/${task.subtasks.length}` : "-"}
-                  </span>
                   <span className="text-xs text-[var(--muted)]">{task.updatedAt.slice(0, 10)}</span>
                   <span className="text-sm font-semibold text-[var(--text)]">{task.progress}%</span>
                   <span className={`text-sm font-semibold ${task.blockers > 0 ? "text-[#c7523d]" : "text-[var(--muted)]"}`}>
@@ -3077,13 +3017,9 @@ function TaskCard({
 }) {
   const markers = deadlineMarkers(task, todayKey, dueSoonDays);
   const hasDateAlert = markers.some((marker) => marker.state !== "normal");
-  const subtaskDone = task.subtasks.filter((step) => step.done).length;
-  const progress = progressFromSubtasks(task.subtasks, task.progress);
+  const progress = task.progress;
   const visibleTags = task.tags.slice(0, 3);
   const hiddenTagCount = Math.max(0, task.tags.length - visibleTags.length);
-  const progressLabel = task.subtasks.length
-    ? `${subtaskDone}/${task.subtasks.length}`
-    : `${progress}%`;
   const stripeColor = alphaColor(project.color, 0.42);
 
   return (
@@ -3188,13 +3124,9 @@ function TaskCard({
             style={{ width: `${progress}%` }}
           />
         </div>
-        <span className="shrink-0 tabular-nums">{progressLabel}</span>
+        <span className="shrink-0 tabular-nums">{progress}%</span>
         <span className={`shrink-0 ${task.blockers > 0 ? "font-semibold text-[var(--danger)]" : ""}`}>
-          {task.blockers > 0
-            ? `${task.blockers} 个阻塞`
-            : task.subtasks.length
-              ? "进度"
-              : "进度"}
+          {task.blockers > 0 ? `${task.blockers} 个阻塞` : "进度"}
         </span>
       </div>
     </article>
@@ -3252,10 +3184,12 @@ type TaskDraft = {
   tester: string;
   workloadDays: string;
   progress: number;
-  blockers: number;
+  blockers: string;
   blockedReason: string;
   tagsText: string;
 };
+
+type SubtaskDraft = Subtask;
 
 function taskDraftFromTask(task: BoardTask): TaskDraft {
   return {
@@ -3273,7 +3207,7 @@ function taskDraftFromTask(task: BoardTask): TaskDraft {
     tester: task.tester,
     workloadDays: task.workloadDays === null || task.workloadDays === undefined ? "" : String(task.workloadDays),
     progress: task.progress,
-    blockers: task.blockers,
+    blockers: String(task.blockers ?? 0),
     blockedReason: task.blockedReason,
     tagsText: task.tags.join(" "),
   };
@@ -3286,16 +3220,11 @@ function TaskDrawer({
   columns,
   currentUser,
   editable,
-  newSubtaskTitle,
-  setNewSubtaskTitle,
   onSave,
+  onSyncSubtasks,
   onInvalid,
   onRework,
   onDelete,
-  onCreateSubtask,
-  onToggleSubtask,
-  onUpdateSubtask,
-  onDeleteSubtask,
 }: {
   task: BoardTask;
   projects: Project[];
@@ -3303,18 +3232,15 @@ function TaskDrawer({
   columns: BoardData["columns"];
   currentUser: BoardData["currentUser"];
   editable: boolean;
-  newSubtaskTitle: string;
-  setNewSubtaskTitle: (value: string) => void;
   onSave: (patch: Partial<BoardTask>) => Promise<boolean>;
+  onSyncSubtasks: (subtasks: SubtaskDraft[]) => Promise<boolean>;
   onInvalid: (message: string, title?: string) => void;
   onRework: () => Promise<void>;
   onDelete: () => void;
-  onCreateSubtask: (event: FormEvent<HTMLFormElement>) => void;
-  onToggleSubtask: (subtask: Subtask) => void;
-  onUpdateSubtask: (subtask: Subtask, title: string) => void;
-  onDeleteSubtask: (subtask: Subtask) => void;
 }) {
   const [draft, setDraft] = useState<TaskDraft>(() => taskDraftFromTask(task));
+  const [subtaskDrafts, setSubtaskDrafts] = useState<SubtaskDraft[]>(() => task.subtasks);
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [saving, setSaving] = useState(false);
   const [reworking, setReworking] = useState(false);
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
@@ -3337,6 +3263,59 @@ function TaskDrawer({
     label: userName(member),
     meta: `@${member.username}`,
   }));
+  const hasSubtasks = subtaskDrafts.length > 0;
+  const effectiveProgress = hasSubtasks
+    ? progressFromSubtasks(subtaskDrafts, draft.progress)
+    : draft.progress;
+  const subtaskResetKey = task.subtasks
+    .map((step) => `${step.id}:${step.done ? 1 : 0}:${step.title}:${step.updatedAt}`)
+    .join("|");
+
+  useEffect(() => {
+    setDraft(taskDraftFromTask(task));
+    setSubtaskDrafts(task.subtasks);
+    setNewSubtaskTitle("");
+    setEditingSubtaskId(null);
+    setEditingSubtaskTitle("");
+  }, [task.id, task.updatedAt, task.progress, task.blockers, subtaskResetKey]);
+
+  function commitSubtaskTitle(subtaskId: string, title: string) {
+    if (!title.trim()) {
+      setEditingSubtaskId(null);
+      setEditingSubtaskTitle("");
+      return;
+    }
+    setSubtaskDrafts((current) =>
+      current.map((step) =>
+        step.id === subtaskId
+          ? { ...step, title: title.trim(), updatedAt: new Date().toISOString() }
+          : step
+      )
+    );
+    setEditingSubtaskId(null);
+    setEditingSubtaskTitle("");
+  }
+
+  function addSubtask(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!newSubtaskTitle.trim()) {
+      return;
+    }
+    const now = new Date().toISOString();
+    setSubtaskDrafts((current) => [
+      ...current,
+      {
+        id: `draft-step-${task.id}-${Date.now()}-${current.length + 1}`,
+        taskId: task.id,
+        title: newSubtaskTitle.trim(),
+        done: false,
+        orderIndex: current.length * 10 + 10,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    setNewSubtaskTitle("");
+  }
 
   async function saveTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -3364,7 +3343,7 @@ function TaskDrawer({
     }
 
     setSaving(true);
-    await onSave({
+    const saved = await onSave({
       title: draft.title,
       description: draft.description,
       projectId: draft.projectId,
@@ -3378,11 +3357,14 @@ function TaskDrawer({
       testerUserId: draft.testerUserId,
       tester: draft.tester,
       workloadDays: normalizeWorkloadInput(draft.workloadDays),
-      progress: draft.progress,
-      blockers: draft.blockers,
+      progress: effectiveProgress,
+      blockers: Number(draft.blockers || 0),
       blockedReason: draft.blockedReason,
       tags: parseTags(draft.tagsText),
     });
+    if (saved) {
+      await onSyncSubtasks(subtaskDrafts);
+    }
     setSaving(false);
   }
 
@@ -3514,28 +3496,39 @@ function TaskDrawer({
             />
           </Field>
 
-          <div className="grid grid-cols-[1fr_100px] gap-4">
-            <Field label={`进度 ${draft.progress}%`}>
-              <input
-                type="range"
-                name="taskProgress"
-                min="0"
-                max="100"
-                value={draft.progress}
-                onChange={(event) => setDraft((current) => ({ ...current, progress: Number(event.target.value) }))}
-                className="accent-[var(--accent)]"
-              />
-            </Field>
-            <Field label="阻塞项">
-              <input
-                type="number"
-                name="taskBlockers"
-                min="0"
-                max="99"
-                value={draft.blockers}
-                onChange={(event) => setDraft((current) => ({ ...current, blockers: Number(event.target.value) }))}
-              />
-            </Field>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-4">
+              <div className="text-sm font-medium leading-10 text-[var(--muted)]">{`进度 ${effectiveProgress}%`}</div>
+              <label className="flex items-center gap-3 text-sm font-medium text-[var(--muted)]">
+                <span className="shrink-0">阻塞项</span>
+                <input
+                  type="number"
+                  name="taskBlockers"
+                  min="0"
+                  max="99"
+                  value={draft.blockers}
+                  onChange={(event) => setDraft((current) => ({ ...current, blockers: event.target.value }))}
+                  className="h-10 w-24 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm font-normal text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                />
+              </label>
+            </div>
+            <div>
+              {hasSubtasks ? (
+                <div className="h-2 overflow-hidden rounded-full bg-[var(--panel-soft)]">
+                  <div className="h-full rounded-full bg-[var(--accent)] transition-all" style={{ width: `${effectiveProgress}%` }} />
+                </div>
+              ) : (
+                <input
+                  type="range"
+                  name="taskProgress"
+                  min="0"
+                  max="100"
+                  value={draft.progress}
+                  onChange={(event) => setDraft((current) => ({ ...current, progress: Number(event.target.value) }))}
+                  className="w-full accent-[var(--accent)]"
+                />
+              )}
+            </div>
           </div>
 
           <Field label="阻塞说明">
@@ -3561,27 +3554,35 @@ function TaskDrawer({
       <section className="flex flex-col gap-4 border-t border-[var(--border)] pt-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-semibold">任务拆解</h2>
-          {task.subtasks.length > 0 ? (
+          {hasSubtasks ? (
             <span className="rounded-full bg-[var(--accent-soft)] px-2.5 py-0.5 text-xs font-semibold text-[var(--accent)]">
-              {task.subtasks.filter((step) => step.done).length}/{task.subtasks.length}
+              {effectiveProgress}%
             </span>
           ) : null}
         </div>
-        {task.subtasks.length > 0 ? (
+        {hasSubtasks ? (
           <div className="h-2 overflow-hidden rounded-full bg-[var(--panel-soft)]">
             <div
               className="h-full rounded-full bg-[var(--accent)] transition-all"
-              style={{ width: `${Math.round((task.subtasks.filter((s) => s.done).length / task.subtasks.length) * 100)}%` }}
+              style={{ width: `${effectiveProgress}%` }}
             />
           </div>
         ) : null}
         <fieldset disabled={!editable} className="flex flex-col gap-4">
           <div className="flex flex-col gap-2">
-            {task.subtasks.filter((s) => !s.done).map((step) => (
+            {subtaskDrafts.filter((s) => !s.done).map((step) => (
               <div key={step.id} className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2">
                 <button
                   type="button"
-                  onClick={() => onToggleSubtask(step)}
+                  onClick={() =>
+                    setSubtaskDrafts((current) =>
+                      current.map((item) =>
+                        item.id === step.id
+                          ? { ...item, done: true, updatedAt: new Date().toISOString() }
+                          : item
+                      )
+                    )
+                  }
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[var(--border)] transition hover:border-[var(--accent)]"
                 >
                   <Check size={11} className="opacity-0" />
@@ -3591,13 +3592,10 @@ function TaskDrawer({
                     value={editingSubtaskTitle}
                     onChange={(e) => setEditingSubtaskTitle(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") { onUpdateSubtask(step, editingSubtaskTitle); setEditingSubtaskId(null); }
-                      if (e.key === "Escape") { setEditingSubtaskId(null); }
+                      if (e.key === "Enter") { commitSubtaskTitle(step.id, editingSubtaskTitle); }
+                      if (e.key === "Escape") { setEditingSubtaskId(null); setEditingSubtaskTitle(""); }
                     }}
-                    onBlur={() => {
-                      if (editingSubtaskTitle.trim()) { onUpdateSubtask(step, editingSubtaskTitle); }
-                      setEditingSubtaskId(null);
-                    }}
+                    onBlur={() => commitSubtaskTitle(step.id, editingSubtaskTitle)}
                     autoFocus
                     className="flex-1 rounded border border-[var(--accent)] bg-[var(--input)] px-2 py-1 text-sm outline-none"
                   />
@@ -3612,7 +3610,10 @@ function TaskDrawer({
                 )}
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onDeleteSubtask(step); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSubtaskDrafts((current) => current.filter((item) => item.id !== step.id));
+                  }}
                   title="删除拆解"
                   className="shrink-0 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--danger)]"
                 >
@@ -3620,11 +3621,19 @@ function TaskDrawer({
                 </button>
               </div>
             ))}
-            {task.subtasks.filter((s) => s.done).map((step) => (
+            {subtaskDrafts.filter((s) => s.done).map((step) => (
               <div key={step.id} className="flex items-center gap-2 rounded-md border border-[#c8d8bf] bg-[#edf6ea] px-3 py-2">
                 <button
                   type="button"
-                  onClick={() => onToggleSubtask(step)}
+                  onClick={() =>
+                    setSubtaskDrafts((current) =>
+                      current.map((item) =>
+                        item.id === step.id
+                          ? { ...item, done: false, updatedAt: new Date().toISOString() }
+                          : item
+                      )
+                    )
+                  }
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[#4f7a45] bg-[#4f7a45] text-white transition"
                 >
                   <Check size={11} />
@@ -3634,13 +3643,10 @@ function TaskDrawer({
                     value={editingSubtaskTitle}
                     onChange={(e) => setEditingSubtaskTitle(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") { onUpdateSubtask(step, editingSubtaskTitle); setEditingSubtaskId(null); }
-                      if (e.key === "Escape") { setEditingSubtaskId(null); }
+                      if (e.key === "Enter") { commitSubtaskTitle(step.id, editingSubtaskTitle); }
+                      if (e.key === "Escape") { setEditingSubtaskId(null); setEditingSubtaskTitle(""); }
                     }}
-                    onBlur={() => {
-                      if (editingSubtaskTitle.trim()) { onUpdateSubtask(step, editingSubtaskTitle); }
-                      setEditingSubtaskId(null);
-                    }}
+                    onBlur={() => commitSubtaskTitle(step.id, editingSubtaskTitle)}
                     autoFocus
                     className="flex-1 rounded border border-[var(--accent)] bg-white px-2 py-1 text-sm text-[#58704e] outline-none"
                   />
@@ -3655,7 +3661,10 @@ function TaskDrawer({
                 )}
                 <button
                   type="button"
-                  onClick={(e) => { e.stopPropagation(); onDeleteSubtask(step); }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSubtaskDrafts((current) => current.filter((item) => item.id !== step.id));
+                  }}
                   title="删除拆解"
                   className="shrink-0 rounded p-1 text-[#6d8064] transition hover:bg-white/50 hover:text-[var(--danger)]"
                 >
@@ -3664,7 +3673,7 @@ function TaskDrawer({
               </div>
             ))}
           </div>
-          <form onSubmit={onCreateSubtask} className="grid grid-cols-[minmax(0,1fr)_42px] gap-2">
+          <form onSubmit={addSubtask} className="grid grid-cols-[minmax(0,1fr)_42px] gap-2">
             <input
               value={newSubtaskTitle}
               name="newSubtaskTitle"

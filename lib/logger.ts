@@ -4,6 +4,7 @@ import path from "node:path";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 type LogFields = Record<string, unknown>;
+type LogDestination = "app" | "business";
 type FileLogSink = {
   write(line: string): void;
 };
@@ -22,8 +23,10 @@ const baseBindings = {
   env: process.env.NODE_ENV ?? "development",
 };
 
-const configuredLevel = normalizeLogLevel(process.env.KANBAN_LOG_LEVEL) ?? (process.env.NODE_ENV === "production" ? "info" : "debug");
-let fileSink: FileLogSink | null | undefined;
+const configuredAppLevel = normalizeLogLevel(process.env.KANBAN_LOG_LEVEL) ?? (process.env.NODE_ENV === "production" ? "info" : "debug");
+const configuredBusinessLevel = normalizeLogLevel(process.env.KANBAN_BUSINESS_LOG_LEVEL) ?? "info";
+let appFileSink: FileLogSink | null | undefined;
+let businessFileSink: FileLogSink | null | undefined;
 
 export type StructuredLogger = {
   child(bindings: LogFields): StructuredLogger;
@@ -34,9 +37,14 @@ export type StructuredLogger = {
 };
 
 export const logger = createLogger();
+export const businessLogger = createLogger({ channel: "business" }, "business");
 
 export function getLogger(component: string) {
   return logger.child({ component });
+}
+
+export function getBusinessLogger(component: string) {
+  return businessLogger.child({ component });
 }
 
 export function withLogContext<T>(context: LogFields, callback: () => T): T {
@@ -58,28 +66,28 @@ export function errorFields(error: unknown): LogFields {
   return { errorMessage: String(error) };
 }
 
-function createLogger(bindings: LogFields = {}): StructuredLogger {
+function createLogger(bindings: LogFields = {}, destination: LogDestination = "app"): StructuredLogger {
   return {
     child(childBindings) {
-      return createLogger({ ...bindings, ...childBindings });
+      return createLogger({ ...bindings, ...childBindings }, destination);
     },
     debug(message, fields) {
-      writeLog("debug", message, bindings, fields);
+      writeLog("debug", message, bindings, fields, destination);
     },
     info(message, fields) {
-      writeLog("info", message, bindings, fields);
+      writeLog("info", message, bindings, fields, destination);
     },
     warn(message, fields) {
-      writeLog("warn", message, bindings, fields);
+      writeLog("warn", message, bindings, fields, destination);
     },
     error(message, fields) {
-      writeLog("error", message, bindings, fields);
+      writeLog("error", message, bindings, fields, destination);
     },
   };
 }
 
-function writeLog(level: LogLevel, message: string, bindings: LogFields, fields: LogFields = {}) {
-  if (levelWeights[level] < levelWeights[configuredLevel]) {
+function writeLog(level: LogLevel, message: string, bindings: LogFields, fields: LogFields = {}, destination: LogDestination = "app") {
+  if (levelWeights[level] < levelWeights[configuredLevel(destination)]) {
     return;
   }
 
@@ -94,45 +102,86 @@ function writeLog(level: LogLevel, message: string, bindings: LogFields, fields:
   });
   const line = `${JSON.stringify(payload)}\n`;
 
-  if (process.env.KANBAN_LOG_CONSOLE !== "false") {
+  if (isConsoleEnabled(destination)) {
     const writer = level === "error" ? process.stderr : process.stdout;
     writer.write(line);
   }
-  const sink = getFileSink();
+  const sink = getFileSink(destination);
   if (sink) {
     sink.write(line);
   }
 }
 
-function getFileSink() {
-  if (fileSink === undefined) {
-    fileSink = createFileSink();
-  }
-  return fileSink;
+function configuredLevel(destination: LogDestination) {
+  return destination === "business" ? configuredBusinessLevel : configuredAppLevel;
 }
 
-function createFileSink(): FileLogSink | null {
-  if (process.env.KANBAN_LOG_FILE_ENABLED === "false") {
+function isConsoleEnabled(destination: LogDestination) {
+  const value = destination === "business" ? process.env.KANBAN_BUSINESS_LOG_CONSOLE ?? process.env.KANBAN_LOG_CONSOLE : process.env.KANBAN_LOG_CONSOLE;
+  return value !== "false";
+}
+
+function getFileSink(destination: LogDestination) {
+  if (destination === "business") {
+    if (businessFileSink === undefined) {
+      businessFileSink = createFileSink("business");
+    }
+    return businessFileSink;
+  }
+
+  if (appFileSink === undefined) {
+    appFileSink = createFileSink("app");
+  }
+  return appFileSink;
+}
+
+function createFileSink(destination: LogDestination): FileLogSink | null {
+  const enabled = destination === "business" ? process.env.KANBAN_BUSINESS_LOG_FILE_ENABLED ?? process.env.KANBAN_LOG_FILE_ENABLED : process.env.KANBAN_LOG_FILE_ENABLED;
+  if (enabled === "false") {
     return null;
   }
 
-  const configuredFile = process.env.KANBAN_LOG_FILE?.trim();
-  const configuredDir = process.env.KANBAN_LOG_DIR?.trim();
-  const filePath = configuredFile || (configuredDir ? path.join(configuredDir, "kanban.log") : "");
+  const filePath = resolveLogFilePath(destination);
   if (!filePath) {
     return null;
   }
 
   try {
     return new RotatingFileLogSink(filePath, {
-      maxBytes: readOptionalPositiveNumber(process.env.KANBAN_LOG_MAX_SIZE_MB, 50) * 1024 * 1024,
-      maxFiles: readOptionalPositiveInteger(process.env.KANBAN_LOG_MAX_FILES, 10),
-      retentionMs: readOptionalPositiveNumber(process.env.KANBAN_LOG_RETENTION_DAYS, 30) * 24 * 60 * 60 * 1000,
+      maxBytes: readOptionalPositiveNumber(logOption(destination, "KANBAN_LOG_MAX_SIZE_MB", "KANBAN_BUSINESS_LOG_MAX_SIZE_MB"), 50) * 1024 * 1024,
+      maxFiles: readOptionalPositiveInteger(logOption(destination, "KANBAN_LOG_MAX_FILES", "KANBAN_BUSINESS_LOG_MAX_FILES"), 10),
+      retentionMs: readOptionalPositiveNumber(logOption(destination, "KANBAN_LOG_RETENTION_DAYS", "KANBAN_BUSINESS_LOG_RETENTION_DAYS"), 30) * 24 * 60 * 60 * 1000,
     });
   } catch (error) {
-    writeInternalLoggerError("failed to open log file", filePath, error);
+    writeInternalLoggerError(`failed to open ${destination} log file`, filePath, error);
     return null;
   }
+}
+
+function resolveLogFilePath(destination: LogDestination) {
+  if (destination === "app") {
+    const configuredFile = process.env.KANBAN_LOG_FILE?.trim();
+    const configuredDir = process.env.KANBAN_LOG_DIR?.trim();
+    return configuredFile || (configuredDir ? path.join(configuredDir, "kanban.log") : "");
+  }
+
+  const configuredBusinessFile = process.env.KANBAN_BUSINESS_LOG_FILE?.trim();
+  if (configuredBusinessFile) {
+    return configuredBusinessFile;
+  }
+
+  const configuredBusinessDir = process.env.KANBAN_BUSINESS_LOG_DIR?.trim();
+  const configuredDir = configuredBusinessDir || process.env.KANBAN_LOG_DIR?.trim();
+  if (configuredDir) {
+    return path.join(configuredDir, "kanban-business.log");
+  }
+
+  const configuredAppFile = process.env.KANBAN_LOG_FILE?.trim();
+  return configuredAppFile ? path.join(path.dirname(configuredAppFile), "kanban-business.log") : "";
+}
+
+function logOption(destination: LogDestination, appEnv: string, businessEnv: string) {
+  return destination === "business" ? process.env[businessEnv] ?? process.env[appEnv] : process.env[appEnv];
 }
 
 class RotatingFileLogSink implements FileLogSink {

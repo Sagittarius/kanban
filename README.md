@@ -26,6 +26,7 @@
 - 系统参数表，可配置临期天数、活动记录保留天数、看板名称、阶段名称、任务卡片样式和项目负载参数
 - 独立全局活动记录面板，记录项目、任务、任务拆解和跨阶段移动，并按保留天数自动清理
 - 结构化 JSON 运行日志，支持控制台、文件输出、文件滚动和清理，API 请求自动记录 requestId、耗时、状态码、IP 和 UA
+- 关键业务日志单独输出，记录认证、后台管理、看板、团队、项目、任务、维护升级等关键事件
 - 登录用户审计日志，记录认证、后台管理、看板、团队、系统参数、项目、任务和拆解任务等关键操作
 - SQLite/PostgreSQL 持久化项目、任务、任务拆解、系统参数、活动记录和审计日志
 
@@ -678,6 +679,14 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 | `KANBAN_LOG_MAX_SIZE_MB` | `50` | 单个日志文件超过该大小后滚动，设置为 `0` 可关闭按大小滚动 |
 | `KANBAN_LOG_MAX_FILES` | `10` | 最多保留的滚动日志文件数，设置为 `0` 可关闭按数量清理 |
 | `KANBAN_LOG_RETENTION_DAYS` | `30` | 滚动日志保留天数，设置为 `0` 可关闭按时间清理 |
+| `KANBAN_BUSINESS_LOG_LEVEL` | `info` | 关键业务日志级别：`debug`、`info`、`warn`、`error` |
+| `KANBAN_BUSINESS_LOG_CONSOLE` | 继承 `KANBAN_LOG_CONSOLE` | 是否将关键业务日志输出到 stdout/stderr |
+| `KANBAN_BUSINESS_LOG_FILE_ENABLED` | 继承 `KANBAN_LOG_FILE_ENABLED` | 是否写入关键业务日志文件 |
+| `KANBAN_BUSINESS_LOG_FILE` | - | 指定完整业务日志文件路径，例如 `/data/logs/kanban-business.log` |
+| `KANBAN_BUSINESS_LOG_DIR` | 继承 `KANBAN_LOG_DIR` | 未设置 `KANBAN_BUSINESS_LOG_FILE` 时，业务日志写入该目录下的 `kanban-business.log` |
+| `KANBAN_BUSINESS_LOG_MAX_SIZE_MB` | 继承 `KANBAN_LOG_MAX_SIZE_MB` | 业务日志单文件滚动大小 |
+| `KANBAN_BUSINESS_LOG_MAX_FILES` | 继承 `KANBAN_LOG_MAX_FILES` | 业务日志最多保留的滚动文件数 |
+| `KANBAN_BUSINESS_LOG_RETENTION_DAYS` | 继承 `KANBAN_LOG_RETENTION_DAYS` | 业务日志滚动文件保留天数 |
 | `POSTGRES_URL` | - | PostgreSQL 连接字符串，仅 PostgreSQL 模式使用 |
 | `DATABASE_URL` | - | `POSTGRES_URL` 的兼容别名 |
 | `POSTGRES_DB` | `kanban` | PostgreSQL compose 中初始化数据库名，并用于拼接默认 `POSTGRES_URL` |
@@ -693,6 +702,8 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 ## 日志与审计
 
 服务端运行日志统一输出为结构化 JSON。API 入口会记录 `requestId`、`operation`、HTTP 方法、路径、状态码、耗时、IP 和 User-Agent；未捕获异常和前端运行时上报的 client error 会记录错误名称、消息和堆栈。生产 Docker 镜像默认设置 `KANBAN_LOG_DIR=/data/logs`，因此会同时输出控制台日志并写入 `/data/logs/kanban.log`。如只依赖 Docker 控制台日志，可设置 `KANBAN_LOG_FILE_ENABLED=false` 关闭文件日志。文件日志默认单文件 50MB 滚动，最多保留 10 个滚动文件，并清理超过 30 天的滚动日志。
+
+关键业务日志和运行日志分离，默认复用 `KANBAN_LOG_DIR` 并写入 `/data/logs/kanban-business.log`，同时也会按 `KANBAN_BUSINESS_LOG_CONSOLE` 输出到控制台。登录失败、维护口令错误、重复升级等业务拒绝事件按 `warn` 记录，业务动作成功按 `info` 记录，审计写入失败和维护任务启动失败按 `error` 记录。业务日志同样支持按大小滚动、按文件数和保留天数清理，可通过 `KANBAN_BUSINESS_LOG_*` 单独覆盖。
 
 审计日志存放在 `audit_logs` 表，和普通协作活动记录分离。登录成功/失败、退出登录、修改密码、用户管理、看板管理、团队管理、系统参数、项目、任务、任务拆解和跨阶段移动等关键操作都会写入审计表。后台管理提供 `审计` 页签，超管可查看最近全局审计记录，项目经理只查看自己的审计记录。
 

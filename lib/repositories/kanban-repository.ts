@@ -29,7 +29,7 @@ import {
   type SystemParameter,
   type SystemSettings,
 } from "@/lib/board-data";
-import { currentLogContext, errorFields, getLogger } from "@/lib/logger";
+import { currentLogContext, errorFields, getBusinessLogger, getLogger } from "@/lib/logger";
 import { hashPassword } from "@/lib/password";
 import { DEFAULT_TIMEZONE, normalizeTimeZone, todayKeyInTimeZone } from "@/lib/timezone";
 
@@ -114,6 +114,7 @@ export const USERNAME_PATTERN = /^[A-Za-z0-9_]+$/;
 export const DEFAULT_BOARD_ID = process.env.KANBAN_DEFAULT_BOARD_ID?.trim() || "default-board";
 let repositoryPromise: Promise<KanbanRepository> | null = null;
 const repositoryLogger = getLogger("repository");
+const businessEventLogger = getBusinessLogger("audit");
 
 function statusLabel(status: BoardStatus) {
   return (
@@ -1129,7 +1130,11 @@ export class KanbanRepository {
     const nextTags = JSON.stringify(tags(input.tags, current.tags));
     const completed = status === "done" ? (current.status === "done" ? current.completedAt : iso()) : null;
     const order = status !== current.status ? await this.nextTaskOrderIndex(status, projectId) : current.orderIndex;
-    const nextProgress = status === "done" ? 100 : num(input.progress, current.progress, 0, 100);
+    const nextProgress = status === "done"
+      ? 100
+      : current.subtasks.length > 0
+        ? current.progress
+        : num(input.progress, current.progress, 0, 100);
     const nextBlockers = status === "done" ? 0 : num(input.blockers, current.blockers, 0, 99);
     const nextBlockedReason = status === "done" ? "" : opt(input.blockedReason, current.blockedReason);
     await this.x(
@@ -1541,6 +1546,76 @@ export class KanbanRepository {
         tasks: normalizedTasks,
       };
     });
+    const dashboardProjects = effectiveProjectRows.map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      teamId: String(row.team_id ?? ""),
+      teamName: projectTeamNames.get(String(row.team_id ?? "")) ?? "",
+      boardId: String(row.board_id ?? ""),
+      description: String(row.description ?? ""),
+      taskCount:
+        Object.values(
+          projectStatusCounts.get(String(row.id)) ?? {
+            backlog: 0,
+            design: 0,
+            dev: 0,
+            test: 0,
+            done: 0,
+          }
+        ).reduce((sum, value) => sum + value, 0),
+      workloadDays: roundWorkload(projectDashboardWorkload(projectTaskMap.get(String(row.id)) ?? [], memberById, testerDefaultWorkloadDays)),
+      statusCounts:
+        projectStatusCounts.get(String(row.id)) ?? {
+          backlog: 0,
+          design: 0,
+          dev: 0,
+          test: 0,
+          done: 0,
+        },
+      dueSoonCount: projectWarningCounts.get(String(row.id))?.dueSoon ?? 0,
+      overdueCount: projectWarningCounts.get(String(row.id))?.overdue ?? 0,
+      blockedCount: projectWarningCounts.get(String(row.id))?.blocked ?? 0,
+      tasks: (projectTaskMap.get(String(row.id)) ?? []).map((taskRow) => {
+        const normalizedTask = task(taskRow, []);
+        const warnings = taskWarningFlags(normalizedTask, todayKey, dueSoonDays);
+        const taskTester = memberById.get(normalizedTask.testerUserId);
+        const taskOwner = memberById.get(normalizedTask.ownerUserId);
+        const assigneeKind = normalizedTask.status === "test" && taskTester?.jobTitle === "tester" ? "tester" : "owner";
+        const entityProgress = Number(taskRow.progress ?? normalizedTask.progress ?? 0);
+        return {
+          id: normalizedTask.id,
+          title: normalizedTask.title,
+          description: normalizedTask.description,
+          projectId: normalizedTask.projectId,
+          projectName: String(row.name),
+          status: normalizedTask.status,
+          // 任务池 / 项目详情里的任务列表统一按任务实体 progress 字段展示，
+          // 不再按角色或阶段二次换算。
+          progress: Math.max(0, Math.min(100, Number.isFinite(entityProgress) ? entityProgress : 0)),
+          workloadDays: normalizedTask.workloadDays,
+          effectiveWorkloadDays:
+            assigneeKind === "tester"
+              ? testerDefaultWorkloadDays
+              : taskOwner?.jobTitle === "tester"
+                ? 0
+                : effectiveWorkloadDays(normalizedTask),
+          owner: normalizedTask.owner,
+          tester: normalizedTask.tester,
+          priority: normalizedTask.priority,
+          designDueDate: normalizedTask.designDueDate,
+          testDueDate: normalizedTask.testDueDate,
+          dueDate: normalizedTask.dueDate,
+          blockedReason: normalizedTask.blockedReason,
+          tags: normalizedTask.tags,
+          completedAt: normalizedTask.completedAt,
+          dueSoon: warnings.dueSoon,
+          overdue: warnings.overdue,
+          blocked: warnings.blocked,
+          assigneeKind,
+        };
+      }),
+    }));
+
     return {
       permissions: await this.adminPermissions(actor),
       filters: {
@@ -1550,75 +1625,10 @@ export class KanbanRepository {
       teamIds: selectedTeamIds,
       projectIds: effectiveProjectRows.map((row) => String(row.id)),
       teams: allowedTeams,
-      projects: projectRows.map((row) => ({
-        id: String(row.id),
-        name: String(row.name),
-        teamId: String(row.team_id ?? ""),
-        teamName: projectTeamNames.get(String(row.team_id ?? "")) ?? "",
-        boardId: String(row.board_id ?? ""),
-        description: String(row.description ?? ""),
-        taskCount:
-          Object.values(
-            projectStatusCounts.get(String(row.id)) ?? {
-              backlog: 0,
-              design: 0,
-              dev: 0,
-              test: 0,
-              done: 0,
-            }
-          ).reduce((sum, value) => sum + value, 0),
-        workloadDays: roundWorkload(projectDashboardWorkload(projectTaskMap.get(String(row.id)) ?? [], memberById, testerDefaultWorkloadDays)),
-        statusCounts:
-          projectStatusCounts.get(String(row.id)) ?? {
-            backlog: 0,
-            design: 0,
-            dev: 0,
-            test: 0,
-            done: 0,
-          },
-        dueSoonCount: projectWarningCounts.get(String(row.id))?.dueSoon ?? 0,
-        overdueCount: projectWarningCounts.get(String(row.id))?.overdue ?? 0,
-        blockedCount: projectWarningCounts.get(String(row.id))?.blocked ?? 0,
-        tasks: (projectTaskMap.get(String(row.id)) ?? []).map((taskRow) => {
-          const normalizedTask = task(taskRow, []);
-          const warnings = taskWarningFlags(normalizedTask, todayKey, dueSoonDays);
-          const taskTester = memberById.get(normalizedTask.testerUserId);
-          const taskOwner = memberById.get(normalizedTask.ownerUserId);
-          const assigneeKind = normalizedTask.status === "test" && taskTester?.jobTitle === "tester" ? "tester" : "owner";
-          return {
-            id: normalizedTask.id,
-            title: normalizedTask.title,
-            description: normalizedTask.description,
-            projectId: normalizedTask.projectId,
-            projectName: String(row.name),
-            status: normalizedTask.status,
-            progress: normalizedTask.progress,
-            workloadDays: normalizedTask.workloadDays,
-            effectiveWorkloadDays:
-              assigneeKind === "tester"
-                ? testerDefaultWorkloadDays
-                : taskOwner?.jobTitle === "tester"
-                  ? 0
-                  : effectiveWorkloadDays(normalizedTask),
-            owner: normalizedTask.owner,
-            tester: normalizedTask.tester,
-            priority: normalizedTask.priority,
-            designDueDate: normalizedTask.designDueDate,
-            testDueDate: normalizedTask.testDueDate,
-            dueDate: normalizedTask.dueDate,
-            blockedReason: normalizedTask.blockedReason,
-            tags: normalizedTask.tags,
-            completedAt: normalizedTask.completedAt,
-            dueSoon: warnings.dueSoon,
-            overdue: warnings.overdue,
-            blocked: warnings.blocked,
-            assigneeKind,
-          };
-        }),
-      })),
+      projects: dashboardProjects,
       totals: {
         teams: allowedTeams.length,
-        projects: projectRows.length,
+        projects: effectiveProjectRows.length,
         members: rows.length,
         tasks: taskRows.length,
         workloadDays: roundWorkload(rows.reduce((sum, row) => sum + row.workloadDays, 0)),
@@ -2213,6 +2223,26 @@ export class KanbanRepository {
         ]
       );
 
+      const businessFields = {
+        eventType: "audit",
+        auditId: row.id,
+        action: row.action,
+        result: row.result,
+        resourceType: row.resource_type,
+        resourceId: row.resource_id,
+        boardId: row.board_id,
+        actorUserId: row.actor_user_id,
+        actorUsername: row.actor_username,
+        actorRole: row.actor_role,
+        message: row.message,
+        metadata: input.metadata ?? {},
+      };
+      if (row.result === "failure") {
+        businessEventLogger.warn("business event rejected", businessFields);
+      } else {
+        businessEventLogger.info("business event recorded", businessFields);
+      }
+
       repositoryLogger.info("audit event recorded", {
         auditId: row.id,
         actorUserId: row.actor_user_id,
@@ -2224,6 +2254,20 @@ export class KanbanRepository {
         result: row.result,
       });
     } catch (error) {
+      businessEventLogger.error("business event audit write failed", {
+        eventType: "audit",
+        action: row.action,
+        result: row.result,
+        resourceType: row.resource_type,
+        resourceId: row.resource_id,
+        boardId: row.board_id,
+        actorUserId: row.actor_user_id,
+        actorUsername: row.actor_username,
+        actorRole: row.actor_role,
+        message: row.message,
+        metadata: input.metadata ?? {},
+        ...errorFields(error),
+      });
       repositoryLogger.error("audit event write failed", {
         action: row.action,
         resourceType: row.resource_type,
@@ -2399,12 +2443,24 @@ function subtask(row: Record<string, unknown>) {
 }
 
 function task(row: Record<string, unknown>, steps: Subtask[]) {
+  const status = normalizeBoardStatus(row.status);
+  const baseProgress = Number(row.progress ?? 0);
+  // 任务实体只保留一个“真实进度”：
+  // - 有拆解时，进度以拆解完成率为准；
+  // - 没有拆解时，进度以手动/滑动进度为准；
+  // - 进入已完成状态后，进度强制收敛为 100%。
+  const effectiveProgress =
+    status === "done"
+      ? 100
+      : steps.length
+        ? Math.round((steps.filter((step) => step.done).length / steps.length) * 100)
+        : baseProgress;
   return {
     id: String(row.id),
     projectId: String(row.project_id),
     title: String(row.title),
     description: String(row.description ?? ""),
-    status: normalizeBoardStatus(row.status),
+    status,
     priority: isPriority(row.priority) ? row.priority : "medium",
     ownerUserId: typeof row.owner_user_id === "string" ? row.owner_user_id : "",
     owner: String(row.owner ?? ""),
@@ -2416,7 +2472,7 @@ function task(row: Record<string, unknown>, steps: Subtask[]) {
     dueDate: String(row.due_date ?? ""),
     estimate: Number(row.estimate ?? 1),
     workloadDays: workloadDays(row.workload_days),
-    progress: Number(row.progress ?? 0),
+    progress: effectiveProgress,
     blockers: Number(row.blockers ?? 0),
     blockedReason: String(row.blocked_reason ?? ""),
     tags: parseTags(String(row.tags ?? "[]")),
@@ -2729,11 +2785,17 @@ function effectiveWorkloadDays(taskValue: { workloadDays?: number | null }) {
   return taskValue.workloadDays && Number.isFinite(taskValue.workloadDays) ? taskValue.workloadDays : 1;
 }
 
+// 大屏进度口径：
+// 1. 负责人视角始终显示任务实体的真实进度；
+// 2. 测试员在测试中阶段按测试口径显示为 0，已完成阶段统一显示为 100；
+// 3. 任务状态为已完成时，任务实体本身也会强制收敛为 100；
+// 4. 这样可以避免后续再改大屏时，把负责人进度误压成 0。
 function dashboardProgressForMember(jobTitle: string, taskValue: { status: BoardStatus; progress?: number }) {
-  if (jobTitle === "developer") {
-    return "progress" in taskValue && typeof taskValue.progress === "number" ? taskValue.progress : 0;
+  if (jobTitle === "tester") {
+    if (taskValue.status === "done") return 100;
+    if (taskValue.status === "test") return 0;
   }
-  return taskValue.status === "done" ? 100 : 0;
+  return "progress" in taskValue && typeof taskValue.progress === "number" ? taskValue.progress : 0;
 }
 
 function dashboardAverageProgressForMember(
@@ -2741,23 +2803,20 @@ function dashboardAverageProgressForMember(
   rows: Array<Record<string, unknown> & { __effectiveWorkloadDays: number }>
 ) {
   if (!rows.length) return 0;
-  if (jobTitle === "developer") {
-    const totalWorkload = rows.reduce((sum, row) => sum + row.__effectiveWorkloadDays, 0);
-    return totalWorkload > 0
-      ? Math.round(
-          rows.reduce((sum, row) => {
-            const normalizedTask = task(row, []);
-            return sum + row.__effectiveWorkloadDays * dashboardProgressForMember(jobTitle, normalizedTask);
-          }, 0) / totalWorkload
-        )
-      : 0;
-  }
-  return Math.round(
-    rows.reduce((sum, row) => {
-      const normalizedTask = task(row, []);
-      return sum + dashboardProgressForMember(jobTitle, normalizedTask);
-    }, 0) / rows.length
-  );
+  const totalWorkload = rows.reduce((sum, row) => sum + row.__effectiveWorkloadDays, 0);
+  return totalWorkload > 0
+    ? Math.round(
+        rows.reduce((sum, row) => {
+          const normalizedTask = task(row, []);
+          return sum + row.__effectiveWorkloadDays * dashboardProgressForMember(jobTitle, normalizedTask);
+        }, 0) / totalWorkload
+      )
+    : Math.round(
+      rows.reduce((sum, row) => {
+        const normalizedTask = task(row, []);
+        return sum + dashboardProgressForMember(jobTitle, normalizedTask);
+      }, 0) / rows.length
+    );
 }
 
 function projectDashboardWorkload(
