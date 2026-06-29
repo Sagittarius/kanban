@@ -112,16 +112,20 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   const [selectedMember, setSelectedMember] = useState<DashboardMember | null>(null);
   const particles = useMemo(
     () =>
-      Array.from({ length: 44 }, (_, index) => ({
-        id: index,
-        left: `${(index * 23 + 11) % 100}%`,
-        top: `${(index * 17 + 5) % 100}%`,
-        size: 1.8 + (index % 5) * 1.35,
-        delay: `${(index % 12) * 0.55}s`,
-        duration: `${7 + (index % 7) * 1.6}s`,
-        opacity: 0.24 + (index % 5) * 0.08,
-        tone: particleTone(index),
-      })),
+      Array.from({ length: 80 }, (_, index) => {
+        const shape = particleShape(index);
+        return {
+          id: index,
+          left: `${(index * 23 + 11) % 100}%`,
+          top: `${(index * 17 + 5) % 100}%`,
+          size: 2 + (index % 7) * 1.2,
+          delay: `${(index % 12) * 0.55}s`,
+          duration: `${6 + (index % 8) * 1.4}s`,
+          opacity: 0.28 + (index % 6) * 0.09,
+          tone: particleTone(index),
+          shape,
+        };
+      }),
     []
   );
   const beams = useMemo(
@@ -136,18 +140,40 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
     []
   );
 
+  const meteors = useMemo(
+    () =>
+      [
+        { left: "-28%", top: "10%", angle: "18deg", delay: "0s", duration: "9.8s", width: "18rem" },
+        { left: "-22%", top: "42%", angle: "22deg", delay: "4.8s", duration: "15.4s", width: "20rem" },
+        { left: "-18%", top: "26%", angle: "16deg", delay: "9.4s", duration: "20.6s", width: "17rem" },
+      ].map((meteor, index) => ({
+        id: index,
+        ...meteor,
+      })),
+    []
+  );
+
   useEffect(() => {
     let active = true;
+    const controller = new AbortController();
     const params = new URLSearchParams();
     for (const teamId of selectedTeamIds) params.append("teamId", teamId);
     for (const projectId of selectedProjectIds) params.append("projectId", projectId);
-    fetch(`/api/dashboard?${params.toString()}`)
-      .then((response) => response.json() as Promise<DashboardData>)
+    fetch(`/api/dashboard?${params.toString()}`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Dashboard request failed: ${response.status}`);
+        return response.json() as Promise<DashboardData>;
+      })
       .then((payload) => {
         if (active) setData(payload);
+      })
+      .catch((error: unknown) => {
+        if (!active || controller.signal.aborted) return;
+        console.error(error);
       });
     return () => {
       active = false;
+      controller.abort();
     };
   }, [selectedProjectIds, selectedTeamIds]);
 
@@ -196,7 +222,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
         {particles.map((particle) => (
           <span
             key={particle.id}
-            className={`absolute rounded-full dashboard-particle ${particle.tone}`}
+            className={`absolute dashboard-particle ${particle.tone} ${particle.shape}`}
             style={{
               left: particle.left,
               top: particle.top,
@@ -208,12 +234,28 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
             }}
           />
         ))}
+        {/* 流星 */}
+        {meteors.map((meteor) => (
+          <span
+            key={meteor.id}
+            className="absolute h-3"
+            style={{ left: meteor.left, top: meteor.top, width: meteor.width, transform: `rotate(${meteor.angle})`, transformOrigin: "left center" }}
+          >
+            <span
+              className="absolute left-0 top-0 h-full w-full opacity-0 dashboard-meteor"
+              style={{ animationDelay: meteor.delay, animationDuration: meteor.duration }}
+            >
+              <span className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 rounded-full dashboard-meteor-tail" />
+              <span className="absolute right-0 top-1/2 h-[4px] w-[10px] -translate-y-1/2 rounded-full dashboard-meteor-head" />
+            </span>
+          </span>
+        ))}
         <div className="absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:32px_32px]" />
         <div className="absolute inset-0 opacity-[0.14] [background-image:radial-gradient(circle_at_center,rgba(255,255,255,0.22)_0,transparent_54%)]" />
       </div>
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-[2160px] flex-col gap-5 px-5 py-5 2xl:px-8">
-        <header className="relative z-30 flex flex-wrap items-center gap-4 overflow-hidden rounded-[28px] border border-[var(--dash-line)] bg-[var(--dash-panel-strong)] px-5 py-5 shadow-[0_24px_80px_var(--dash-shadow-soft)] backdrop-blur-xl">
+        <header className="relative z-30 flex flex-wrap items-center gap-4 rounded-[28px] border border-[var(--dash-line)] bg-[var(--dash-panel-strong)] px-5 py-5 shadow-[0_24px_80px_var(--dash-shadow-soft)] backdrop-blur-xl">
           <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-70" />
           <div className="pointer-events-none absolute right-[-8%] top-[-28%] h-40 w-40 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_70%)] blur-2xl" />
           <div className="flex items-center gap-3">
@@ -221,10 +263,12 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
               <ChartNoAxesCombined size={20} />
             </div>
             <div>
-              <h1 className="text-2xl font-semibold 2xl:text-4xl">项目负载大屏</h1>
-              <div className="mt-1 inline-flex items-center gap-2 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2.5 py-1 text-[11px] font-medium text-[var(--dash-muted)]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[var(--dash-accent)] shadow-[0_0_12px_var(--dash-accent-glow)] dashboard-pulse" />
-                实时观察
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-semibold 2xl:text-4xl">项目负载大屏</h1>
+                <div className="mt-1 inline-flex items-center gap-2 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2.5 py-1 text-[11px] font-medium text-[var(--dash-muted)]">
+                  <span className="h-1.5 w-1.5 rounded-full bg-[var(--dash-accent)] shadow-[0_0_12px_var(--dash-accent-glow)] dashboard-pulse" />
+                  实时观察
+                </div>
               </div>
             </div>
           </div>
@@ -940,8 +984,13 @@ function findDashboardMemberByName(members: DashboardMember[], name: string) {
   );
 }
 
+function particleShape(index: number) {
+  const shapes = ["rounded-full", "rounded-full", "rounded-full", "rounded-sm", "rounded-sm", "rounded-full scale-x-[0.4]", "rounded-full"] as const;
+  return shapes[index % shapes.length];
+}
+
 function particleTone(index: number) {
-  const tones = ["particle-cyan", "particle-violet", "particle-blue", "particle-amber"] as const;
+  const tones = ["particle-cyan", "particle-violet", "particle-blue", "particle-amber", "particle-rose", "particle-teal"] as const;
   return tones[index % tones.length];
 }
 
@@ -1007,6 +1056,10 @@ const dashboardThemeCss = `
     --dash-particle-blue-glow: rgba(59, 130, 246, 0.4);
     --dash-particle-amber: rgba(253, 230, 138, 0.88);
     --dash-particle-amber-glow: rgba(251, 191, 36, 0.34);
+    --dash-particle-rose: rgba(253, 164, 175, 0.88);
+    --dash-particle-rose-glow: rgba(244, 114, 182, 0.34);
+    --dash-particle-teal: rgba(153, 246, 228, 0.88);
+    --dash-particle-teal-glow: rgba(20, 184, 166, 0.34);
   }
   [data-dashboard-theme="light"] {
     --dash-bg: #eef4fb;
@@ -1049,6 +1102,10 @@ const dashboardThemeCss = `
     --dash-particle-blue-glow: rgba(37, 99, 235, 0.28);
     --dash-particle-amber: rgba(217, 119, 6, 0.8);
     --dash-particle-amber-glow: rgba(245, 158, 11, 0.24);
+    --dash-particle-rose: rgba(225, 29, 72, 0.78);
+    --dash-particle-rose-glow: rgba(244, 114, 182, 0.22);
+    --dash-particle-teal: rgba(13, 148, 136, 0.8);
+    --dash-particle-teal-glow: rgba(20, 184, 166, 0.22);
   }
   .dashboard-particle {
     animation: dashboard-float linear infinite;
@@ -1068,6 +1125,14 @@ const dashboardThemeCss = `
   .dashboard-particle.particle-amber {
     background: var(--dash-particle-amber);
     box-shadow: 0 0 18px var(--dash-particle-amber-glow);
+  }
+  .dashboard-particle.particle-rose {
+    background: var(--dash-particle-rose);
+    box-shadow: 0 0 18px var(--dash-particle-rose-glow);
+  }
+  .dashboard-particle.particle-teal {
+    background: var(--dash-particle-teal);
+    box-shadow: 0 0 18px var(--dash-particle-teal-glow);
   }
   .dashboard-beam {
     animation: dashboard-drift linear infinite;
@@ -1098,5 +1163,23 @@ const dashboardThemeCss = `
   @keyframes dashboard-energy {
     0% { background-position: 0% 50%; }
     100% { background-position: 200% 50%; }
+  }
+  @keyframes dashboard-meteor {
+    0% { opacity: 0; transform: translate3d(0, 0, 0); }
+    14% { opacity: 0.95; }
+    68% { opacity: 0.82; }
+    100% { opacity: 0; transform: translate3d(150vw, 0, 0); }
+  }
+  .dashboard-meteor {
+    animation: dashboard-meteor ease-in-out infinite;
+    will-change: transform, opacity;
+  }
+  .dashboard-meteor-tail {
+    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.28) 28%, rgba(255,255,255,0.78) 60%, rgba(255,255,255,0.96) 86%, transparent 100%);
+    box-shadow: 0 0 16px rgba(255,255,255,0.22), 0 0 34px rgba(255,255,255,0.16);
+  }
+  .dashboard-meteor-head {
+    background: rgba(255,255,255,0.92);
+    box-shadow: 0 0 16px rgba(255,255,255,0.34), 0 0 34px rgba(255,255,255,0.22);
   }
 `;

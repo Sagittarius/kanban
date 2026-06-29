@@ -3,14 +3,9 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
 import SearchMultiSelect from "@/components/search-multi-select";
+import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import { avatarOptions, jobTitleOptions, techStackOptions, timezoneOptions } from "@/lib/ui-options";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
-
-type ShellSelectOption = {
-  value: string;
-  label: string;
-  meta?: string;
-};
 
 export default function AuthenticatedShell({
   user,
@@ -27,8 +22,6 @@ export default function AuthenticatedShell({
   const [boardList] = useState(boards);
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
-  const [boardPickerOpen, setBoardPickerOpen] = useState(false);
-  const [boardQuery, setBoardQuery] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
   const [flash, setFlash] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [passwordDraft, setPasswordDraft] = useState({
@@ -49,16 +42,12 @@ export default function AuthenticatedShell({
     techStacks: user.techStacks || [],
   });
 
-  const filteredBoards = boardList.filter((board) => {
-    const query = boardQuery.trim().toLowerCase();
-    if (!query) return true;
-    return (
-      board.name.toLowerCase().includes(query) ||
-      board.description.toLowerCase().includes(query) ||
-      board.ownerUsername.toLowerCase().includes(query)
-    );
-  });
-  const timezoneSelectOptions: ShellSelectOption[] = timezoneOptions.map(([value, label]) => ({ value, label }));
+  const boardSelectOptions: SearchableSelectOption[] = boardList.map((board) => ({
+    value: board.id,
+    label: board.name,
+    meta: board.ownerUsername,
+  }));
+  const timezoneSelectOptions: SearchableSelectOption[] = timezoneOptions.map(([value, label]) => ({ value, label }));
 
   function showFlash(message: string, type: "success" | "error" = "success") {
     setFlash({ message, type });
@@ -73,7 +62,6 @@ export default function AuthenticatedShell({
     function handlePointerDown(event: MouseEvent) {
       if (!menuRef.current?.contains(event.target as Node)) {
         setMenuOpen(false);
-        setBoardPickerOpen(false);
       }
     }
 
@@ -83,7 +71,7 @@ export default function AuthenticatedShell({
 
   async function switchBoard(boardId: string) {
     await fetch(`/api/boards/${boardId}/select`, { method: "POST" });
-    setBoardPickerOpen(false);
+    setMenuOpen(false);
     window.location.assign("/");
   }
 
@@ -161,55 +149,12 @@ export default function AuthenticatedShell({
               <div className="space-y-3 px-1 py-3">
                 <div className="space-y-2">
                   <div className="px-2 text-xs font-semibold text-slate-500">看板切换</div>
-                  <div className="relative">
-                    <button
-                      type="button"
-                      onClick={() => setBoardPickerOpen((current) => !current)}
-                      className="flex h-12 w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-3 text-left shadow-sm transition hover:border-[#0f766e]/40"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-[11px] font-medium text-slate-500">当前看板</div>
-                        <div className="mt-0.5 truncate text-sm font-semibold text-slate-900">{activeBoard?.name || "未选择看板"}</div>
-                      </div>
-                    </button>
-
-                    {boardPickerOpen ? (
-                      <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-20 rounded-[22px] border border-slate-200 bg-white p-2 shadow-[0_18px_40px_rgba(15,23,42,0.14)]">
-                        <input
-                          value={boardQuery}
-                          onChange={(event) => setBoardQuery(event.target.value)}
-                          placeholder="搜索看板"
-                          className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-[#0f766e]"
-                        />
-                        <div className="mt-2 max-h-[220px] space-y-2 overflow-y-auto pr-1">
-                          {filteredBoards.map((board) => (
-                            <button
-                              key={board.id}
-                              type="button"
-                              onClick={() => void switchBoard(board.id)}
-                              className={`w-full rounded-2xl border px-3 py-3 text-left transition ${
-                                board.id === activeBoardId
-                                  ? "border-[#0f766e] bg-[#e7f2ef]"
-                                  : "border-transparent bg-slate-50 hover:border-slate-200 hover:bg-white"
-                              }`}
-                            >
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="min-w-0">
-                                  <p className="truncate text-sm font-semibold text-slate-900">{board.name}</p>
-                                  <p className="truncate text-xs text-slate-500">{board.description || "无说明"}</p>
-                                </div>
-                              </div>
-                            </button>
-                          ))}
-                          {filteredBoards.length === 0 ? (
-                            <div className="rounded-2xl border border-dashed border-slate-200 px-3 py-5 text-center text-sm text-slate-500">
-                              未找到匹配看板
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
+                  <SearchableSelect
+                    value={activeBoardId}
+                    options={boardSelectOptions}
+                    onChange={(boardId) => void switchBoard(boardId)}
+                    placeholder="选择看板"
+                  />
                 </div>
 
                 <div className="space-y-2">
@@ -267,7 +212,7 @@ export default function AuthenticatedShell({
             </label>
             <label className="block space-y-2 text-sm">
               <span className="font-medium text-slate-700">职位</span>
-              <ShellSearchSelect
+              <SearchableSelect
                 value={profileDraft.jobTitle}
                 options={jobTitleOptions.map((option) => ({ value: option.value, label: option.label }))}
                 onChange={(value) => setProfileDraft((current) => ({ ...current, jobTitle: value }))}
@@ -276,7 +221,7 @@ export default function AuthenticatedShell({
             </label>
             <label className="block space-y-2 text-sm">
               <span className="font-medium text-slate-700">时区</span>
-              <ShellSearchSelect
+              <SearchableSelect
                 value={profileDraft.timezone}
                 options={timezoneSelectOptions}
                 onChange={(value) => setProfileDraft((current) => ({ ...current, timezone: value }))}
@@ -367,85 +312,6 @@ function MenuButton({ children, onClick }: { children: ReactNode; onClick: () =>
     >
       {children}
     </button>
-  );
-}
-
-function ShellSearchSelect({
-  value,
-  options,
-  onChange,
-  placeholder,
-}: {
-  value: string;
-  options: ShellSelectOption[];
-  onChange: (value: string) => void;
-  placeholder: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const selected = options.find((option) => option.value === value);
-  const normalizedQuery = query.trim().toLowerCase();
-  const filtered = normalizedQuery
-    ? options.filter((option) =>
-        [option.label, option.meta ?? "", option.value].some((text) => text.toLowerCase().includes(normalizedQuery))
-      )
-    : options;
-
-  useEffect(() => {
-    function handlePointerDown(event: MouseEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    if (open) {
-      window.addEventListener("mousedown", handlePointerDown);
-      return () => window.removeEventListener("mousedown", handlePointerDown);
-    }
-  }, [open]);
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        className="flex h-11 w-full items-center justify-between rounded-xl border border-slate-200 bg-white px-3 text-left text-sm outline-none transition hover:border-[#0f766e]/40"
-      >
-        <span className={selected ? "text-slate-900" : "text-slate-500"}>{selected?.label ?? placeholder}</span>
-        <span className="text-slate-400">⌄</span>
-      </button>
-      {open ? (
-        <div className="absolute left-0 right-0 top-[calc(100%+8px)] z-40 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索"
-            className="h-10 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm outline-none focus:border-[#0f766e]"
-            autoFocus
-          />
-          <div className="mt-2 max-h-[220px] overflow-y-auto">
-            {filtered.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                  setQuery("");
-                }}
-                className={`block w-full rounded-xl px-3 py-2 text-left text-sm transition ${
-                  option.value === value ? "bg-[#e7f5f2] text-[#0f766e]" : "text-slate-700 hover:bg-slate-50"
-                }`}
-              >
-                <span className="font-medium">{option.label}</span>
-                {option.meta ? <span className="ml-2 text-xs text-slate-500">{option.meta}</span> : null}
-              </button>
-            ))}
-            {filtered.length === 0 ? <div className="px-3 py-4 text-center text-sm text-slate-500">无匹配项</div> : null}
-          </div>
-        </div>
-      ) : null}
-    </div>
   );
 }
 

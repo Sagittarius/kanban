@@ -100,10 +100,30 @@ export default function LoginPage() {
       <div className="pointer-events-none absolute inset-0">
         <div className="login-orbit absolute left-[8%] top-[14%] h-[34rem] w-[34rem] rounded-full border border-cyan-300/[0.06]" />
         <div className="login-orbit login-orbit-slow absolute right-[6%] top-[10%] h-[28rem] w-[28rem] rounded-full border border-blue-200/[0.06]" />
-        <div className="login-comet absolute left-[-18%] top-[18%] h-px w-64 rotate-[-18deg] bg-gradient-to-r from-transparent via-cyan-200/80 to-transparent" />
-        <div className="login-comet login-comet-two absolute left-[-22%] top-[42%] h-px w-52 rotate-[-14deg] bg-gradient-to-r from-transparent via-blue-100/75 to-transparent" />
-        <div className="login-comet login-comet-three absolute left-[-16%] top-[67%] h-px w-72 rotate-[-20deg] bg-gradient-to-r from-transparent via-cyan-100/70 to-transparent" />
-        <div className="login-comet login-comet-four absolute left-[-28%] top-[31%] h-px w-44 rotate-[-16deg] bg-gradient-to-r from-transparent via-white/70 to-transparent" />
+        <span className="login-comet-path absolute left-[-18%] top-[12%] h-3 w-64 [--comet-angle:18deg]">
+          <span className="login-comet absolute left-0 top-0 h-full w-full">
+            <span className="login-comet-tail absolute left-0 top-1/2 h-px w-full -translate-y-1/2 rounded-full" />
+            <span className="login-comet-head absolute right-0 top-1/2 h-1.5 w-3 -translate-y-1/2 rounded-full" />
+          </span>
+        </span>
+        <span className="login-comet-path absolute left-[-22%] top-[34%] h-3 w-52 [--comet-angle:14deg]">
+          <span className="login-comet login-comet-two absolute left-0 top-0 h-full w-full">
+            <span className="login-comet-tail absolute left-0 top-1/2 h-px w-full -translate-y-1/2 rounded-full" />
+            <span className="login-comet-head absolute right-0 top-1/2 h-1.5 w-3 -translate-y-1/2 rounded-full" />
+          </span>
+        </span>
+        <span className="login-comet-path absolute left-[-16%] top-[56%] h-3 w-72 [--comet-angle:20deg]">
+          <span className="login-comet login-comet-three absolute left-0 top-0 h-full w-full">
+            <span className="login-comet-tail absolute left-0 top-1/2 h-px w-full -translate-y-1/2 rounded-full" />
+            <span className="login-comet-head absolute right-0 top-1/2 h-1.5 w-3 -translate-y-1/2 rounded-full" />
+          </span>
+        </span>
+        <span className="login-comet-path absolute left-[-28%] top-[24%] h-3 w-44 [--comet-angle:16deg]">
+          <span className="login-comet login-comet-four absolute left-0 top-0 h-full w-full">
+            <span className="login-comet-tail absolute left-0 top-1/2 h-px w-full -translate-y-1/2 rounded-full" />
+            <span className="login-comet-head absolute right-0 top-1/2 h-1.5 w-3 -translate-y-1/2 rounded-full" />
+          </span>
+        </span>
         {particles.map((particle, index) => (
           <span key={index} className="login-particle absolute rounded-full bg-cyan-100 shadow-[0_0_18px_rgba(125,211,252,0.9)]" style={particleStyle(particle)} />
         ))}
@@ -186,17 +206,29 @@ export default function LoginPage() {
           to { transform: rotate(360deg) scale(1.03); }
         }
         @keyframes login-comet {
-          0% { transform: translateX(0) rotate(-18deg); opacity: 0; }
+          0% { transform: translate3d(0, 0, 0); opacity: 0; }
           18% { opacity: 0.85; }
-          100% { transform: translateX(150vw) rotate(-18deg); opacity: 0; }
+          100% { transform: translate3d(150vw, 0, 0); opacity: 0; }
         }
         .login-particle { animation: login-pulse ease-in-out infinite; }
         .login-orbit { animation: login-orbit 24s linear infinite; }
         .login-orbit-slow { animation-duration: 36s; animation-direction: reverse; }
-        .login-comet { animation: login-comet 8s ease-in-out infinite; }
-        .login-comet-two { animation-delay: 2.2s; animation-duration: 9.5s; }
-        .login-comet-three { animation-delay: 4.6s; animation-duration: 11s; }
-        .login-comet-four { animation-delay: 6.4s; animation-duration: 8.5s; }
+        .login-comet-path {
+          transform: rotate(var(--comet-angle));
+          transform-origin: left center;
+        }
+        .login-comet { animation: login-comet 7.8s ease-in-out infinite; }
+        .login-comet-two { animation-delay: 2.6s; animation-duration: 12.8s; }
+        .login-comet-three { animation-delay: 5.4s; animation-duration: 17.8s; }
+        .login-comet-four { animation-delay: 8.2s; animation-duration: 22.8s; }
+        .login-comet-tail {
+          background: linear-gradient(90deg, transparent 0%, rgba(224,242,254,0.18) 28%, rgba(224,242,254,0.72) 68%, rgba(255,255,255,0.94) 100%);
+          box-shadow: 0 0 14px rgba(186,230,253,0.26), 0 0 30px rgba(125,211,252,0.18);
+        }
+        .login-comet-head {
+          background: rgba(255,255,255,0.94);
+          box-shadow: 0 0 14px rgba(255,255,255,0.38), 0 0 30px rgba(186,230,253,0.26);
+        }
       `}</style>
     </main>
   );

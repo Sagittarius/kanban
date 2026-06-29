@@ -90,7 +90,7 @@ export default function SearchMultiSelect({
               </span>
             ))
           ) : (
-            <span className="truncate text-[var(--sms-muted)]">{placeholder}</span>
+            <span className={`truncate text-[var(--sms-muted)] ${compact ? "" : "text-base leading-6"}`}>{placeholder}</span>
           )}
           {selected.length > (compact ? 2 : 4) ? (
             <span className="rounded-full bg-[var(--sms-panel-soft)] px-2 py-1 text-xs font-medium text-[var(--sms-muted)]">
@@ -115,10 +115,10 @@ export default function SearchMultiSelect({
       </button>
 
       {open ? (
-        <div className={`absolute right-0 top-full z-[80] mt-1 w-[320px] max-w-[min(92vw,320px)] rounded-md border border-[var(--sms-border)] bg-[var(--sms-panel)] shadow-lg ${panelClassName}`}>
+        <div className={`absolute right-0 top-full z-[80] mt-1 w-full min-w-[260px] max-w-[min(92vw,360px)] rounded-md border border-[var(--sms-border)] bg-[var(--sms-panel)] shadow-lg ${panelClassName}`}>
           <div className="border-b border-[var(--sms-border)] p-2">
             <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-2 text-[var(--sms-muted)]" size={14} />
+              <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--sms-muted)]" size={14} />
               <input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}

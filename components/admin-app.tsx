@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
-import SharedSearchMultiSelect from "@/components/search-multi-select";
+import SearchMultiSelect from "@/components/search-multi-select";
+import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import { isThemeId, jobTitleLabel, jobTitleOptions, techStackOptions, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type {
   AdminPermissions,
@@ -42,12 +43,6 @@ type TeamsResponse = {
 
 type AuditLogsResponse = {
   auditLogs: AuditLogEntry[];
-};
-
-type SelectOption = {
-  value: string;
-  label: string;
-  meta?: string;
 };
 
 type ConfirmState = ConfirmDialogAction | null;
@@ -191,7 +186,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
 
   const currentTab = activeTab === "users" && !permissions.canManageUsers ? "teams" : activeTab;
 
-  const roleOptions = useMemo<SelectOption[]>(() => {
+  const roleOptions = useMemo<SearchableSelectOption[]>(() => {
     const roles: UserRole[] =
       currentUser.role === "super_admin"
         ? ["super_admin", "project_manager", "development_manager", "team_member"]
@@ -199,17 +194,17 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     return roles.map((role) => ({ value: role, label: roleLabels[role] }));
   }, [currentUser.role]);
 
-  const jobTitleSelectOptions = useMemo<SelectOption[]>(
+  const jobTitleSelectOptions = useMemo<SearchableSelectOption[]>(
     () => jobTitleOptions.map((option) => ({ value: option.value, label: option.label })),
     []
   );
 
-  const timezoneSelectOptions = useMemo<SelectOption[]>(
+  const timezoneSelectOptions = useMemo<SearchableSelectOption[]>(
     () => timezoneOptions.map(([value, label]) => ({ value, label })),
     []
   );
 
-  const assignableUserOptions = useMemo<SelectOption[]>(
+  const assignableUserOptions = useMemo<SearchableSelectOption[]>(
     () =>
       assignableUsers.map((user) => ({
         value: user.id,
@@ -219,7 +214,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     [assignableUsers]
   );
 
-  const boardOwnerOptions = useMemo<SelectOption[]>(
+  const boardOwnerOptions = useMemo<SearchableSelectOption[]>(
     () =>
       users
         .filter((user) => user.isActive && user.role !== "team_member")
@@ -231,7 +226,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     [users]
   );
 
-  const teamOptions = useMemo<SelectOption[]>(
+  const teamOptions = useMemo<SearchableSelectOption[]>(
     () =>
       teams.map((team) => ({
         value: team.id,
@@ -532,7 +527,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
             <p className="mt-1 text-sm text-[var(--muted)]">{currentUser.displayName || currentUser.username}</p>
           </div>
           <div className="ml-auto flex items-center gap-3">
-            <SearchSelect
+            <SearchableSelect
               value={themeId}
               options={themePresets.map((theme) => ({ value: theme.id, label: theme.label }))}
               onChange={(value) => changeTheme(value as ThemeId)}
@@ -615,7 +610,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     />
                   </Field>
                   <Field label="角色">
-                    <SearchSelect
+                    <SearchableSelect
                       value={userDraft.role}
                       options={roleOptions}
                       onChange={(value) => setUserDraft((current) => ({ ...current, role: value as UserRole }))}
@@ -623,7 +618,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     />
                   </Field>
                   <Field label="职位">
-                    <SearchSelect
+                    <SearchableSelect
                       value={userDraft.jobTitle}
                       options={jobTitleSelectOptions}
                       onChange={(value) => setUserDraft((current) => ({ ...current, jobTitle: value }))}
@@ -631,7 +626,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     />
                   </Field>
                   <Field label="时区">
-                    <SearchSelect
+                    <SearchableSelect
                       value={userDraft.timezone}
                       options={timezoneSelectOptions}
                       onChange={(value) => setUserDraft((current) => ({ ...current, timezone: value }))}
@@ -639,7 +634,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     />
                   </Field>
                   <Field label="技术栈">
-                  <SharedSearchMultiSelect
+                  <SearchMultiSelect
                     value={userDraft.techStacks}
                     options={techStackOptions.map((item) => ({ value: item, label: item }))}
                     onChange={(techStacks) => setUserDraft((current) => ({ ...current, techStacks }))}
@@ -741,7 +736,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   />
                 </Field>
                 <Field label="成员">
-                  <SharedSearchMultiSelect
+                  <SearchMultiSelect
                     value={teamDraft.memberIds}
                     options={assignableUserOptions}
                     onChange={(memberIds) => setTeamDraft((current) => ({ ...current, memberIds }))}
@@ -821,7 +816,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   </Field>
                   {boardDraft.id ? (
                     <Field label="拥有者">
-                      <SearchSelect
+                      <SearchableSelect
                         value={boardDraft.ownerUserId}
                         options={boardOwnerOptions}
                         onChange={(value) => setBoardDraft((current) => ({ ...current, ownerUserId: value }))}
@@ -831,7 +826,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   ) : null}
                   <Field label="关联团队">
                     {teamOptions.length > 0 ? (
-                      <SharedSearchMultiSelect
+                      <SearchMultiSelect
                         value={boardDraft.teamIds}
                         options={teamOptions}
                         onChange={(teamIds) => setBoardDraft((current) => ({ ...current, teamIds }))}
@@ -963,7 +958,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                         </button>
                       </div>
                       {teamOptions.length > 0 ? (
-                        <SharedSearchMultiSelect
+                        <SearchMultiSelect
                           value={boardTeamDraft}
                           options={teamOptions}
                           onChange={setBoardTeamDraft}
@@ -1210,71 +1205,6 @@ function SearchInput({
   );
 }
 
-function SearchSelect({
-  value,
-  options,
-  onChange,
-  placeholder,
-}: {
-  value: string;
-  options: SelectOption[];
-  onChange: (value: string) => void;
-  placeholder: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const selected = options.find((option) => option.value === value);
-  const filtered = options.filter((option) => matchesOption(option, query));
-
-  useEffect(() => {
-    function handlePointerDown(event: MouseEvent) {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    }
-    if (open) {
-      window.addEventListener("mousedown", handlePointerDown);
-      return () => window.removeEventListener("mousedown", handlePointerDown);
-    }
-  }, [open]);
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        className="field flex items-center justify-between text-left text-sm"
-      >
-        <span className={selected ? "text-[var(--text)]" : "text-[var(--muted)]"}>{selected?.label ?? placeholder}</span>
-        <span className="text-[var(--muted)]">⌄</span>
-      </button>
-      {open ? (
-        <div className="absolute z-30 mt-2 w-full rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 shadow-xl">
-          <SearchInput value={query} onChange={setQuery} placeholder="搜索" />
-          <div className="mt-2 max-h-[240px] overflow-y-auto">
-            {filtered.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => {
-                  onChange(option.value);
-                  setOpen(false);
-                  setQuery("");
-                }}
-                className="block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-[var(--hover)]"
-              >
-                <span className="font-medium">{option.label}</span>
-                {option.meta ? <span className="ml-2 text-xs text-[var(--muted)]">{option.meta}</span> : null}
-              </button>
-            ))}
-          </div>
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function UserCard({
   user,
   canManage,
@@ -1344,10 +1274,4 @@ function EmptyState({ text }: { text: string }) {
       {text}
     </div>
   );
-}
-
-function matchesOption(option: SelectOption, query: string) {
-  const normalized = query.trim().toLowerCase();
-  if (!normalized) return true;
-  return [option.label, option.meta ?? "", option.value].some((value) => value.toLowerCase().includes(normalized));
 }

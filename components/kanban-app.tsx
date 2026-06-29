@@ -40,16 +40,15 @@ import {
 import { utils, writeFileXLSX } from "xlsx";
 import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
 import SearchMultiSelect, { type MultiSelectOption } from "@/components/search-multi-select";
+import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import {
   useEffect,
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from "react";
-import { createPortal } from "react-dom";
 import {
   columnsFromSettings,
   defaultSystemSettings,
@@ -129,12 +128,6 @@ type Toast = {
   id: string;
   type: "success" | "error";
   message: string;
-};
-
-type SelectOption = {
-  value: string;
-  label: string;
-  meta?: string;
 };
 
 const priorityTone: Record<Priority, string> = {
@@ -1721,7 +1714,7 @@ export default function KanbanApp({
     label: userName(member),
     meta: `@${member.username}`,
   }));
-  const priorityOptions: SelectOption[] = [
+  const priorityOptions: SearchableSelectOption[] = [
     { value: "high", label: "高优先级" },
     { value: "medium", label: "中优先级" },
     { value: "low", label: "低优先级" },
@@ -1908,7 +1901,7 @@ export default function KanbanApp({
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="任务、描述、负责人、测试员"
-                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] py-2 pl-9 pr-3 text-sm outline-none transition focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] py-2 pl-9 pr-3 text-base outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
                 />
                 {search ? (
                   <button
@@ -1938,15 +1931,18 @@ export default function KanbanApp({
                   </button>
                 ))}
               </div>
-              <TagMultiSelect
-                allTags={allTags}
-                selected={tagFilters}
+              <SearchMultiSelect
+                value={tagFilters}
+                options={allTags.map((tag) => ({ value: tag, label: tag }))}
                 onChange={setTagFilters}
+                placeholder="全部标签"
+                summaryLabel="标签"
+                searchPlaceholder="搜索标签"
               />
             </SidebarSection>
 
             <SidebarSection title="新任务" icon={<Plus size={15} />}>
-              <form onSubmit={createTask} className="grid gap-3.5">
+              <form onSubmit={createTask} className="grid gap-3.5 [&_input]:text-base [&_input::placeholder]:text-base [&_textarea]:text-base [&_textarea::placeholder]:text-base">
                 <label className="grid gap-1.5 text-sm text-[var(--muted)]">
                   <span>任务名称<RequiredMark /></span>
                   <input
@@ -2153,10 +2149,15 @@ export default function KanbanApp({
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {viewMode === "list" ? (
-                  <ListStatusMultiSelect
+                  <SearchMultiSelect
                     value={listStatusFilters}
                     options={listStatusOptions}
-                    onChange={setListStatusFilters}
+                    onChange={(nextValue) => setListStatusFilters(nextValue as BoardStatus[])}
+                    placeholder="全部阶段"
+                    summaryLabel="阶段"
+                    searchPlaceholder="搜索阶段"
+                    className="min-w-[240px]"
+                    compact
                   />
                 ) : null}
                 <span className="inline-flex h-10 min-w-[86px] items-center justify-center rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-center shadow-sm">
@@ -3326,7 +3327,7 @@ function TaskDrawer({
     meta: project.owner,
   }));
   const taskColumnOptions = columns.map((column) => ({ value: column.id, label: column.title }));
-  const taskPriorityOptions: SelectOption[] = [
+  const taskPriorityOptions: SearchableSelectOption[] = [
     { value: "high", label: "高" },
     { value: "medium", label: "中" },
     { value: "low", label: "低" },
@@ -3748,7 +3749,7 @@ function ProjectDrawer({
     label: userName(member),
     meta: `@${member.username}`,
   }));
-  const healthOptions: SelectOption[] = [
+  const healthOptions: SearchableSelectOption[] = [
     { value: "good", label: healthLabels.good },
     { value: "normal", label: healthLabels.normal },
     { value: "risk", label: healthLabels.risk },
@@ -3879,28 +3880,10 @@ function SettingsDrawer({
     settings.parameters.find((parameter) => parameter.key === selectedKey) ??
     settings.parameters[0] ??
     null;
-
-  const [paramSearch, setParamSearch] = useState("");
-  const [paramDropdownOpen, setParamDropdownOpen] = useState(false);
-  const paramContainerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (paramContainerRef.current && !paramContainerRef.current.contains(event.target as Node)) {
-        setParamDropdownOpen(false);
-      }
-    }
-    if (paramDropdownOpen) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [paramDropdownOpen]);
-
-  const filteredParams = paramSearch.trim()
-    ? settings.parameters.filter((p) =>
-        `${p.group} ${p.label}`.toLowerCase().includes(paramSearch.trim().toLowerCase())
-      )
-    : settings.parameters;
+  const parameterOptions: SearchableSelectOption[] = settings.parameters.map((parameter) => ({
+    value: parameter.key,
+    label: `${parameter.group} / ${parameter.label}`,
+  }));
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -3926,53 +3909,13 @@ function SettingsDrawer({
       <form onSubmit={submit} className="space-y-4">
         <div className="flex items-center gap-3">
           <span className="w-14 shrink-0 text-right text-sm text-[var(--muted)]">参数</span>
-          <div ref={paramContainerRef} className="relative flex-1">
-            <button
-              type="button"
-              onClick={() => setParamDropdownOpen(!paramDropdownOpen)}
-              className="flex w-full items-center rounded-md border border-[var(--border)] bg-[var(--input)] px-2 py-2 text-sm text-left"
-            >
-              <span className={selectedParameter ? "" : "text-[var(--muted)]"}>
-                {selectedParameter ? `${selectedParameter.group} / ${selectedParameter.label}` : "选择参数"}
-              </span>
-            </button>
-            {paramDropdownOpen ? (
-              <div className="absolute left-0 top-full z-30 mt-1 w-full rounded-md border border-[var(--border)] bg-[var(--panel)] shadow-lg">
-                <div className="border-b border-[var(--border)] p-2">
-                  <input
-                    value={paramSearch}
-                    onChange={(e) => setParamSearch(e.target.value)}
-                    placeholder="搜索..."
-                    className="w-full rounded border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 text-sm outline-none"
-                    autoFocus
-                  />
-                </div>
-                <div className="max-h-[180px] overflow-y-auto p-1">
-                  {filteredParams.length === 0 ? (
-                    <p className="px-3 py-2 text-sm text-[var(--muted)]">无匹配参数</p>
-                  ) : (
-                    filteredParams.map((p) => (
-                      <button
-                        key={p.key}
-                        type="button"
-                        onClick={() => {
-                          setSelectedKey(p.key);
-                          setParamDropdownOpen(false);
-                          setParamSearch("");
-                        }}
-                        className={`flex w-full items-center rounded px-3 py-1.5 text-left text-sm transition ${
-                          selectedKey === p.key
-                            ? "bg-[var(--accent-soft)] text-[var(--accent)]"
-                            : "hover:bg-[var(--panel-soft)]"
-                        }`}
-                      >
-                        {p.group} / {p.label}
-                      </button>
-                    ))
-                  )}
-                </div>
-              </div>
-            ) : null}
+          <div className="flex-1">
+            <SearchableSelect
+              value={selectedParameter?.key ?? ""}
+              options={parameterOptions}
+              onChange={setSelectedKey}
+              placeholder="选择参数"
+            />
           </div>
         </div>
 
@@ -4110,231 +4053,9 @@ function RequiredMark() {
 
 function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
   return (
-    <label className="flex flex-col gap-1.5 text-sm text-[var(--muted)] [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-[var(--border)] [&_input]:bg-[var(--input)] [&_input]:px-2 [&_input]:py-2 [&_input]:text-sm [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--input)] [&_select]:px-2 [&_select]:py-2 [&_select]:text-sm [&_textarea]:w-full [&_textarea]:rounded-md [&_textarea]:border [&_textarea]:border-[var(--border)] [&_textarea]:bg-[var(--input)] [&_textarea]:px-2 [&_textarea]:py-2 [&_textarea]:text-sm">
+    <label className="flex flex-col gap-1.5 text-sm text-[var(--muted)] [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-[var(--border)] [&_input]:bg-[var(--input)] [&_input]:px-2 [&_input]:py-2 [&_input]:text-base [&_input::placeholder]:text-base [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--input)] [&_select]:px-2 [&_select]:py-2 [&_select]:text-base [&_textarea]:w-full [&_textarea]:rounded-md [&_textarea]:border [&_textarea]:border-[var(--border)] [&_textarea]:bg-[var(--input)] [&_textarea]:px-2 [&_textarea]:py-2 [&_textarea]:text-base [&_textarea::placeholder]:text-base">
       <span>{label}{required ? <RequiredMark /> : null}</span>
       {children}
     </label>
-  );
-}
-
-function SearchableSelect({
-  value,
-  options,
-  onChange,
-  placeholder,
-  clearable = false,
-  disabled = false,
-  className = "",
-}: {
-  value: string;
-  options: SelectOption[];
-  onChange: (value: string) => void;
-  placeholder: string;
-  clearable?: boolean;
-  disabled?: boolean;
-  className?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({});
-  const [portalHost, setPortalHost] = useState<Element | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const selected = options.find((option) => option.value === value);
-  const normalizedQuery = query.trim().toLowerCase();
-  const filtered = normalizedQuery
-    ? options.filter((option) =>
-        [option.label, option.meta ?? "", option.value].some((item) => item.toLowerCase().includes(normalizedQuery))
-      )
-    : options;
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      const target = event.target as Node;
-      const insideTrigger = containerRef.current?.contains(target);
-      const insideDropdown = dropdownRef.current?.contains(target);
-      if (!insideTrigger && !insideDropdown) {
-        setOpen(false);
-      }
-    }
-    if (open) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
-    }
-  }, [open]);
-
-  useEffect(() => {
-    if (!open) {
-      return;
-    }
-
-    function updateDropdownPosition() {
-      const rect = containerRef.current?.getBoundingClientRect();
-      if (!rect) {
-        return;
-      }
-      setPortalHost(containerRef.current?.closest(".kanban-theme") ?? document.body);
-      const viewportPadding = 12;
-      const width = Math.min(Math.max(rect.width, 260), window.innerWidth - viewportPadding * 2);
-      const left = Math.min(Math.max(rect.left, viewportPadding), window.innerWidth - width - viewportPadding);
-      setDropdownStyle({
-        left,
-        top: rect.bottom + 4,
-        width,
-      });
-    }
-
-    updateDropdownPosition();
-    window.addEventListener("resize", updateDropdownPosition);
-    window.addEventListener("scroll", updateDropdownPosition, true);
-    return () => {
-      window.removeEventListener("resize", updateDropdownPosition);
-      window.removeEventListener("scroll", updateDropdownPosition, true);
-    };
-  }, [open]);
-
-  function pick(nextValue: string) {
-    onChange(nextValue);
-    setOpen(false);
-    setQuery("");
-  }
-
-  const dropdown = open && !disabled ? (
-    <div
-      ref={dropdownRef}
-      className="fixed z-[80] overflow-hidden rounded-md border border-[var(--border)] bg-[var(--panel)] shadow-lg"
-      style={dropdownStyle}
-    >
-      <div className="flex gap-2 border-b border-[var(--border)] p-2">
-        <div className="relative min-w-0 flex-1">
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="搜索"
-            className="w-full rounded border border-[var(--border)] bg-[var(--input)] px-2 py-1.5 pr-8 text-xs outline-none focus:border-[var(--accent)]"
-            autoFocus
-          />
-          {query ? (
-            <button
-              type="button"
-              title="清空搜索"
-              aria-label="清空搜索"
-              onMouseDown={(event) => event.preventDefault()}
-              onClick={() => setQuery("")}
-              className="absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
-            >
-              <X size={13} />
-            </button>
-          ) : null}
-        </div>
-        {clearable && value ? (
-          <button
-            type="button"
-            title="重置选择"
-            onClick={() => pick("")}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded border border-[var(--border)] text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
-          >
-            <X size={14} />
-          </button>
-        ) : null}
-      </div>
-      <div className="max-h-[220px] overflow-y-auto p-1">
-        {filtered.length === 0 ? (
-          <p className="px-3 py-3 text-center text-xs text-[var(--muted)]">无匹配项</p>
-        ) : (
-          filtered.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => pick(option.value)}
-              className={`flex w-full min-w-0 items-baseline gap-2 rounded px-3 py-2 text-left text-xs transition ${
-                option.value === value ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "hover:bg-[var(--panel-soft)]"
-              }`}
-            >
-              <span className="min-w-0 truncate font-medium">{option.label}</span>
-              {option.meta ? <span className="shrink-0 text-[11px] text-[var(--muted)]">{option.meta}</span> : null}
-            </button>
-          ))
-        )}
-      </div>
-    </div>
-  ) : null;
-
-  return (
-    <div ref={containerRef} className={`relative ${className}`}>
-      <button
-        type="button"
-        disabled={disabled}
-        onClick={() => {
-          if (!disabled) {
-            const rect = containerRef.current?.getBoundingClientRect();
-            if (!open && rect) {
-              setPortalHost(containerRef.current?.closest(".kanban-theme") ?? document.body);
-              const viewportPadding = 12;
-              const width = Math.min(Math.max(rect.width, 260), window.innerWidth - viewportPadding * 2);
-              const left = Math.min(Math.max(rect.left, viewportPadding), window.innerWidth - width - viewportPadding);
-              setDropdownStyle({
-                left,
-                top: rect.bottom + 4,
-                width,
-              });
-            }
-            setOpen((current) => !current);
-          }
-        }}
-        className="flex w-full items-center justify-between gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-2 py-2 text-left text-sm text-[var(--text)] outline-none transition hover:bg-[var(--panel-soft)] disabled:cursor-not-allowed disabled:opacity-60"
-      >
-        <span className={`min-w-0 truncate ${selected ? "" : "text-[var(--muted)]"}`}>
-          {selected?.label ?? placeholder}
-        </span>
-        <ChevronDown size={14} className="shrink-0 text-[var(--muted)]" />
-      </button>
-      {dropdown && portalHost ? createPortal(dropdown, portalHost) : dropdown}
-    </div>
-  );
-}
-
-function TagMultiSelect({
-  allTags,
-  selected,
-  onChange,
-}: {
-  allTags: string[];
-  selected: string[];
-  onChange: (tags: string[]) => void;
-}) {
-  return (
-    <SearchMultiSelect
-      value={selected}
-      options={allTags.map((tag) => ({ value: tag, label: tag }))}
-      onChange={onChange}
-      placeholder="全部标签"
-      summaryLabel="标签"
-      searchPlaceholder="搜索标签"
-      panelClassName="left-0 right-auto w-full min-w-[280px]"
-    />
-  );
-}
-
-function ListStatusMultiSelect({
-  value,
-  options,
-  onChange,
-}: {
-  value: BoardStatus[];
-  options: MultiSelectOption[];
-  onChange: (value: BoardStatus[]) => void;
-}) {
-  return (
-    <SearchMultiSelect
-      value={value}
-      options={options}
-      onChange={(nextValue) => onChange(nextValue as BoardStatus[])}
-      placeholder="全部阶段"
-      summaryLabel="阶段"
-      searchPlaceholder="搜索阶段"
-      className="min-w-[240px]"
-      compact
-    />
   );
 }
