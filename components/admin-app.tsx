@@ -1077,7 +1077,14 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                       </span>
                       <span className="min-w-0">
                         <span className="block truncate">{item.message || "-"}</span>
-                        <span className="block truncate text-xs text-[var(--muted)]">IP {item.ipAddress || "-"} · {item.requestId || "-"}</span>
+                        <span className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-[var(--muted)]">
+                          <span className="rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-2 py-0.5">
+                            IP {item.ipAddress || "-"}
+                          </span>
+                          <span className="rounded-full border border-[var(--border)] bg-[var(--panel-soft)] px-2 py-0.5">
+                            Request ID {item.requestId || "-"}
+                          </span>
+                        </span>
                       </span>
                       <span className={`h-fit w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${item.result === "success" ? "bg-[var(--accent-soft)] text-[var(--accent)]" : "bg-[var(--danger-soft)] text-[var(--danger)]"}`}>
                         {item.result === "success" ? "成功" : "失败"}

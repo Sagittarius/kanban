@@ -12,6 +12,11 @@ services:
       KANBAN_SQLITE_BACKUP_DIR: /data/backups
       KANBAN_AUTO_UPGRADE: "true"
       KANBAN_IMAGE_TAG: kanban:sqlite-{version}
+      KANBAN_LOG_CONSOLE: ${KANBAN_LOG_CONSOLE:-true}
+      KANBAN_LOG_FILE_ENABLED: ${KANBAN_LOG_FILE_ENABLED:-true}
+      KANBAN_LOG_MAX_SIZE_MB: ${KANBAN_LOG_MAX_SIZE_MB:-50}
+      KANBAN_LOG_MAX_FILES: ${KANBAN_LOG_MAX_FILES:-10}
+      KANBAN_LOG_RETENTION_DAYS: ${KANBAN_LOG_RETENTION_DAYS:-30}
     volumes:
       - kanban-data:/data
     restart: unless-stopped

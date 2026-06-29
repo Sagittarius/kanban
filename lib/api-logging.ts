@@ -46,9 +46,57 @@ export function withApiLogging<TArgs extends unknown[]>(operation: string, handl
 }
 
 export function requestIp(request: Request) {
-  const forwarded = request.headers.get("x-forwarded-for");
-  if (forwarded) {
-    return forwarded.split(",")[0]?.trim() ?? "";
+  const candidates = [
+    request.headers.get("x-forwarded-for"),
+    request.headers.get("x-real-ip"),
+    request.headers.get("cf-connecting-ip"),
+    request.headers.get("x-client-ip"),
+    request.headers.get("x-forwarded"),
+    request.headers.get("forwarded"),
+    request.headers.get("true-client-ip"),
+  ];
+
+  for (const candidate of candidates) {
+    const resolved = normalizeIpCandidate(candidate);
+    if (resolved) {
+      return resolved;
+    }
   }
-  return request.headers.get("x-real-ip") ?? "";
+
+  const host = request.headers.get("host") ?? "";
+  if (host.includes("localhost") || host.includes("127.0.0.1") || host.includes("[::1]")) {
+    return "local/direct";
+  }
+
+  return "";
+}
+
+function normalizeIpCandidate(value: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+
+  if (normalized.toLowerCase().startsWith("for=")) {
+    const forwardedFor = normalized
+      .split(";")[0]
+      ?.replace(/^for=/i, "")
+      .replace(/^"/, "")
+      .replace(/"$/, "")
+      .replace(/^\[/, "")
+      .replace(/\]$/, "")
+      .trim();
+    return forwardedFor || "";
+  }
+
+  const first = normalized.split(",")[0]?.trim() ?? "";
+  if (!first) {
+    return "";
+  }
+
+  return first.replace(/^for=/i, "").replace(/^"/, "").replace(/"$/, "");
 }

@@ -12,7 +12,7 @@
 
 ## 功能
 
-- 登录鉴权、用户角色、团队、看板授权和个人资料管理
+- 登录鉴权、用户角色、团队、看板授权、后台管理和个人资料管理
 - 项目、优先级、标签、阶段、临期、超期、阻塞和关键词筛选
 - 项目增删改查、完成归档、归档总结和恢复
 - 需求池、设计中、开发中、测试中、已完成五列看板
@@ -22,12 +22,19 @@
 - 多任务拆解 checklist，完成后联动任务进度
 - 临期、逾期和超期完成任务醒目标注
 - Linear、GitHub、Notion、Atlassian、Neon Grid、Deep Space 等多套主题
-- 团队工作饱和度 dashboard，支持多团队、多项目筛选、浅色/暗色方案和公开访问开关
-- 系统参数表，可配置临期天数和活动记录保留天数
+- 项目负载大屏，支持多团队、多项目筛选、项目/人员/任务详情联动、浅色/暗色方案和公开访问开关
+- 系统参数表，可配置临期天数、活动记录保留天数、看板名称、阶段名称、任务卡片样式和项目负载参数
 - 独立全局活动记录面板，记录项目、任务、任务拆解和跨阶段移动，并按保留天数自动清理
-- 结构化 JSON 运行日志，支持控制台和文件输出，API 请求自动记录 requestId、耗时、状态码、IP 和 UA
+- 结构化 JSON 运行日志，支持控制台、文件输出、文件滚动和清理，API 请求自动记录 requestId、耗时、状态码、IP 和 UA
 - 登录用户审计日志，记录认证、后台管理、看板、团队、系统参数、项目、任务和拆解任务等关键操作
 - SQLite/PostgreSQL 持久化项目、任务、任务拆解、系统参数、活动记录和审计日志
+
+## 角色与权限速览
+
+- 超管：拥有全部管理权限，可管理用户、团队、看板、系统参数、项目、任务、项目负载大屏和审计日志
+- 项目经理 / 开发经理：看板侧项目、任务、团队和看板管理权限拉齐；后台管理可进入团队、看板和审计模块；是否允许管理团队成员由系统参数 `project_manager_user_management_enabled` 控制
+- 团队成员：可进入看板查看项目详情，可新建任务，可编辑与自己相关的任务；不能创建、编辑、归档或恢复项目
+- 项目负载大屏：开启 `workload_dashboard_public_enabled` 后可公开查看全部团队和项目负载；关闭后超管可看全部，项目经理和开发经理按自己创建或参与的团队/项目统计，团队成员按自己所属团队/项目统计
 
 ## 版本维护
 
@@ -51,7 +58,7 @@
 因此未来发正式版时，不需要改代码逻辑，只需要：
 
 1. 更新 `package.json.version`
-2. 构建镜像时传入正式镜像 tag，例如 `kanban:1.1.0` 或 `halfroom/kanban:1.1.0`
+2. 构建镜像时传入正式镜像 tag，例如 `kanban:1.4.0` 或 `halfroom/kanban:1.4.0`
 
 `Dockerfile` 中的：
 
@@ -392,8 +399,10 @@ docker compose -f docker-compose.sqlite.yml up -d
 - 备份目录默认在 `/data/backups`
 - `KANBAN_AUTO_UPGRADE=true`
 - `KANBAN_IMAGE_TAG=kanban:sqlite-{version}`
+- Docker 镜像默认 `KANBAN_LOG_DIR=/data/logs`，compose 可通过环境变量覆盖日志滚动和是否写文件日志
 
 当前默认使用 Docker volume `kanban-data` 持久化数据。  
+该卷同时覆盖 `/data/logs`，因此默认文件日志也会随 SQLite 数据卷保留。
 如果你要改成宿主机目录挂载，请直接改 `docker-compose.sqlite.yml` 的 `volumes`。
 
 等价的 `docker run` 示例：
@@ -408,6 +417,7 @@ docker run -d \
   -e KANBAN_SQLITE_BACKUP_DIR=/data/backups \
   -e KANBAN_AUTO_UPGRADE=true \
   -e KANBAN_IMAGE_TAG=kanban:sqlite-{version} \
+  -e KANBAN_LOG_FILE_ENABLED=true \
   --restart unless-stopped \
   your-image:tag
 ```
@@ -433,7 +443,10 @@ docker compose -f docker-compose.postgres.yml up -d
 - `KANBAN_DB_DRIVER=postgres`
 - `POSTGRES_URL=postgres://...`
 - `KANBAN_IMAGE_TAG=kanban:postgres-{version}`
+- 日志策略与 SQLite compose 一致，默认控制台和 `/data/logs/kanban.log` 同时输出
 - `kanban` 容器等待 PG healthcheck 通过后再启动
+
+PostgreSQL compose 中业务数据由 `pgdata` 卷持久化，应用文件日志由 `kanban-logs` 卷持久化。若只依赖 Docker 控制台日志，可设置 `KANBAN_LOG_FILE_ENABLED=false`，此时不会写入 `kanban-logs`。
 
 等价的 `docker run` 示例：
 
@@ -444,6 +457,7 @@ docker run -d \
   -e KANBAN_DB_DRIVER=postgres \
   -e POSTGRES_URL=postgres://kanban:your_password@postgres-host:5432/kanban \
   -e KANBAN_IMAGE_TAG=kanban:postgres-{version} \
+  -e KANBAN_LOG_FILE_ENABLED=true \
   --restart unless-stopped \
   your-image:tag
 ```
@@ -487,19 +501,19 @@ ARM64：
 ```bash
 docker build \
   --platform linux/arm64 \
-  --build-arg KANBAN_APP_VERSION=1.1.0 \
-  --build-arg KANBAN_IMAGE_TAG=halfroom/kanban:arm64-snapshot-1.1.0 \
-  -t halfroom/kanban:arm64-snapshot-1.1.0 .
+  --build-arg KANBAN_APP_VERSION=1.4.0 \
+  --build-arg KANBAN_IMAGE_TAG=halfroom/kanban:arm64-1.4.0 \
+  -t halfroom/kanban:arm64-1.4.0 .
 
-docker save -o kanban-arm64-snapshot-1.1.0.tar halfroom/kanban:arm64-snapshot-1.1.0
-gzip kanban-arm64-snapshot-1.1.0.tar
+docker save -o kanban-arm64-1.4.0.tar halfroom/kanban:arm64-1.4.0
+gzip kanban-arm64-1.4.0.tar
 ```
 
 AMD64：
 
 ```bash
-docker build --platform linux/amd64 -t halfroom/kanban:amd64-snapshot-1.1.0 .
-docker save -o kanban-amd64-snapshot-1.1.0.tar halfroom/kanban:amd64-snapshot-1.1.0
+docker build --platform linux/amd64 -t halfroom/kanban:amd64-1.4.0 .
+docker save -o kanban-amd64-1.4.0.tar halfroom/kanban:amd64-1.4.0
 ```
 
 多架构 OCI 包：
@@ -507,14 +521,14 @@ docker save -o kanban-amd64-snapshot-1.1.0.tar halfroom/kanban:amd64-snapshot-1.
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t halfroom/kanban:multiarch-snapshot-1.1.0 \
-  --output type=oci,dest=kanban-1.1.0-oci.tar .
+  -t halfroom/kanban:1.4.0 \
+  --output type=oci,dest=kanban-1.4.0-oci.tar .
 ```
 
 ##### 2. 传到内网服务器
 
 ```bash
-scp kanban-arm64-snapshot-1.1.0.tar.gz user@内网服务器:/opt/
+scp kanban-arm64-1.4.0.tar.gz user@内网服务器:/opt/
 ```
 
 也可以用 U 盘或其它物理介质。
@@ -522,8 +536,8 @@ scp kanban-arm64-snapshot-1.1.0.tar.gz user@内网服务器:/opt/
 ##### 3. 导入镜像并启动
 
 ```bash
-gunzip kanban-arm64-snapshot-1.1.0.tar.gz
-docker load -i kanban-arm64-snapshot-1.1.0.tar
+gunzip kanban-arm64-1.4.0.tar.gz
+docker load -i kanban-arm64-1.4.0.tar
 ```
 
 SQLite 模式：
@@ -555,7 +569,7 @@ docker run -d \
   -e POSTGRES_URL=postgres://kanban:your_password@postgres-host:5432/kanban \
   -e KANBAN_IMAGE_TAG=kanban:postgres-{version} \
   --restart unless-stopped \
-  halfroom/kanban:beta-1.1.0
+  halfroom/kanban:1.4.0
 ```
 
 ##### 4. 确认运行状态
@@ -579,6 +593,20 @@ curl http://localhost:3000
 4. 迁移成功后再替换正式库
 5. 任一步失败，保留原库不动，并保留备份路径供人工回滚
 
+备份文件名格式为：
+
+```text
+<数据库文件名>.backup.<时间戳>.v<目标应用版本>.sqlite
+```
+
+例如使用 `1.4.0` 镜像升级时，备份文件可能是：
+
+```text
+kanban.backup.2026-06-28T15-30-00-000Z.v1.4.0.sqlite
+```
+
+这里的 `v1.4.0` 表示“由 1.4.0 程序触发升级并创建的升级前备份”，文件内容仍是迁移执行前的数据库，不是已经升级后的数据库。
+
 ### 手动检查是否需要升级
 
 ```bash
@@ -597,7 +625,7 @@ node scripts/upgrade-local-sqlite.mjs
 
 ```bash
 KANBAN_SQLITE_PATH=/data/kanban.sqlite \
-node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06-19T09-00-00-000Z.v0.1.0.sqlite
+node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06-28T15-30-00-000Z.v1.4.0.sqlite
 ```
 
 回滚脚本在覆盖当前库之前，也会先额外保存一份当前库快照。
@@ -627,10 +655,19 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
 | `KANBAN_DB_DRIVER` | `sqlite` | 数据库驱动，`sqlite` 或 `postgres` |
+| `DB_DRIVER` | - | `KANBAN_DB_DRIVER` 的兼容别名 |
+| `KANBAN_AUTH_ENABLED` | `false` | 是否启用登录鉴权、后台管理和多看板用户会话 |
+| `KANBAN_AUTH_SECRET` / `AUTH_SECRET` | - | session cookie 签名密钥；生产启用鉴权时必须配置强随机值 |
+| `KANBAN_COOKIE_SECURE` | 自动 | 是否给 session cookie 加 `Secure`；设置为 `false` 可用于内网 HTTP 环境 |
+| `KANBAN_SUPER_ADMIN_USERNAME` | `admin` | 首次初始化超级管理员用户名 |
+| `KANBAN_SUPER_ADMIN_PASSWORD` | `admin@123` | 首次初始化超级管理员密码 |
+| `KANBAN_DEFAULT_TIMEZONE` | `Asia/Shanghai` | 首次初始化用户默认时区 |
 | `KANBAN_SQLITE_PATH` | `.data/kanban.sqlite` | SQLite 数据文件路径，仅 SQLite 模式使用 |
 | `KANBAN_SQLITE_BACKUP_DIR` | `<db目录>/backups` | SQLite 升级前备份目录，仅 SQLite 模式使用 |
 | `KANBAN_AUTO_UPGRADE` | `true` | 是否在容器启动时自动执行 SQLite 安全升级 |
+| `KANBAN_MAINTENANCE_STATE_PATH` | `<db目录>/kanban-maintenance.json` | 维护模式状态文件路径 |
 | `KANBAN_MAINTENANCE_TOKEN` | - | 维护页手工升级口令，`KANBAN_AUTO_UPGRADE=false` 时建议配置 |
+| `KANBAN_APP_VERSION` | 构建时写入 | 应用版本标识，Docker 构建时通过 `KANBAN_APP_VERSION` build arg 写入 |
 | `KANBAN_IMAGE_TAG` | `kanban:<version>` | 维护页和 footer 展示的运行镜像标识，支持 `{version}` 占位符 |
 | `KANBAN_DEFAULT_BOARD_ID` | `default-board` | 新部署初始化默认看板时使用的看板 ID |
 | `KANBAN_LOG_LEVEL` | `info`/开发为 `debug` | 结构化运行日志级别：`debug`、`info`、`warn`、`error` |
@@ -642,6 +679,12 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 | `KANBAN_LOG_MAX_FILES` | `10` | 最多保留的滚动日志文件数，设置为 `0` 可关闭按数量清理 |
 | `KANBAN_LOG_RETENTION_DAYS` | `30` | 滚动日志保留天数，设置为 `0` 可关闭按时间清理 |
 | `POSTGRES_URL` | - | PostgreSQL 连接字符串，仅 PostgreSQL 模式使用 |
+| `DATABASE_URL` | - | `POSTGRES_URL` 的兼容别名 |
+| `POSTGRES_DB` | `kanban` | PostgreSQL compose 中初始化数据库名，并用于拼接默认 `POSTGRES_URL` |
+| `POSTGRES_USER` | `kanban` | PostgreSQL compose 中初始化数据库用户，并用于拼接默认 `POSTGRES_URL` |
+| `POSTGRES_PASSWORD` | `change-this-password` | PostgreSQL compose 中初始化数据库密码，生产部署必须修改 |
+| `POSTGRES_SSL` | `false` | 设置为 `true` 时启用 PostgreSQL TLS |
+| `POSTGRES_CA` | - | PostgreSQL CA 证书文件路径，配置后优先使用该 CA |
 
 ## 活动记录
 
@@ -662,12 +705,23 @@ pnpm run db:migrate:sqlite-to-postgres:check
 pnpm run db:migrate:sqlite-to-postgres
 ```
 
-schema 位于 `db/schema.ts`，SQLite 迁移文件位于 `drizzle/`，PostgreSQL 迁移文件位于 `migrations/postgres/`。系统参数存放在 `system_parameters` 表，当前包含 `due_soon_days`、`activity_retention_days`、`task_card_stripe_enabled`、看板名称和阶段名称等参数，前端系统参数抽屉和 `/api/settings` 会读写这些值。任务完成时间存放在 `tasks.completed_at`，用于判断已完成任务是否超期完成。登录用户审计记录存放在 `audit_logs` 表，SQLite 到 PostgreSQL 迁移脚本会同步迁移该表。
+schema 位于 `db/schema.ts`，SQLite 迁移文件位于 `drizzle/`，PostgreSQL 迁移文件位于 `migrations/postgres/`。核心表包含用户、看板、看板成员、团队、团队成员、看板团队、项目、任务、任务拆解、活动记录、系统参数和审计日志。系统参数存放在 `system_parameters` 表，当前包含 `due_soon_days`、`activity_retention_days`、`task_card_stripe_enabled`、看板名称、阶段名称、项目负载大屏公开访问和测试工作量等参数，前端系统参数抽屉和 `/api/settings` 会读写这些值。任务完成时间存放在 `tasks.completed_at`，用于判断已完成任务是否超期完成。登录用户审计记录存放在 `audit_logs` 表，SQLite 到 PostgreSQL 迁移脚本会同步迁移该表。
 
 ## 镜像版本
 
-当前维护态升级方案对应的 ARM 镜像标签：
+建议镜像 tag 与 `package.json.version` 保持一致，例如：
 
 ```text
-halfroom/kanban:arm64-snapshot-1.1.0
+halfroom/kanban:1.4.0
+halfroom/kanban:arm64-1.4.0
+halfroom/kanban:amd64-1.4.0
+```
+
+如果仍按架构维护离线镜像，也建议构建时同步传入：
+
+```bash
+docker build \
+  --build-arg KANBAN_APP_VERSION=1.4.0 \
+  --build-arg KANBAN_IMAGE_TAG=halfroom/kanban:arm64-1.4.0 \
+  -t halfroom/kanban:arm64-1.4.0 .
 ```

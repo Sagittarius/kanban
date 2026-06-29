@@ -110,6 +110,31 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   const [selectedTask, setSelectedTask] = useState<DashboardTask | null>(null);
   const [selectedProject, setSelectedProject] = useState<DashboardProject | null>(null);
   const [selectedMember, setSelectedMember] = useState<DashboardMember | null>(null);
+  const particles = useMemo(
+    () =>
+      Array.from({ length: 44 }, (_, index) => ({
+        id: index,
+        left: `${(index * 23 + 11) % 100}%`,
+        top: `${(index * 17 + 5) % 100}%`,
+        size: 1.8 + (index % 5) * 1.35,
+        delay: `${(index % 12) * 0.55}s`,
+        duration: `${7 + (index % 7) * 1.6}s`,
+        opacity: 0.24 + (index % 5) * 0.08,
+        tone: particleTone(index),
+      })),
+    []
+  );
+  const beams = useMemo(
+    () =>
+      Array.from({ length: 4 }, (_, index) => ({
+        id: index,
+        left: `${10 + index * 24}%`,
+        delay: `${index * 1.6}s`,
+        duration: `${10 + index * 2}s`,
+        rotate: `${-18 + index * 10}deg`,
+      })),
+    []
+  );
 
   useEffect(() => {
     let active = true;
@@ -155,20 +180,52 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   return (
     <main data-dashboard-theme={theme} className="relative min-h-screen overflow-hidden bg-[var(--dash-bg)] text-[var(--dash-text)]">
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(103,232,249,0.08),transparent_36%),radial-gradient(circle_at_78%_18%,rgba(167,139,250,0.14),transparent_28%),radial-gradient(circle_at_50%_100%,rgba(59,130,246,0.12),transparent_38%)]" />
         <div className="absolute left-[-8%] top-[-12%] h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_68%)] blur-3xl" />
         <div className="absolute right-[-10%] top-[18%] h-[460px] w-[460px] rounded-full bg-[radial-gradient(circle,var(--dash-hot-glow),transparent_72%)] blur-3xl" />
         <div className="absolute bottom-[-18%] left-[26%] h-[420px] w-[520px] rounded-full bg-[radial-gradient(circle,var(--dash-rim),transparent_72%)] blur-3xl" />
+        <div className="absolute inset-x-0 top-[6%] h-[1px] bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
+        <div className="absolute inset-x-0 top-[36%] h-[1px] bg-[linear-gradient(90deg,transparent,var(--dash-line),transparent)] opacity-50" />
+        {beams.map((beam) => (
+          <span
+            key={beam.id}
+            className="absolute top-[-10%] h-[140%] w-px bg-[linear-gradient(180deg,transparent,var(--dash-rim),transparent)] opacity-30 blur-[0.5px] dashboard-beam"
+            style={{ left: beam.left, animationDelay: beam.delay, animationDuration: beam.duration, transform: `rotate(${beam.rotate})` }}
+          />
+        ))}
+        {particles.map((particle) => (
+          <span
+            key={particle.id}
+            className={`absolute rounded-full dashboard-particle ${particle.tone}`}
+            style={{
+              left: particle.left,
+              top: particle.top,
+              width: `${particle.size}px`,
+              height: `${particle.size}px`,
+              opacity: particle.opacity,
+              animationDelay: particle.delay,
+              animationDuration: particle.duration,
+            }}
+          />
+        ))}
         <div className="absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:32px_32px]" />
+        <div className="absolute inset-0 opacity-[0.14] [background-image:radial-gradient(circle_at_center,rgba(255,255,255,0.22)_0,transparent_54%)]" />
       </div>
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-[2160px] flex-col gap-5 px-5 py-5 2xl:px-8">
-        <header className="relative z-30 flex flex-wrap items-center gap-4 rounded-[28px] border border-[var(--dash-line)] bg-[var(--dash-panel-strong)] px-5 py-5 shadow-[0_24px_80px_var(--dash-shadow-soft)] backdrop-blur-xl">
+        <header className="relative z-30 flex flex-wrap items-center gap-4 overflow-hidden rounded-[28px] border border-[var(--dash-line)] bg-[var(--dash-panel-strong)] px-5 py-5 shadow-[0_24px_80px_var(--dash-shadow-soft)] backdrop-blur-xl">
+          <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-70" />
+          <div className="pointer-events-none absolute right-[-8%] top-[-28%] h-40 w-40 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_70%)] blur-2xl" />
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-2xl border border-[var(--dash-line)] bg-[var(--dash-panel)] shadow-[0_0_0_1px_rgba(255,255,255,0.04)]">
               <ChartNoAxesCombined size={20} />
             </div>
             <div>
               <h1 className="text-2xl font-semibold 2xl:text-4xl">项目负载大屏</h1>
+              <div className="mt-1 inline-flex items-center gap-2 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2.5 py-1 text-[11px] font-medium text-[var(--dash-muted)]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--dash-accent)] shadow-[0_0_12px_var(--dash-accent-glow)] dashboard-pulse" />
+                实时观察
+              </div>
             </div>
           </div>
           <div className="ml-auto flex flex-wrap items-center gap-3">
@@ -231,7 +288,9 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
         </section>
 
         <section className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_460px]">
-          <div className="rounded-3xl border border-[var(--dash-line)] bg-[var(--dash-panel)] p-4 shadow-[0_24px_70px_var(--dash-shadow-soft)] backdrop-blur-xl">
+          <div className="relative overflow-hidden rounded-3xl border border-[var(--dash-line)] bg-[var(--dash-panel)] p-4 shadow-[0_24px_70px_var(--dash-shadow-soft)] backdrop-blur-xl">
+            <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
+            <div className="pointer-events-none absolute right-[-16%] top-[-18%] h-52 w-52 rounded-full bg-[radial-gradient(circle,var(--dash-hot-glow),transparent_70%)] blur-3xl opacity-50" />
             <div className="mb-4 flex items-center justify-between gap-3">
               <h2 className="flex items-center gap-2 text-lg font-semibold">
                 <span className="grid h-7 w-7 place-items-center rounded-xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
@@ -252,8 +311,10 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                 return (
                   <article
                     key={member.id}
-                    className="rounded-2xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-card),var(--dash-card-bottom))] p-4 shadow-[0_18px_38px_var(--dash-shadow)] transition duration-300 hover:-translate-y-0.5 hover:border-[var(--dash-rim)] hover:shadow-[0_22px_48px_var(--dash-shadow-soft)]"
+                    className="relative overflow-hidden rounded-2xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-card),var(--dash-card-bottom))] p-4 shadow-[0_18px_38px_var(--dash-shadow)] transition duration-300 hover:-translate-y-0.5 hover:border-[var(--dash-rim)] hover:shadow-[0_22px_48px_var(--dash-shadow-soft)]"
                   >
+                    <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-50" />
+                    <div className="pointer-events-none absolute right-[-12%] top-[-16%] h-24 w-24 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_68%)] blur-2xl opacity-55" />
                     <div className="flex items-stretch gap-4">
                       <button type="button" onClick={() => setSelectedMember(member)} className="shrink-0 cursor-pointer">
                         <DashboardAvatar member={member} size="member" />
@@ -303,7 +364,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                     </div>
                     <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-[var(--dash-track)] shadow-inner">
                       <div
-                        className="h-full rounded-full bg-[linear-gradient(90deg,var(--dash-accent),var(--dash-hot))] shadow-[0_0_20px_var(--dash-accent-glow)] transition-all duration-700 ease-out"
+                        className="h-full rounded-full bg-[linear-gradient(90deg,var(--dash-accent),var(--dash-hot),var(--dash-accent))] shadow-[0_0_20px_var(--dash-accent-glow)] transition-all duration-700 ease-out dashboard-energy"
                         style={{ width: `${width}%` }}
                       />
                     </div>
@@ -431,8 +492,10 @@ function Metric({
 }) {
   return (
     <div
-      className={`rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] px-3 py-3 shadow-[0_14px_30px_var(--dash-shadow)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 ${metricToneClass(accent)}`}
+      className={`relative overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] px-3 py-3 shadow-[0_14px_30px_var(--dash-shadow)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 ${metricToneClass(accent)}`}
     >
+      <span className="pointer-events-none absolute inset-x-5 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
+      <span className="pointer-events-none absolute right-[-18%] top-[-20%] h-20 w-20 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_72%)] blur-2xl opacity-45" />
       <p className="text-xs text-[var(--dash-muted)]">{label}</p>
       <p className="mt-1 text-xl font-semibold 2xl:text-2xl">{value}</p>
     </div>
@@ -441,7 +504,9 @@ function Metric({
 
 function SidePanel({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <section className="rounded-3xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] p-4 shadow-[0_18px_48px_var(--dash-shadow)] backdrop-blur-xl">
+    <section className="relative overflow-hidden rounded-3xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] p-4 shadow-[0_18px_48px_var(--dash-shadow)] backdrop-blur-xl">
+      <span className="pointer-events-none absolute inset-x-8 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
+      <span className="pointer-events-none absolute left-[-16%] top-[-10%] h-24 w-24 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_70%)] blur-2xl opacity-35" />
       <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold">
         <span className="grid h-7 w-7 place-items-center rounded-xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
           {icon}
@@ -756,7 +821,9 @@ function DialogShell({
 }) {
   return (
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 px-4">
-      <div className={`w-full ${maxWidth} rounded-[28px] border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] p-6 shadow-[0_28px_90px_var(--dash-shadow-soft)] backdrop-blur-xl`}>
+      <div className={`relative w-full overflow-hidden ${maxWidth} rounded-[28px] border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] p-6 shadow-[0_28px_90px_var(--dash-shadow-soft)] backdrop-blur-xl`}>
+        <span className="pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-70" />
+        <span className="pointer-events-none absolute right-[-12%] top-[-14%] h-28 w-28 rounded-full bg-[radial-gradient(circle,var(--dash-hot-glow),transparent_70%)] blur-3xl opacity-50" />
         <div className="flex items-start justify-between gap-3">
           <div>
             {eyebrow ? (
@@ -873,6 +940,11 @@ function findDashboardMemberByName(members: DashboardMember[], name: string) {
   );
 }
 
+function particleTone(index: number) {
+  const tones = ["particle-cyan", "particle-violet", "particle-blue", "particle-amber"] as const;
+  return tones[index % tones.length];
+}
+
 function metricToneClass(tone: "default" | "info" | "danger" | "warning") {
   if (tone === "info") return "border-[var(--dash-info-line)] hover:border-[var(--dash-info-rim)]";
   if (tone === "danger") return "border-[var(--dash-danger-line)] hover:border-[var(--dash-danger-rim)]";
@@ -927,6 +999,14 @@ const dashboardThemeCss = `
     --dash-warning-soft: rgba(251, 191, 36, 0.14);
     --dash-warning-line: rgba(251, 191, 36, 0.18);
     --dash-warning-rim: rgba(251, 191, 36, 0.38);
+    --dash-particle-cyan: rgba(186, 230, 253, 0.95);
+    --dash-particle-cyan-glow: rgba(103, 232, 249, 0.42);
+    --dash-particle-violet: rgba(221, 214, 254, 0.92);
+    --dash-particle-violet-glow: rgba(167, 139, 250, 0.42);
+    --dash-particle-blue: rgba(191, 219, 254, 0.94);
+    --dash-particle-blue-glow: rgba(59, 130, 246, 0.4);
+    --dash-particle-amber: rgba(253, 230, 138, 0.88);
+    --dash-particle-amber-glow: rgba(251, 191, 36, 0.34);
   }
   [data-dashboard-theme="light"] {
     --dash-bg: #eef4fb;
@@ -961,5 +1041,62 @@ const dashboardThemeCss = `
     --dash-warning-soft: rgba(217, 119, 6, 0.12);
     --dash-warning-line: rgba(217, 119, 6, 0.14);
     --dash-warning-rim: rgba(217, 119, 6, 0.26);
+    --dash-particle-cyan: rgba(14, 116, 144, 0.92);
+    --dash-particle-cyan-glow: rgba(15, 118, 110, 0.28);
+    --dash-particle-violet: rgba(109, 40, 217, 0.8);
+    --dash-particle-violet-glow: rgba(167, 139, 250, 0.24);
+    --dash-particle-blue: rgba(37, 99, 235, 0.88);
+    --dash-particle-blue-glow: rgba(37, 99, 235, 0.28);
+    --dash-particle-amber: rgba(217, 119, 6, 0.8);
+    --dash-particle-amber-glow: rgba(245, 158, 11, 0.24);
+  }
+  .dashboard-particle {
+    animation: dashboard-float linear infinite;
+  }
+  .dashboard-particle.particle-cyan {
+    background: var(--dash-particle-cyan);
+    box-shadow: 0 0 18px var(--dash-particle-cyan-glow);
+  }
+  .dashboard-particle.particle-violet {
+    background: var(--dash-particle-violet);
+    box-shadow: 0 0 18px var(--dash-particle-violet-glow);
+  }
+  .dashboard-particle.particle-blue {
+    background: var(--dash-particle-blue);
+    box-shadow: 0 0 18px var(--dash-particle-blue-glow);
+  }
+  .dashboard-particle.particle-amber {
+    background: var(--dash-particle-amber);
+    box-shadow: 0 0 18px var(--dash-particle-amber-glow);
+  }
+  .dashboard-beam {
+    animation: dashboard-drift linear infinite;
+    transform-origin: top center;
+  }
+  .dashboard-pulse {
+    animation: dashboard-pulse 2.8s ease-in-out infinite;
+  }
+  .dashboard-energy {
+    background-size: 200% 100%;
+    animation: dashboard-energy 4.8s linear infinite;
+  }
+  @keyframes dashboard-float {
+    0% { transform: translate3d(0, 0, 0) scale(0.95); }
+    50% { transform: translate3d(0, -16px, 0) scale(1.08); }
+    100% { transform: translate3d(0, 0, 0) scale(0.95); }
+  }
+  @keyframes dashboard-drift {
+    0% { opacity: 0; transform: translate3d(0, -40px, 0) scaleY(0.85); }
+    25% { opacity: 0.32; }
+    75% { opacity: 0.22; }
+    100% { opacity: 0; transform: translate3d(0, 42px, 0) scaleY(1.08); }
+  }
+  @keyframes dashboard-pulse {
+    0%, 100% { transform: scale(0.9); opacity: 0.72; }
+    50% { transform: scale(1.15); opacity: 1; }
+  }
+  @keyframes dashboard-energy {
+    0% { background-position: 0% 50%; }
+    100% { background-position: 200% 50%; }
   }
 `;
