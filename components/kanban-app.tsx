@@ -2295,7 +2295,7 @@ export default function KanbanApp({
               newSubtaskTitle={newSubtaskTitle}
               setNewSubtaskTitle={setNewSubtaskTitle}
               columns={board.columns}
-              currentUser={currentUser}
+              currentUser={currentUser ?? undefined}
               editable={selectedTaskEditable}
               onSave={(patch) => persistTask(selectedTask.id, patch)}
               onInvalid={showNotice}

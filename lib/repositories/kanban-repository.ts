@@ -52,7 +52,7 @@ export type CreateTeamInput = {
   memberIds?: unknown;
 };
 export type UpdateTeamInput = Partial<CreateTeamInput>;
-export type CreateBoardInput = { name?: unknown; description?: unknown; teamIds?: unknown };
+export type CreateBoardInput = { name?: unknown; description?: unknown; teamIds?: unknown; ownerUserId?: unknown };
 export type UpdateBoardInput = Partial<CreateBoardInput>;
 export type UpdateUserProfileInput = Partial<{ displayName: unknown; phone: unknown; timezone: unknown; avatarKey: unknown; jobTitle: unknown; techStacks: unknown }>;
 export type CreateProjectInput = {
@@ -172,9 +172,7 @@ export class KanbanRepository {
 
   async listUsers(actor?: CurrentUser): Promise<ManagedUser[]> {
     await this.ensureBootstrapData();
-    if (actor && isManagementRole(actor) && actor.role !== "super_admin") {
-      return (await this.q("SELECT * FROM users WHERE role='team_member' ORDER BY username ASC")).map(managedUser);
-    }
+    void actor;
     return (await this.q("SELECT * FROM users ORDER BY role ASC, username ASC")).map(managedUser);
   }
 
@@ -263,10 +261,10 @@ export class KanbanRepository {
     const current = await this.getManagedUserRow(userId);
     if (!current) throw new Error("用户不存在");
     const currentRole = normalizeUserRole(current.role);
-    if (isManagementRole(actor) && actor.role !== "super_admin" && currentRole !== "team_member") throw new Error("Forbidden");
+    if (!canManageTargetUser(actor, currentRole)) throw new Error("Forbidden");
 
     const nextRole = input.role === undefined ? currentRole : normalizeUserRole(input.role, currentRole);
-    if (isManagementRole(actor) && actor.role !== "super_admin" && nextRole !== "team_member") throw new Error("Forbidden");
+    if (!canUpdateUserRole(actor, currentRole, nextRole)) throw new Error("Forbidden");
     if (currentRole === "super_admin" && nextRole !== "super_admin") {
       await this.ensureAnotherActiveSuperAdmin(userId);
     }
@@ -320,7 +318,7 @@ export class KanbanRepository {
     const row = await this.getManagedUserRow(userId);
     if (!row) throw new Error("用户不存在");
     const role = normalizeUserRole(row.role);
-    if (isManagementRole(actor) && actor.role !== "super_admin" && role !== "team_member") throw new Error("Forbidden");
+    if (!canManageTargetUser(actor, role)) throw new Error("Forbidden");
     const username = String(row.username);
     const password = `${username}@123`;
     await this.x("UPDATE users SET password_hash=?,updated_at=? WHERE id=?", [await hashPassword(password), iso(), userId]);
@@ -441,12 +439,22 @@ export class KanbanRepository {
     await this.requireBoardAdmin(actor, boardId);
     const current = await this.getBoardSummaryById(actor, boardId);
     if (!current) throw new Error("看板不存在");
-    await this.x("UPDATE boards SET name=?,description=?,updated_at=? WHERE id=?", [
+    const nextOwnerUserId = await this.resolveBoardOwnerUserId(input.ownerUserId, current.ownerUserId);
+    const now = iso();
+    await this.x("UPDATE boards SET name=?,description=?,owner_user_id=?,updated_at=? WHERE id=?", [
       text(input.name, current.name),
       opt(input.description, current.description),
-      iso(),
+      nextOwnerUserId,
+      now,
       boardId,
     ]);
+    if (nextOwnerUserId !== current.ownerUserId) {
+      await this.x("UPDATE board_members SET role='viewer' WHERE board_id=? AND user_id=? AND role='owner'", [boardId, current.ownerUserId]);
+      await this.x(
+        "INSERT INTO board_members (board_id,user_id,role,created_at) VALUES (?,?,'owner',?) ON CONFLICT(board_id,user_id) DO UPDATE SET role='owner'",
+        [boardId, nextOwnerUserId, now]
+      );
+    }
     if (input.teamIds !== undefined) {
       await this.setBoardTeams(actor, boardId, ids(input.teamIds));
     }
@@ -459,7 +467,11 @@ export class KanbanRepository {
       resourceId: boardId,
       boardId,
       message: `更新看板 ${updated.name}`,
-      metadata: { teamIds: input.teamIds === undefined ? undefined : ids(input.teamIds) },
+      metadata: {
+        teamIds: input.teamIds === undefined ? undefined : ids(input.teamIds),
+        beforeOwnerUserId: current.ownerUserId,
+        afterOwnerUserId: nextOwnerUserId,
+      },
     });
     return updated;
   }
@@ -1915,6 +1927,20 @@ export class KanbanRepository {
     return new Set(rows.map((row) => String(row.id)));
   }
 
+  async resolveBoardOwnerUserId(rawOwnerUserId: unknown, fallbackOwnerUserId: string) {
+    const ownerUserId = text(rawOwnerUserId, fallbackOwnerUserId);
+    if (!ownerUserId) throw new Error("请选择看板拥有者");
+    const ownerRow = await this.getManagedUserRow(ownerUserId);
+    if (!ownerRow || !boolInt(ownerRow.is_active)) {
+      throw new Error("看板拥有者不存在或已停用");
+    }
+    const ownerRole = normalizeUserRole(ownerRow.role);
+    if (!canCreateBoards({ ...user(ownerRow), role: ownerRole })) {
+      throw new Error("看板拥有者必须是可创建看板的管理角色");
+    }
+    return ownerUserId;
+  }
+
   async listBoardTeamOptions(boardId: string): Promise<BoardTeamOption[]> {
     const rows = await this.q(
       "SELECT t.*,u.username AS owner_username FROM board_teams bt JOIN teams t ON t.id=bt.team_id LEFT JOIN users u ON u.id=t.owner_user_id WHERE bt.board_id=? ORDER BY t.name ASC",
@@ -2619,6 +2645,16 @@ function requireBoardCreator(actor: CurrentUser) {
 
 function canCreateBoards(actor: CurrentUser) {
   return isManagementRole(actor);
+}
+
+function canUpdateUserRole(actor: CurrentUser, currentRole: UserRole, nextRole: UserRole) {
+  if (actor.role === "super_admin") return true;
+  return currentRole === nextRole;
+}
+
+function canManageTargetUser(actor: CurrentUser, targetRole: UserRole) {
+  if (actor.role === "super_admin") return true;
+  return targetRole !== "super_admin";
 }
 
 function canManageBoardTasks(actor: CurrentUser) {

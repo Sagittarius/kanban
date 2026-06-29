@@ -108,8 +108,10 @@ const defaultTeamDraft = {
 };
 
 const defaultBoardDraft = {
+  id: "",
   name: "",
   description: "",
+  ownerUserId: "",
   teamIds: [] as string[],
 };
 
@@ -215,6 +217,18 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
         meta: `${roleLabels[user.role]} · @${user.username}`,
       })),
     [assignableUsers]
+  );
+
+  const boardOwnerOptions = useMemo<SelectOption[]>(
+    () =>
+      users
+        .filter((user) => user.isActive && user.role !== "team_member")
+        .map((user) => ({
+          value: user.id,
+          label: user.displayName || user.username,
+          meta: `${roleLabels[user.role]} · @${user.username}`,
+        })),
+    [users]
   );
 
   const teamOptions = useMemo<SelectOption[]>(
@@ -411,6 +425,17 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     setBoardDraft(defaultBoardDraft);
   }
 
+  function editBoard(board: AdminBoard) {
+    setBoardDraft({
+      id: board.id,
+      name: board.name,
+      description: board.description,
+      ownerUserId: board.ownerUserId,
+      teamIds: board.teamIds ?? [],
+    });
+    setActiveTab("boards");
+  }
+
   async function saveTeam(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSaving(true);
@@ -437,18 +462,20 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     event.preventDefault();
     setSaving(true);
     setMessage("");
-    const response = await fetch("/api/boards", {
-      method: "POST",
+    const method = boardDraft.id ? "PATCH" : "POST";
+    const url = boardDraft.id ? `/api/boards/${boardDraft.id}` : "/api/boards";
+    const response = await fetch(url, {
+      method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(boardDraft),
     });
     const payload = (await response.json().catch(() => ({}))) as BoardSummary & { error?: string };
     setSaving(false);
     if (!response.ok) {
-      setMessage(payload.error ?? "创建失败");
+      setMessage(payload.error ?? "保存失败");
       return;
     }
-    setMessage(`看板「${payload.name}」已创建`);
+    setMessage(boardDraft.id ? `看板「${payload.name}」已保存` : `看板「${payload.name}」已创建`);
     setBoardDraft(defaultBoardDraft);
     setSelectedBoardId(payload.id);
     setBoardTeamDraft(payload.teamIds ?? []);
@@ -653,7 +680,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   <UserCard
                     key={user.id}
                     user={user}
-                    canManage={permissions.canManageUsers && (currentUser.role === "super_admin" || user.role === "team_member")}
+                    canManage={permissions.canManageUsers && (currentUser.role === "super_admin" || user.role !== "super_admin")}
                     onEdit={() => editUser(user)}
                     onReset={() =>
                       setConfirmState({
@@ -774,7 +801,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
         {currentTab === "boards" ? (
           <div className="mt-5 grid gap-5 xl:grid-cols-[360px_minmax(360px,0.9fr)_minmax(0,1.3fr)]">
             <section className="space-y-5">
-              <Panel title="创建看板">
+              <Panel title={boardDraft.id ? "编辑看板" : "创建看板"}>
                 <form onSubmit={saveBoard} className="space-y-4">
                   <Field label="看板名称">
                     <input
@@ -792,6 +819,16 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                       placeholder="输入说明"
                     />
                   </Field>
+                  {boardDraft.id ? (
+                    <Field label="拥有者">
+                      <SearchSelect
+                        value={boardDraft.ownerUserId}
+                        options={boardOwnerOptions}
+                        onChange={(value) => setBoardDraft((current) => ({ ...current, ownerUserId: value }))}
+                        placeholder="选择拥有者"
+                      />
+                    </Field>
+                  ) : null}
                   <Field label="关联团队">
                     {teamOptions.length > 0 ? (
                       <SharedSearchMultiSelect
@@ -814,7 +851,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   </Field>
                   <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
                     <button disabled={saving} className="h-10 rounded-xl bg-[var(--accent)] px-5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60">
-                      {saving ? "创建中" : "创建"}
+                      {saving ? (boardDraft.id ? "保存中" : "创建中") : boardDraft.id ? "保存" : "创建"}
                     </button>
                     <button type="button" onClick={resetBoardDraft} className="h-10 rounded-xl border border-[var(--border)] px-4 text-sm font-semibold transition hover:bg-[var(--hover)]">
                       清空
@@ -881,24 +918,33 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                         <h2 className="mt-2 truncate text-2xl font-semibold">{selectedBoard.name}</h2>
                         <p className="mt-2 max-w-3xl text-sm leading-6 text-[var(--muted)]">{selectedBoard.description || "无说明"}</p>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setConfirmState({
-                            title: "删除看板",
-                            message: `删除看板「${selectedBoard.name}」后，该看板下的项目、任务、拆解和活动记录都会被一并删除。`,
-                            tone: "danger",
-                            actionLabel: "删除看板",
-                            onConfirm: async () => {
-                              await deleteBoard(selectedBoard);
-                              setConfirmState(null);
-                            },
-                          })
-                        }
-                        className="h-10 rounded-xl border border-[var(--danger)]/25 bg-[var(--danger-soft)] px-4 text-sm font-semibold text-[var(--danger)] transition hover:opacity-90"
-                      >
-                        删除看板
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => editBoard(selectedBoard)}
+                          className="h-10 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-sm font-semibold transition hover:bg-[var(--hover)]"
+                        >
+                          编辑
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setConfirmState({
+                              title: "删除看板",
+                              message: `删除看板「${selectedBoard.name}」后，该看板下的项目、任务、拆解和活动记录都会被一并删除。`,
+                              tone: "danger",
+                              actionLabel: "删除看板",
+                              onConfirm: async () => {
+                                await deleteBoard(selectedBoard);
+                                setConfirmState(null);
+                              },
+                            })
+                          }
+                          className="h-10 rounded-xl border border-[var(--danger)]/25 bg-[var(--danger-soft)] px-4 text-sm font-semibold text-[var(--danger)] transition hover:opacity-90"
+                        >
+                          删除
+                        </button>
+                      </div>
                     </div>
                     <div className="mt-5 grid gap-3 sm:grid-cols-4">
                       <BoardMetric label="拥有者" value={selectedBoardOwner?.displayName || selectedBoard.ownerUsername} compact />
@@ -1170,10 +1216,24 @@ function SearchSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const selected = options.find((option) => option.value === value);
   const filtered = options.filter((option) => matchesOption(option, query));
+
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (!containerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    if (open) {
+      window.addEventListener("mousedown", handlePointerDown);
+      return () => window.removeEventListener("mousedown", handlePointerDown);
+    }
+  }, [open]);
+
   return (
-    <div className="relative">
+    <div ref={containerRef} className="relative">
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}

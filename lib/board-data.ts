@@ -354,6 +354,7 @@ export const seedProjects: Project[] = [
   {
     id: "core-platform",
     teamId: "",
+    ownerUserId: "",
     name: "核心平台",
     description: "平台能力、接口稳定性、数据出口和部署质量。",
     owner: "Vincent",
@@ -369,6 +370,7 @@ export const seedProjects: Project[] = [
   {
     id: "mobile-delivery",
     teamId: "",
+    ownerUserId: "",
     name: "移动端交付",
     description: "移动端页面、验收流程、缺陷分级和交互体验。",
     owner: "产品组",
@@ -384,6 +386,7 @@ export const seedProjects: Project[] = [
   {
     id: "growth-ops",
     teamId: "",
+    ownerUserId: "",
     name: "增长运营",
     description: "运营活动、案例素材、发布复盘和增长资产沉淀。",
     owner: "运营组",
