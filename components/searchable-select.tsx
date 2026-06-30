@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Search, X } from "lucide-react";
+import { Check, ChevronDown, Search, X } from "lucide-react";
 
 export type SearchableSelectOption = {
   value: string;
@@ -29,10 +29,14 @@ export default function SearchableSelect({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [activeIndex, setActiveIndex] = useState(-1);
   const [dropdownStyle, setDropdownStyle] = useState<CSSProperties>({});
   const [portalHost, setPortalHost] = useState<Element | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const listboxIdRef = useRef(`searchable-select-listbox-${Math.random().toString(36).slice(2, 10)}`);
   const selected = options.find((option) => option.value === value);
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = normalizedQuery
@@ -58,7 +62,7 @@ export default function SearchableSelect({
       const insideTrigger = containerRef.current?.contains(target);
       const insideDropdown = dropdownRef.current?.contains(target);
       if (!insideTrigger && !insideDropdown) {
-        setOpen(false);
+        closeDropdown();
       }
     }
     if (open) {
@@ -100,14 +104,97 @@ export default function SearchableSelect({
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) {
+      setActiveIndex(-1);
+      return;
+    }
+    const selectedIndex = filtered.findIndex((option) => option.value === value);
+    setActiveIndex(filtered.length === 0 ? -1 : selectedIndex >= 0 ? selectedIndex : 0);
+  }, [filtered, open, value]);
+
+  useEffect(() => {
+    if (!open || activeIndex < 0) return;
+    const next = dropdownRef.current?.querySelector<HTMLElement>(`[data-option-index="${activeIndex}"]`);
+    next?.scrollIntoView({ block: "nearest" });
+  }, [activeIndex, open]);
+
   function pick(nextValue: string) {
     onChange(nextValue);
     setOpen(false);
     setQuery("");
+    setActiveIndex(-1);
   }
 
   function openDropdown() {
+    setQuery("");
     updateDropdownPosition();
+    setOpen(true);
+    window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+      searchInputRef.current?.select();
+    });
+  }
+
+  function closeDropdown() {
+    setOpen(false);
+    setActiveIndex(-1);
+    setQuery("");
+  }
+
+  function moveActive(step: 1 | -1) {
+    if (filtered.length === 0) return;
+    setActiveIndex((current) => {
+      if (current < 0) return step === 1 ? 0 : filtered.length - 1;
+      return (current + step + filtered.length) % filtered.length;
+    });
+  }
+
+  function handleListKeyDown(event: React.KeyboardEvent<HTMLInputElement | HTMLButtonElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      if (!open) {
+        openDropdown();
+        return;
+      }
+      moveActive(1);
+      return;
+    }
+    if (event.key === "ArrowUp") {
+      event.preventDefault();
+      if (!open) {
+        openDropdown();
+        return;
+      }
+      moveActive(-1);
+      return;
+    }
+    if (event.key === "Home" && open) {
+      event.preventDefault();
+      setActiveIndex(filtered.length > 0 ? 0 : -1);
+      return;
+    }
+    if (event.key === "End" && open) {
+      event.preventDefault();
+      setActiveIndex(filtered.length > 0 ? filtered.length - 1 : -1);
+      return;
+    }
+    if (event.key === "Enter") {
+      if (open && activeIndex >= 0 && filtered[activeIndex]) {
+        event.preventDefault();
+        pick(filtered[activeIndex].value);
+      }
+      return;
+    }
+    if (event.key === "Tab" && open && activeIndex >= 0 && filtered[activeIndex]) {
+      pick(filtered[activeIndex].value);
+      return;
+    }
+    if (event.key === "Escape" && open) {
+      event.preventDefault();
+      closeDropdown();
+      triggerRef.current?.focus();
+    }
   }
 
   const dropdown = open && !disabled ? (
@@ -122,9 +209,16 @@ export default function SearchableSelect({
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--select-muted)]" size={14} />
           <input
+            ref={searchInputRef}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={handleListKeyDown}
             placeholder="搜索"
+            role="combobox"
+            aria-expanded={open}
+            aria-controls={listboxIdRef.current}
+            aria-activedescendant={activeIndex >= 0 ? `${listboxIdRef.current}-option-${activeIndex}` : undefined}
+            aria-autocomplete="list"
             className="w-full rounded border border-[var(--select-border)] bg-[var(--select-input)] py-1.5 pl-8 pr-8 text-sm text-[var(--select-text)] outline-none placeholder:text-[var(--select-muted)] focus:border-[var(--select-accent)]"
             autoFocus
           />
@@ -152,22 +246,42 @@ export default function SearchableSelect({
           </button>
         ) : null}
       </div>
-      <div className="max-h-[220px] overflow-y-auto p-1">
+      <div id={listboxIdRef.current} role="listbox" aria-label={placeholder} className="max-h-[220px] overflow-y-auto p-1">
         {filtered.length === 0 ? (
           <p className="px-3 py-3 text-center text-sm text-[var(--select-muted)]">无匹配项</p>
         ) : (
-          filtered.map((option) => (
-            <button
-              key={option.value}
-              type="button"
-              onClick={() => pick(option.value)}
-              className={`flex w-full min-w-0 items-center gap-2 rounded px-3 py-2 text-left text-sm transition ${
-                option.value === value ? "bg-[var(--select-accent-soft)] text-[var(--select-accent)]" : "text-[var(--select-text)] hover:bg-[var(--select-panel-soft)]"
-              }`}
-            >
-              <span className="min-w-0 truncate font-medium">{option.label}</span>
-              {option.meta ? <span className="shrink-0 text-[11px] text-[var(--select-muted)]">{option.meta}</span> : null}
-            </button>
+          filtered.map((option, index) => (
+            (() => {
+              const isActive = activeIndex === index;
+              const isSelected = option.value === value;
+              return (
+                <button
+                  id={`${listboxIdRef.current}-option-${index}`}
+                  key={option.value}
+                  type="button"
+                  onClick={() => pick(option.value)}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  data-option-index={index}
+                  role="option"
+                  aria-selected={isSelected}
+                  className={`flex w-full min-w-0 items-center gap-3 rounded px-3 py-2 text-left text-sm transition ${
+                    isActive
+                      ? "bg-[var(--select-accent)] text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.12)]"
+                      : isSelected
+                        ? "bg-[var(--select-accent-soft)] text-[var(--select-accent)]"
+                        : "text-[var(--select-text)] hover:bg-[var(--select-panel-soft)]"
+                  }`}
+                >
+                  <span className="min-w-0 flex-1 truncate font-medium">{option.label}</span>
+                  {option.meta ? (
+                    <span className={`shrink-0 text-[11px] ${isActive ? "text-white/78" : isSelected ? "text-[var(--select-accent)]/80" : "text-[var(--select-muted)]"}`}>
+                      {option.meta}
+                    </span>
+                  ) : null}
+                  {isSelected ? <Check size={14} className={`shrink-0 ${isActive ? "text-white" : "text-[var(--select-accent)]"}`} /> : null}
+                </button>
+              );
+            })()
           ))
         )}
       </div>
@@ -177,16 +291,24 @@ export default function SearchableSelect({
   return (
     <div ref={containerRef} style={selectStyle} className={`relative ${className}`}>
       <button
+        ref={triggerRef}
         type="button"
         disabled={disabled}
         onClick={() => {
           if (disabled) return;
-          if (!open) openDropdown();
-          setOpen((current) => !current);
+          if (open) {
+            closeDropdown();
+            return;
+          }
+          openDropdown();
         }}
-        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-[var(--select-border)] bg-[var(--select-input)] px-3 py-2 text-left text-base leading-6 text-[var(--select-text)] outline-none transition hover:bg-[var(--select-panel-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+        onKeyDown={handleListKeyDown}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-controls={open ? listboxIdRef.current : undefined}
+        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-[var(--select-border)] bg-[var(--select-input)] px-3 py-2 text-left text-base text-[var(--select-text)] outline-none transition hover:bg-[var(--select-panel-soft)] disabled:cursor-not-allowed disabled:opacity-60"
       >
-        <span className={`min-w-0 truncate text-base leading-6 ${selected ? "" : "text-[var(--select-muted)]"}`}>
+        <span className={`min-w-0 truncate text-base ${selected ? "" : "text-[var(--select-muted)]"}`}>
           {selected?.label ?? placeholder}
         </span>
         <ChevronDown size={14} className="shrink-0 text-[var(--select-muted)]" />

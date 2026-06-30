@@ -1,5 +1,6 @@
 import WorkloadDashboard from "@/components/workload-dashboard";
 import LoginPage from "@/components/login-page";
+import { cookies } from "next/headers";
 import { DEFAULT_TIMEZONE } from "@/lib/timezone";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { requireSessionUser } from "@/lib/server-session";
@@ -8,6 +9,8 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const repo = await getKanbanRepository();
+  const themeCookie = (await cookies()).get("kanban_dashboard_theme")?.value;
+  const initialTheme = themeCookie === "light" || themeCookie === "dark" ? themeCookie : "dark";
   const user = await requireSessionUser().catch((error: unknown) => {
     if (error instanceof Error && error.message === "Unauthorized") {
       return null;
@@ -35,6 +38,7 @@ export default async function DashboardPage() {
         }
       }
       publicView={!user}
+      initialTheme={initialTheme}
     />
   );
 }

@@ -101,13 +101,14 @@ const emptyDashboard: DashboardData = {
 };
 
 const dashboardRefreshEventKey = "kanban:dashboard-refresh";
+const dashboardThemeStorageKey = "kanban:dashboard-theme";
 
-export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean }) {
-  const { publicView = false } = props;
+export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean; initialTheme?: DashboardTheme }) {
+  const { publicView = false, initialTheme = "dark" } = props;
   const [data, setData] = useState<DashboardData>(emptyDashboard);
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
-  const [theme, setTheme] = useState<DashboardTheme>("dark");
+  const [theme, setTheme] = useState<DashboardTheme>(initialTheme);
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<DashboardTask | null>(null);
   const [selectedProject, setSelectedProject] = useState<DashboardProject | null>(null);
@@ -182,6 +183,18 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
       controller.abort();
     };
   }, [loadDashboard]);
+
+  useEffect(() => {
+    const saved = window.localStorage.getItem(dashboardThemeStorageKey);
+    if (saved === "light" || saved === "dark") {
+      setTheme(saved);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(dashboardThemeStorageKey, theme);
+    document.cookie = `kanban_dashboard_theme=${theme}; path=/; max-age=31536000; samesite=lax`;
+  }, [theme]);
 
   useEffect(() => {
     const handleRefresh = () => {
@@ -758,9 +771,11 @@ function DashboardTaskDialog({
 function DashboardCompactTaskRow({
   task,
   onSelect,
+  showTags = true,
 }: {
   task: DashboardTask;
   onSelect: (task: DashboardTask) => void;
+  showTags?: boolean;
 }) {
   return (
     <button
@@ -780,22 +795,24 @@ function DashboardCompactTaskRow({
               {task.description}
             </span>
           ) : null}
-          <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-[var(--dash-muted)]">
-            {task.tags.slice(0, 2).map((tag) => (
-              <span
-                key={tag}
-                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--dash-line)] bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-text)]"
-              >
-                <Tag size={10} />
-                {tag}
-              </span>
-            ))}
-            {task.tags.length > 2 ? (
-              <span className="shrink-0 rounded-full bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-muted)]">
-                +{task.tags.length - 2}
-              </span>
-            ) : null}
-          </span>
+          {showTags ? (
+            <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-[var(--dash-muted)]">
+              {task.tags.slice(0, 2).map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[var(--dash-line)] bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-text)]"
+                >
+                  <Tag size={10} />
+                  {tag}
+                </span>
+              ))}
+              {task.tags.length > 2 ? (
+                <span className="shrink-0 rounded-full bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-muted)]">
+                  +{task.tags.length - 2}
+                </span>
+              ) : null}
+            </span>
+          ) : null}
         </span>
         <span className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5 whitespace-nowrap">
           {task.dueSoon ? <WarningDot tone="info" label="临期" /> : null}
@@ -803,15 +820,15 @@ function DashboardCompactTaskRow({
           {task.blocked ? <WarningDot tone="warning" label="阻塞" /> : null}
         </span>
       </span>
-      <span className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_42px] items-center gap-2">
-        <span className="h-1.5 min-w-0 overflow-hidden rounded-full bg-[var(--dash-track)]">
-          <span
-            className="block h-full rounded-full bg-[var(--dash-accent)]"
+      <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_42px] items-center gap-2">
+        <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-[var(--dash-track)]">
+          <div
+            className="h-full rounded-full bg-[var(--dash-accent)]"
             style={{ width: `${Math.min(100, Math.max(0, task.progress))}%` }}
           />
-        </span>
+        </div>
         <span className="text-right text-[11px] font-semibold text-[var(--dash-muted)]">{task.progress}%</span>
-      </span>
+      </div>
     </button>
   );
 }
@@ -826,36 +843,44 @@ function DashboardProjectDialog({
   onSelectTask: (task: DashboardTask) => void;
 }) {
   return (
-    <DialogShell title={project.name} onClose={onClose} eyebrow="项目概览" maxWidth="max-w-[760px]">
-      <p className="mt-2 text-sm leading-6 text-[var(--dash-muted)]">{project.description || "暂无项目说明"}</p>
-      {project.dueSoonCount > 0 || project.overdueCount > 0 || project.blockedCount > 0 ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {project.dueSoonCount > 0 ? <WarningChip active tone="info">临期 {project.dueSoonCount}</WarningChip> : null}
-          {project.overdueCount > 0 ? <WarningChip active tone="danger">超期 {project.overdueCount}</WarningChip> : null}
-          {project.blockedCount > 0 ? <WarningChip active tone="warning">阻塞 {project.blockedCount}</WarningChip> : null}
-        </div>
-      ) : null}
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <DashInfo label="团队" value={project.teamName || "-"} />
-        <DashInfo label="任务总数" value={`${project.taskCount}`} />
-      </div>
-      <div className="mt-4 grid gap-3 sm:grid-cols-5">
-        <DashInfo label="需求池" value={`${project.statusCounts.backlog}`} />
-        <DashInfo label="设计中" value={`${project.statusCounts.design}`} />
-        <DashInfo label="开发中" value={`${project.statusCounts.dev}`} />
-        <DashInfo label="测试中" value={`${project.statusCounts.test}`} />
-        <DashInfo label="已完成" value={`${project.statusCounts.done}`} />
-      </div>
-      <div className="mt-5 space-y-2">
-        {project.tasks.length > 0 ? (
-          project.tasks.map((task) => (
-            <DashboardCompactTaskRow key={task.id} task={task} onSelect={onSelectTask} />
-          ))
-        ) : (
-          <div className="rounded-xl border border-dashed border-[var(--dash-line)] px-3 py-5 text-center text-sm text-[var(--dash-muted)]">
-            暂无任务
+    <DialogShell title={project.name} onClose={onClose} eyebrow="项目概览" maxWidth="max-w-[760px]" scrollBody={false}>
+      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+        <div className="space-y-5">
+          <p className="text-sm leading-6 text-[var(--dash-muted)]">{project.description || "暂无项目说明"}</p>
+          {project.dueSoonCount > 0 || project.overdueCount > 0 || project.blockedCount > 0 ? (
+            <div className="flex flex-wrap gap-2">
+              {project.dueSoonCount > 0 ? <WarningChip active tone="info">临期 {project.dueSoonCount}</WarningChip> : null}
+              {project.overdueCount > 0 ? <WarningChip active tone="danger">超期 {project.overdueCount}</WarningChip> : null}
+              {project.blockedCount > 0 ? <WarningChip active tone="warning">阻塞 {project.blockedCount}</WarningChip> : null}
+            </div>
+          ) : null}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DashInfo label="团队" value={project.teamName || "-"} />
+            <DashInfo label="任务总数" value={`${project.taskCount}`} />
           </div>
-        )}
+          <div className="grid gap-3 sm:grid-cols-5">
+            <DashInfo label="需求池" value={`${project.statusCounts.backlog}`} />
+            <DashInfo label="设计中" value={`${project.statusCounts.design}`} />
+            <DashInfo label="开发中" value={`${project.statusCounts.dev}`} />
+            <DashInfo label="测试中" value={`${project.statusCounts.test}`} />
+            <DashInfo label="已完成" value={`${project.statusCounts.done}`} />
+          </div>
+        </div>
+        <div className="mt-5 min-h-0 rounded-2xl border border-[var(--dash-line)] bg-[var(--dash-card)]/60 p-2">
+          <div className="max-h-[min(46vh,520px)] overflow-y-auto pr-1">
+            <div className="space-y-2">
+              {project.tasks.length > 0 ? (
+                project.tasks.map((task) => (
+                  <DashboardCompactTaskRow key={task.id} task={task} onSelect={onSelectTask} showTags={false} />
+                ))
+              ) : (
+                <div className="rounded-xl border border-dashed border-[var(--dash-line)] px-3 py-5 text-center text-sm text-[var(--dash-muted)]">
+                  暂无任务
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </div>
     </DialogShell>
   );
@@ -908,16 +933,21 @@ function DialogShell({
   children,
   onClose,
   maxWidth = "max-w-[560px]",
+  scrollBody = true,
 }: {
   title?: string;
   eyebrow?: string;
   children: ReactNode;
   onClose: () => void;
   maxWidth?: string;
+  scrollBody?: boolean;
 }) {
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 px-4">
-      <div className={`relative w-full overflow-hidden ${maxWidth} rounded-[28px] border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] p-6 shadow-[0_28px_90px_var(--dash-shadow-soft)] backdrop-blur-xl`}>
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 px-4 py-4" onClick={onClose}>
+      <div
+        className={`relative flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden ${maxWidth} rounded-[28px] border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] p-6 shadow-[0_28px_90px_var(--dash-shadow-soft)] backdrop-blur-xl`}
+        onClick={(event) => event.stopPropagation()}
+      >
         <span className="pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-70" />
         <span className="pointer-events-none absolute right-[-12%] top-[-14%] h-28 w-28 rounded-full bg-[radial-gradient(circle,var(--dash-hot-glow),transparent_70%)] blur-3xl opacity-50" />
         <div className="flex items-start justify-between gap-3">
@@ -937,7 +967,7 @@ function DialogShell({
             <X size={16} />
           </button>
         </div>
-        {children}
+        <div className={scrollBody ? "mt-4 min-h-0 flex-1 overflow-y-auto pr-1" : "mt-4 min-h-0 flex-1"}>{children}</div>
       </div>
     </div>
   );
@@ -1112,6 +1142,12 @@ const dashboardThemeCss = `
     --dash-particle-rose-glow: rgba(244, 114, 182, 0.34);
     --dash-particle-teal: rgba(153, 246, 228, 0.88);
     --dash-particle-teal-glow: rgba(20, 184, 166, 0.34);
+    --dash-meteor-tail-a: rgba(255, 255, 255, 0.22);
+    --dash-meteor-tail-b: rgba(191, 219, 254, 0.88);
+    --dash-meteor-tail-c: rgba(255, 255, 255, 0.98);
+    --dash-meteor-head: rgba(255, 255, 255, 0.96);
+    --dash-meteor-shadow-soft: rgba(191, 219, 254, 0.18);
+    --dash-meteor-shadow-strong: rgba(255, 255, 255, 0.24);
   }
   [data-dashboard-theme="light"] {
     --dash-bg: #eef4fb;
@@ -1158,6 +1194,12 @@ const dashboardThemeCss = `
     --dash-particle-rose-glow: rgba(244, 114, 182, 0.22);
     --dash-particle-teal: rgba(13, 148, 136, 0.8);
     --dash-particle-teal-glow: rgba(20, 184, 166, 0.22);
+    --dash-meteor-tail-a: rgba(14, 116, 144, 0.16);
+    --dash-meteor-tail-b: rgba(37, 99, 235, 0.68);
+    --dash-meteor-tail-c: rgba(255, 255, 255, 0.92);
+    --dash-meteor-head: rgba(255, 255, 255, 0.98);
+    --dash-meteor-shadow-soft: rgba(37, 99, 235, 0.24);
+    --dash-meteor-shadow-strong: rgba(125, 211, 252, 0.34);
   }
   .dashboard-particle {
     animation: dashboard-float linear infinite;
@@ -1227,11 +1269,18 @@ const dashboardThemeCss = `
     will-change: transform, opacity;
   }
   .dashboard-meteor-tail {
-    background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.28) 28%, rgba(255,255,255,0.78) 60%, rgba(255,255,255,0.96) 86%, transparent 100%);
-    box-shadow: 0 0 16px rgba(255,255,255,0.22), 0 0 34px rgba(255,255,255,0.16);
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      var(--dash-meteor-tail-a) 22%,
+      var(--dash-meteor-tail-b) 58%,
+      var(--dash-meteor-tail-c) 84%,
+      transparent 100%
+    );
+    box-shadow: 0 0 16px var(--dash-meteor-shadow-soft), 0 0 34px var(--dash-meteor-shadow-strong);
   }
   .dashboard-meteor-head {
-    background: rgba(255,255,255,0.92);
-    box-shadow: 0 0 16px rgba(255,255,255,0.34), 0 0 34px rgba(255,255,255,0.22);
+    background: var(--dash-meteor-head);
+    box-shadow: 0 0 18px var(--dash-meteor-shadow-strong), 0 0 38px var(--dash-meteor-shadow-soft);
   }
 `;

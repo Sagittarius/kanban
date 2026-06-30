@@ -3,14 +3,37 @@ import { withApiLogging } from "@/lib/api-logging";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { errorMessage, errorStatus, requireAdminUser } from "@/lib/server-session";
 
-export const GET = withApiLogging("admin.users.list", async function GET() {
+export const GET = withApiLogging("admin.users.list", async function GET(request: Request) {
   try {
     const user = await requireAdminUser();
     const repo = await getKanbanRepository();
     const permissions = await repo.adminPermissions(user);
+    const directoryUsers = await repo.listUserDirectory();
+    const url = new URL(request.url);
+    const page = Number(url.searchParams.get("page") ?? "1");
+    const pageSize = Number(url.searchParams.get("pageSize") ?? "24");
+    const query = url.searchParams.get("query") ?? "";
+    const pageResult = permissions.canManageUsers
+      ? await repo.listUsersPage(user, { page, pageSize, query })
+      : {
+          items: [],
+          total: 0,
+          page: 1,
+          pageSize,
+          stats: {
+            users: directoryUsers.length,
+            activeUsers: directoryUsers.filter((item) => item.isActive).length,
+            projectManagers: directoryUsers.filter((item) => item.role === "project_manager").length,
+          },
+        };
     return NextResponse.json({
-      users: permissions.canManageUsers ? await repo.listUsers(user) : [],
+      users: pageResult.items,
+      total: pageResult.total,
+      page: pageResult.page,
+      pageSize: pageResult.pageSize,
+      stats: pageResult.stats,
       assignableUsers: await repo.listAssignableUsers(),
+      directoryUsers,
       permissions,
     });
   } catch (error) {

@@ -50,6 +50,7 @@ export type CreateTeamInput = {
   description?: unknown;
   color?: unknown;
   memberIds?: unknown;
+  ownerUserId?: unknown;
 };
 export type UpdateTeamInput = Partial<CreateTeamInput>;
 export type CreateBoardInput = { name?: unknown; description?: unknown; teamIds?: unknown; ownerUserId?: unknown };
@@ -171,10 +172,88 @@ export class KanbanRepository {
     return row ? user(row) : null;
   }
 
+  async listUserDirectory() {
+    await this.ensureBootstrapData();
+    return (
+      await this.q(
+        "SELECT id,username,display_name,role,job_title,is_active FROM users ORDER BY is_active DESC,role ASC,username ASC"
+      )
+    ).map((row) => ({
+      id: String(row.id),
+      username: String(row.username),
+      displayName: typeof row.display_name === "string" ? row.display_name : "",
+      role: normalizeUserRole(row.role),
+      jobTitle: typeof row.job_title === "string" ? row.job_title : "",
+      isActive: row.is_active === 1 || row.is_active === true,
+    }));
+  }
+
   async listUsers(actor?: CurrentUser): Promise<ManagedUser[]> {
     await this.ensureBootstrapData();
     void actor;
     return (await this.q("SELECT * FROM users ORDER BY role ASC, username ASC")).map(managedUser);
+  }
+
+  async listUsersPage(
+    actor: CurrentUser,
+    options: { page?: number; pageSize?: number; query?: string } = {}
+  ): Promise<{
+    items: ManagedUser[];
+    total: number;
+    page: number;
+    pageSize: number;
+    stats: { users: number; activeUsers: number; projectManagers: number };
+  }> {
+    await this.requireUserManagement(actor);
+    const pageSize = clampPageSize(options.pageSize, 24, 10, 100);
+    const page = clampPage(options.page);
+    const query = text(options.query).trim().toLowerCase();
+    const params: SqlValue[] = [];
+    const where = query
+      ? (() => {
+          const like = likeValue(query);
+          params.push(like, like, like, like, like, like, like, like, like);
+          return `WHERE (
+            lower(username) LIKE ? ESCAPE '\\'
+            OR lower(coalesce(display_name,'')) LIKE ? ESCAPE '\\'
+            OR lower(coalesce(phone,'')) LIKE ? ESCAPE '\\'
+            OR lower(role) LIKE ? ESCAPE '\\'
+            OR lower(coalesce(job_title,'')) LIKE ? ESCAPE '\\'
+            OR lower(coalesce(timezone,'')) LIKE ? ESCAPE '\\'
+            OR lower(CASE WHEN is_active=1 THEN '启用' ELSE '停用' END) LIKE ? ESCAPE '\\'
+            OR lower(CASE role
+              WHEN 'super_admin' THEN '超管'
+              WHEN 'project_manager' THEN '项目经理'
+              WHEN 'development_manager' THEN '开发经理'
+              ELSE '团队成员' END) LIKE ? ESCAPE '\\'
+            OR lower(coalesce(tech_stacks,'')) LIKE ? ESCAPE '\\'
+          )`;
+        })()
+      : "";
+    const total = Number((await this.q(`SELECT COUNT(*) AS count FROM users ${where}`, params))[0]?.count ?? 0);
+    const offset = (Math.max(1, page) - 1) * pageSize;
+    const items = (
+      await this.q(
+        `SELECT * FROM users ${where} ORDER BY is_active DESC, role ASC, username ASC LIMIT ? OFFSET ?`,
+        [...params, pageSize, offset]
+      )
+    ).map(managedUser);
+    const statsRow = (
+      await this.q(
+        "SELECT COUNT(*) AS users, SUM(CASE WHEN is_active=1 THEN 1 ELSE 0 END) AS active_users, SUM(CASE WHEN role='project_manager' THEN 1 ELSE 0 END) AS project_managers FROM users"
+      )
+    )[0];
+    return {
+      items,
+      total,
+      page,
+      pageSize,
+      stats: {
+        users: Number(statsRow?.users ?? 0),
+        activeUsers: Number(statsRow?.active_users ?? 0),
+        projectManagers: Number(statsRow?.project_managers ?? 0),
+      },
+    };
   }
 
   async listAuditLogs(actor: CurrentUser, limit = 120): Promise<AuditLogEntry[]> {
@@ -185,6 +264,50 @@ export class KanbanRepository {
         ? await this.q("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?", [safeLimit])
         : await this.q("SELECT * FROM audit_logs WHERE actor_user_id=? ORDER BY created_at DESC LIMIT ?", [actor.id, safeLimit]);
     return rows.map(auditLogRow);
+  }
+
+  async listAuditLogsPage(
+    actor: CurrentUser,
+    options: { page?: number; pageSize?: number; query?: string } = {}
+  ): Promise<{ items: AuditLogEntry[]; total: number; page: number; pageSize: number }> {
+    this.requireAdminAccess(actor);
+    const pageSize = clampPageSize(options.pageSize, 40, 20, 120);
+    const page = clampPage(options.page);
+    const query = text(options.query).trim().toLowerCase();
+    const params: SqlValue[] = [];
+    const whereParts: string[] = [];
+    if (actor.role !== "super_admin") {
+      whereParts.push("actor_user_id=?");
+      params.push(actor.id);
+    }
+    if (query) {
+      const like = likeValue(query);
+      whereParts.push(`(
+        lower(coalesce(actor_username,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(actor_role,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(action,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(resource_type,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(resource_id,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(message,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(ip_address,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(request_id,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(result,'')) LIKE ? ESCAPE '\\'
+      )`);
+      params.push(like, like, like, like, like, like, like, like, like);
+    }
+    const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
+    const total = Number((await this.q(`SELECT COUNT(*) AS count FROM audit_logs ${where}`, params))[0]?.count ?? 0);
+    const offset = (page - 1) * pageSize;
+    const rows = await this.q(
+      `SELECT * FROM audit_logs ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    return {
+      items: rows.map(auditLogRow),
+      total,
+      page,
+      pageSize,
+    };
   }
 
   async adminPermissions(actor: CurrentUser): Promise<AdminPermissions> {
@@ -526,6 +649,70 @@ export class KanbanRepository {
     return rows.map((row) => board(row, "owner", teamIds.get(String(row.id)) ?? []));
   }
 
+  async listBoardsForAdminPage(
+    actor: CurrentUser,
+    options: { page?: number; pageSize?: number; query?: string } = {}
+  ): Promise<{
+    items: BoardSummary[];
+    total: number;
+    page: number;
+    pageSize: number;
+    stats: { boards: number; boardsWithTeams: number; explicitUsers: number };
+  }> {
+    this.requireAdminAccess(actor);
+    const pageSize = clampPageSize(options.pageSize, 12, 6, 60);
+    const page = clampPage(options.page);
+    const query = text(options.query).trim().toLowerCase();
+    const params: SqlValue[] = [];
+    const baseWhere: string[] = [];
+    if (actor.role !== "super_admin") {
+      baseWhere.push("b.owner_user_id=?");
+      params.push(actor.id);
+    }
+    if (query) {
+      const like = likeValue(query);
+      baseWhere.push("(lower(b.name) LIKE ? ESCAPE '\\' OR lower(coalesce(b.description,'')) LIKE ? ESCAPE '\\' OR lower(coalesce(u.username,'')) LIKE ? ESCAPE '\\')");
+      params.push(like, like, like);
+    }
+    const where = baseWhere.length ? `WHERE ${baseWhere.join(" AND ")}` : "";
+    const total = Number((await this.q(`SELECT COUNT(*) AS count FROM boards b LEFT JOIN users u ON u.id=b.owner_user_id ${where}`, params))[0]?.count ?? 0);
+    const offset = (Math.max(1, page) - 1) * pageSize;
+    const rows = await this.q(
+      `SELECT b.*,u.username AS owner_username,'owner' AS access_role FROM boards b LEFT JOIN users u ON u.id=b.owner_user_id ${where} ORDER BY b.updated_at DESC,b.created_at DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    const teamIds = await this.boardTeamIds(rows.map((row) => String(row.id)));
+    const items = rows.map((row) => board(row, "owner", teamIds.get(String(row.id)) ?? []));
+    const statsWhere = actor.role === "super_admin" ? "" : "WHERE b.owner_user_id=?";
+    const statsParams = actor.role === "super_admin" ? [] : [actor.id];
+    const boardCountRow = (
+      await this.q(`SELECT COUNT(*) AS boards FROM boards b ${statsWhere}`, statsParams)
+    )[0];
+    const boardsWithTeamsRow = (
+      await this.q(
+        `SELECT COUNT(DISTINCT b.id) AS count FROM boards b JOIN board_teams bt ON bt.board_id=b.id ${statsWhere}`,
+        statsParams
+      )
+    )[0];
+    const explicitUsersRow = (
+      await this.q(
+        `SELECT COUNT(DISTINCT bm.user_id) AS count FROM board_members bm JOIN boards b ON b.id=bm.board_id WHERE bm.role='viewer' ${actor.role === "super_admin" ? "" : "AND b.owner_user_id=?"}`,
+        statsParams
+      )
+    )[0];
+    return {
+      items,
+      total,
+      page,
+      pageSize,
+      stats: {
+        boards: Number(boardCountRow?.boards ?? 0),
+        boardsWithTeams: Number(boardsWithTeamsRow?.count ?? 0),
+        explicitUsers: Number(explicitUsersRow?.count ?? 0),
+      },
+    };
+  }
+
   async listBoardMembers(boardId: string) {
     await this.ensureBootstrapData();
     try {
@@ -537,6 +724,32 @@ export class KanbanRepository {
       if (isMissingTableError(error, "board_members")) {
         return [];
       }
+      throw error;
+    }
+  }
+
+  async listBoardMembersMap(boardIds: string[]) {
+    await this.ensureBootstrapData();
+    const result = new Map<string, Array<Record<string, unknown>>>();
+    if (!boardIds.length) return result;
+    try {
+      const rows = await this.q(
+        `SELECT bm.board_id,bm.user_id,u.username,u.display_name,u.role,bm.role AS board_role
+         FROM board_members bm
+         JOIN users u ON u.id=bm.user_id
+         WHERE bm.board_id IN (${boardIds.map(() => "?").join(",")})
+         ORDER BY u.username ASC`,
+        boardIds
+      );
+      for (const row of rows) {
+        const boardId = String(row.board_id);
+        const list = result.get(boardId) ?? [];
+        list.push(row);
+        result.set(boardId, list);
+      }
+      return result;
+    } catch (error) {
+      if (isMissingTableError(error, "board_members")) return result;
       throw error;
     }
   }
@@ -577,15 +790,57 @@ export class KanbanRepository {
 
   async listTeamsForAdmin(actor: CurrentUser): Promise<TeamSummary[]> {
     this.requireAdminAccess(actor);
-    const rows =
-      actor.role === "super_admin"
-        ? await this.q("SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id ORDER BY t.updated_at DESC,t.created_at DESC")
-        : await this.q(
-            "SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id WHERE t.owner_user_id=? ORDER BY t.updated_at DESC,t.created_at DESC",
-            [actor.id]
-          );
+    const rows = await this.q("SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id ORDER BY t.updated_at DESC,t.created_at DESC");
     const memberIds = await this.teamMemberIds(rows.map((row) => String(row.id)));
     return rows.map((row) => team(row, memberIds.get(String(row.id)) ?? []));
+  }
+
+  async listTeamsForAdminPage(
+    actor: CurrentUser,
+    options: { page?: number; pageSize?: number; query?: string } = {}
+  ): Promise<{ items: TeamSummary[]; total: number; page: number; pageSize: number; stats: { teams: number } }> {
+    this.requireAdminAccess(actor);
+    const pageSize = clampPageSize(options.pageSize, 18, 6, 60);
+    const page = clampPage(options.page);
+    const query = text(options.query).trim().toLowerCase();
+    const params: SqlValue[] = [];
+    const where = query
+      ? (() => {
+          const like = likeValue(query);
+          params.push(like, like, like);
+          return "WHERE lower(t.name) LIKE ? ESCAPE '\\' OR lower(coalesce(t.description,'')) LIKE ? ESCAPE '\\' OR lower(coalesce(u.username,'')) LIKE ? ESCAPE '\\'";
+        })()
+      : "";
+    const total = Number((await this.q(`SELECT COUNT(*) AS count FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id ${where}`, params))[0]?.count ?? 0);
+    const offset = (Math.max(1, page) - 1) * pageSize;
+    const rows = await this.q(
+      `SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id ${where} ORDER BY t.updated_at DESC,t.created_at DESC LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
+    );
+    const memberIds = await this.teamMemberIds(rows.map((row) => String(row.id)));
+    return {
+      items: rows.map((row) => team(row, memberIds.get(String(row.id)) ?? [])),
+      total,
+      page,
+      pageSize,
+      stats: { teams: Number((await this.q("SELECT COUNT(*) AS count FROM teams"))[0]?.count ?? 0) },
+    };
+  }
+
+  async listTeamOptionsForAdmin(actor: CurrentUser) {
+    this.requireAdminAccess(actor);
+    return (
+      await this.q(
+        "SELECT t.id,t.name,t.color,t.owner_user_id,u.username AS owner_username,COUNT(tm.user_id) AS member_count FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id LEFT JOIN team_members tm ON tm.team_id=t.id GROUP BY t.id,t.name,t.color,t.owner_user_id,u.username ORDER BY t.updated_at DESC,t.created_at DESC"
+      )
+    ).map((row) => ({
+      id: String(row.id),
+      name: String(row.name),
+      color: String(row.color ?? "#0f766e"),
+      ownerUserId: String(row.owner_user_id ?? ""),
+      ownerUsername: String(row.owner_username ?? ""),
+      memberCount: Number(row.member_count ?? 0),
+    }));
   }
 
   async listTeamsForDashboard(actor: CurrentUser): Promise<TeamSummary[]> {
@@ -641,7 +896,7 @@ export class KanbanRepository {
       resourceType: "team",
       resourceId: row.id,
       message: `创建团队 ${row.name}`,
-      metadata: { memberIds: ids(input.memberIds) },
+      metadata: { memberIds: ids(input.memberIds), ownerUserId: row.owner_user_id },
     });
     return team({ ...row, owner_username: actor.username }, ids(input.memberIds));
   }
@@ -650,9 +905,11 @@ export class KanbanRepository {
     await this.requireTeamWrite(actor, teamId);
     const current = await this.getTeamRow(teamId);
     if (!current) throw new Error("团队不存在");
-    await this.x("UPDATE teams SET name=?,description=?,color=?,updated_at=? WHERE id=?", [
+    const owner = await this.resolveTeamOwner(input.ownerUserId, actor, String(current.owner_user_id));
+    await this.x("UPDATE teams SET name=?,description=?,owner_user_id=?,color=?,updated_at=? WHERE id=?", [
       text(input.name, String(current.name)),
       opt(input.description, String(current.description ?? "")),
+      owner.id,
       text(input.color, String(current.color ?? "#0f766e")),
       iso(),
       teamId,
@@ -669,7 +926,7 @@ export class KanbanRepository {
       resourceType: "team",
       resourceId: teamId,
       message: `更新团队 ${String(updated.name)}`,
-      metadata: { memberIds },
+      metadata: { memberIds, ownerUserId: String(updated.owner_user_id ?? "") },
     });
     return team(updated, memberIds);
   }
@@ -1843,10 +2100,33 @@ export class KanbanRepository {
 
   async requireTeamWrite(actor: CurrentUser, teamId: string) {
     this.requireAdminAccess(actor);
-    if (actor.role === "super_admin") return;
-    if (!(await this.q("SELECT id FROM teams WHERE id=? AND owner_user_id=? LIMIT 1", [teamId, actor.id]))[0]) {
+    const teamRow = await this.getTeamRow(teamId);
+    if (!teamRow) {
       throw new Error("Forbidden");
     }
+    if (String(teamRow.owner_user_id) !== actor.id) throw new Error("Forbidden");
+  }
+
+  async resolveTeamOwner(rawOwnerUserId: unknown, actor: CurrentUser, fallbackOwnerUserId?: string) {
+    const ownerUserId = text(rawOwnerUserId, fallbackOwnerUserId ?? actor.id);
+    const ownerRow = await this.getManagedUserRow(ownerUserId);
+    if (!ownerRow || !(ownerRow.is_active === 1 || ownerRow.is_active === true)) {
+      throw new Error("团队归属用户不存在或已停用");
+    }
+    const role = normalizeUserRole(ownerRow.role);
+    if (fallbackOwnerUserId && ownerUserId === fallbackOwnerUserId) {
+      return {
+        id: String(ownerRow.id),
+        username: String(ownerRow.username),
+      };
+    }
+    if (role !== "project_manager" && role !== "development_manager") {
+      throw new Error("团队归属用户需为项目经理或开发经理");
+    }
+    return {
+      id: String(ownerRow.id),
+      username: String(ownerRow.username),
+    };
   }
 
   async requireBoardTeam(boardId: string, teamId: string) {
@@ -2762,6 +3042,23 @@ function text(value: unknown, fallback = "") {
 
 function opt(value: unknown, fallback = "") {
   return typeof value === "string" ? value.trim() : fallback;
+}
+
+function clampPage(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 1) return 1;
+  return Math.floor(parsed);
+}
+
+function clampPageSize(value: unknown, fallback: number, min: number, max: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(max, Math.max(min, Math.floor(parsed)));
+}
+
+function likeValue(value: string) {
+  const escaped = value.replace(/[\\%_]/g, "\\$&");
+  return `%${escaped}%`;
 }
 
 function num(value: unknown, fallback: number, min: number, max: number) {

@@ -7,9 +7,17 @@ export const GET = withApiLogging("admin.audit_logs.list", async function GET(re
   try {
     const user = await requireAdminUser();
     const url = new URL(request.url);
-    const limit = Number(url.searchParams.get("limit") ?? 120);
+    const page = Number(url.searchParams.get("page") ?? "1");
+    const pageSize = Number(url.searchParams.get("pageSize") ?? "40");
+    const query = url.searchParams.get("query") ?? "";
     const repo = await getKanbanRepository();
-    return NextResponse.json({ auditLogs: await repo.listAuditLogs(user, limit) });
+    const result = await repo.listAuditLogsPage(user, { page, pageSize, query });
+    return NextResponse.json({
+      auditLogs: result.items,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+    });
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error, "加载审计日志失败") }, { status: errorStatus(error) });
   }

@@ -25,6 +25,7 @@ import {
   Download,
   Edit3,
   Eye,
+  FileSpreadsheet,
   FolderPlus,
   LayoutGrid,
   PanelRightOpen,
@@ -35,9 +36,10 @@ import {
   SlidersHorizontal,
   Tag,
   Trash2,
+  Upload,
   X,
 } from "lucide-react";
-import { utils, writeFileXLSX } from "xlsx";
+import { read, utils, writeFileXLSX } from "xlsx";
 import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
 import SearchMultiSelect, { type MultiSelectOption } from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
@@ -196,7 +198,7 @@ function formatActivityTime(value: string) {
 
 function parseTags(value: string) {
   return value
-    .split(/[,\s，、]+/)
+    .split(/[,\s，、/]+/)
     .map((tag) => tag.trim())
     .filter(Boolean)
     .filter((tag, index, list) => list.indexOf(tag) === index)
@@ -396,6 +398,131 @@ function taskSpreadsheet(task: BoardTask, project: Project, statusLabelText: str
     progress: `${task.progress}%`,
     blockers: task.blockers > 0 ? `${task.blockers}` : "",
     updatedAt: task.updatedAt.slice(0, 10),
+  };
+}
+
+const taskImportHeaderRow = [
+  "项目",
+  "任务",
+  "描述",
+  "优先级",
+  "负责人",
+  "测试员",
+  "工作量（人日）",
+  "设计截止",
+  "提测日期",
+  "交付日期",
+  "标签",
+];
+
+type TaskImportRow = {
+  project: string;
+  title: string;
+  description: string;
+  priority: Priority;
+  ownerUserId: string;
+  testerUserId: string;
+  workloadDays: number | null;
+  designDueDate: string;
+  testDueDate: string;
+  dueDate: string;
+  tags: string[];
+};
+
+function importField(row: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value).trim()) {
+      return String(value).trim();
+    }
+  }
+  return "";
+}
+
+function parseImportedPriority(value: string): Priority {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "高优先级" || normalized === "高" || normalized === "high") return "high";
+  if (normalized === "低优先级" || normalized === "低" || normalized === "low") return "low";
+  return "medium";
+}
+
+function normalizeImportedDate(value: string) {
+  const normalized = value.trim();
+  if (!normalized) {
+    return "";
+  }
+  const matched = normalized.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
+  if (!matched) {
+    throw new Error(`日期格式无效：${value}`);
+  }
+  const [, year, month, day] = matched;
+  return `${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`;
+}
+
+function parseTaskImportRow(
+  row: Record<string, unknown>,
+  projects: Project[],
+  teams: BoardTeamOption[],
+  lineNumber: number
+): { errors: string[] } & TaskImportRow {
+  const errors: string[] = [];
+  const projectName = importField(row, ["项目", "project"]);
+  const title = importField(row, ["任务", "title"]);
+  const description = importField(row, ["描述", "description"]);
+  const priority = parseImportedPriority(importField(row, ["优先级", "priority"]));
+  const ownerValue = importField(row, ["负责人", "owner"]);
+  const testerValue = importField(row, ["测试员", "tester"]);
+  const workloadDays = normalizeWorkloadInput(importField(row, ["工作量（人日）", "workloadDays"]));
+  let designDueDate = "";
+  let testDueDate = "";
+  let dueDate = "";
+  try { designDueDate = normalizeImportedDate(importField(row, ["设计截止", "designDueDate"])); } catch { errors.push(`第 ${lineNumber} 行设计截止日期格式无效`); }
+  try { testDueDate = normalizeImportedDate(importField(row, ["提测日期", "testDueDate"])); } catch { errors.push(`第 ${lineNumber} 行提测日期格式无效`); }
+  try { dueDate = normalizeImportedDate(importField(row, ["交付日期", "dueDate"])); } catch { errors.push(`第 ${lineNumber} 行交付日期格式无效`); }
+  const tags = parseTags(importField(row, ["标签", "tags"]));
+
+  if (!projectName) errors.push(`第 ${lineNumber} 行缺少项目名称`);
+  if (!title) errors.push(`第 ${lineNumber} 行缺少任务名称`);
+
+  const project = projectName ? projects.find((item) => item.status === "active" && item.name.trim() === projectName) : null;
+  if (projectName && !project) {
+    errors.push(`第 ${lineNumber} 行项目不存在或已归档：${projectName}`);
+  }
+
+  const members = project ? membersForProject(projects, teams, project.id) : [];
+  const ownerUserId = ownerValue
+    ? members.find((member) => {
+        const label = userName(member);
+        return label === ownerValue || member.username === ownerValue;
+      })?.id ?? ""
+    : "";
+  const testerUserId = testerValue
+    ? members.find((member) => {
+        const label = userName(member);
+        return label === testerValue || member.username === testerValue;
+      })?.id ?? ""
+    : "";
+
+  if (ownerValue && !ownerUserId) {
+    errors.push(`第 ${lineNumber} 行负责人不在项目团队中：${ownerValue}`);
+  }
+  if (testerValue && !testerUserId) {
+    errors.push(`第 ${lineNumber} 行测试员不在项目团队中：${testerValue}`);
+  }
+
+  return {
+    errors,
+    project: project?.id ?? "",
+    title,
+    description,
+    priority,
+    ownerUserId,
+    testerUserId,
+    workloadDays,
+    designDueDate,
+    testDueDate,
+    dueDate,
+    tags,
   };
 }
 
@@ -779,8 +906,11 @@ export default function KanbanApp({
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogAction | null>(null);
+  const [importingTasks, setImportingTasks] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const localIdCounter = useRef(0);
   const metricRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const dragStartTasksRef = useRef<BoardTask[] | null>(null);
   const latestTasksRef = useRef<BoardTask[]>(board.tasks);
   const [newTask, setNewTask] = useState<NewTaskForm>({
@@ -1732,6 +1862,106 @@ export default function KanbanApp({
     );
   }
 
+  function downloadTaskImportTemplate() {
+    const worksheet = utils.aoa_to_sheet([
+      taskImportHeaderRow,
+      ["演示项目", "示例任务", "示例描述", "中优先级", "张三", "李四", "1", "2026-07-10", "2026-07-14", "2026-07-18", "业务需求/接口联调"],
+    ]);
+    const notes = utils.aoa_to_sheet([
+      ["说明"],
+      ["1. 每一行都会作为新增任务导入，默认进入需求池。"],
+      ["2. 项目名称必须与当前看板中的活跃项目完全一致。"],
+      ["3. 负责人、测试员需填写项目团队中的姓名或用户名，可留空。"],
+      ["4. 日期格式统一为 YYYY-MM-DD；标签可用空格、逗号或斜杠分隔。"],
+    ]);
+    const workbook = utils.book_new();
+    utils.book_append_sheet(workbook, worksheet, "任务模板");
+    utils.book_append_sheet(workbook, notes, "填写说明");
+    writeFileXLSX(
+      workbook,
+      `${boardTitle.replace(/[\\\\/:*?\"<>|]/g, "-") || "看板"}-任务导入模板.xlsx`
+    );
+  }
+
+  async function importTaskTable(file: File) {
+    if (isLocalPreview) {
+      throw new Error("本地预览模式不支持任务导入。");
+    }
+    setImportingTasks(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const workbook = read(buffer, { type: "array" });
+      const firstSheetName = workbook.SheetNames[0];
+      const sheet = firstSheetName ? workbook.Sheets[firstSheetName] : null;
+      if (!sheet) {
+        throw new Error("未找到可导入的工作表");
+      }
+      const rows = utils.sheet_to_json<Record<string, unknown>>(sheet, {
+        defval: "",
+        raw: false,
+      });
+      if (rows.length === 0) {
+        throw new Error("导入文件为空");
+      }
+
+      const parsedRows = rows.map((row, index) => parseTaskImportRow(row, board.projects, boardTeams, index + 2));
+
+      const preflightErrors = parsedRows.flatMap((r) => r.errors);
+      if (preflightErrors.length > 0) {
+        throw new Error(preflightErrors.slice(0, 10).join("\n") + (preflightErrors.length > 10 ? `\n... 还有 ${preflightErrors.length - 10} 条错误` : ""));
+      }
+
+      let createdCount = 0;
+      const failures: string[] = [];
+
+      for (const row of parsedRows) {
+        try {
+          await apiRequest<BoardTask>("/api/tasks", "POST", {
+            title: row.title,
+            description: row.description,
+            projectId: row.project,
+            ownerUserId: row.ownerUserId,
+            testerUserId: row.testerUserId,
+            workloadDays: row.workloadDays,
+            priority: row.priority,
+            testDueDate: row.testDueDate,
+            designDueDate: row.designDueDate,
+            dueDate: row.dueDate,
+            tags: row.tags,
+          });
+          createdCount += 1;
+        } catch (error) {
+          failures.push(error instanceof Error ? error.message : `任务「${row.title}」导入失败`);
+        }
+      }
+
+      if (createdCount > 0) {
+        await refreshBoard();
+        notifyDashboardRefresh();
+      }
+
+      if (failures.length === 0) {
+        notify(`已导入 ${createdCount} 条任务`);
+        return;
+      }
+
+      const summary = [
+        createdCount > 0 ? `成功导入 ${createdCount} 条任务。` : "没有任务导入成功。",
+        `失败 ${failures.length} 条。`,
+        failures.slice(0, 5).join("\n"),
+      ]
+        .filter(Boolean)
+        .join("\n");
+      showNotice(summary, "导入已完成");
+      notify(`导入完成：成功 ${createdCount} / 失败 ${failures.length}`, failures.length === parsedRows.length ? "error" : "success");
+    } finally {
+      setImportingTasks(false);
+      if (importInputRef.current) {
+        importInputRef.current.value = "";
+      }
+    }
+  }
+
   return (
     <main data-theme={themeId} className="kanban-theme flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--text)]">
       <div className="mx-auto grid min-h-screen w-full max-w-[2160px] flex-1 grid-rows-[auto_1fr] gap-4 px-5 py-4 2xl:px-8">
@@ -1850,7 +2080,7 @@ export default function KanbanApp({
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="任务、描述、负责人、测试员"
-                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] py-2 pl-9 pr-3 text-base outline-none transition placeholder:text-[var(--muted)] focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] py-2 pl-9 pr-3 text-base text-[var(--text)] outline-none transition placeholder:text-base placeholder:text-[var(--muted)] placeholder:opacity-50 focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
                 />
                 {search ? (
                   <button
@@ -1891,8 +2121,8 @@ export default function KanbanApp({
             </SidebarSection>
 
             <SidebarSection title="新任务" icon={<Plus size={15} />}>
-              <form onSubmit={createTask} className="grid gap-3.5 [&_input]:text-base [&_input::placeholder]:text-base [&_textarea]:text-base [&_textarea::placeholder]:text-base">
-                <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+              <form onSubmit={createTask} className="grid gap-3.5">
+                <label className="grid gap-1.5 text-base text-[var(--muted)]">
                   <span>任务名称<RequiredMark /></span>
                   <input
                     name="newTaskTitle"
@@ -1902,7 +2132,7 @@ export default function KanbanApp({
                     className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
                   />
                 </label>
-                <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                <label className="grid gap-1.5 text-base text-[var(--muted)]">
                   <span>任务描述<RequiredMark /></span>
                   <textarea
                     name="newTaskDescription"
@@ -1993,7 +2223,7 @@ export default function KanbanApp({
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                  <label className="grid gap-1.5 text-base text-[var(--muted)]">
                     <span>设计截止</span>
                     <input
                       name="newTaskDesignDueDate"
@@ -2004,7 +2234,7 @@ export default function KanbanApp({
                       className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
                     />
                   </label>
-                  <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                  <label className="grid gap-1.5 text-base text-[var(--muted)]">
                     <span>提测日期</span>
                     <input
                       name="newTaskTestDueDate"
@@ -2016,7 +2246,7 @@ export default function KanbanApp({
                     />
                   </label>
                 </div>
-                <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                <label className="grid gap-1.5 text-base text-[var(--muted)]">
                   <span>交付日期</span>
                   <input
                     name="newTaskDueDate"
@@ -2027,7 +2257,7 @@ export default function KanbanApp({
                     className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
                   />
                 </label>
-                <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                <label className="grid gap-1.5 text-base text-[var(--muted)]">
                   <span>标签</span>
                   <input
                     name="newTaskTags"
@@ -2117,12 +2347,33 @@ export default function KanbanApp({
                 </span>
                 <button
                   type="button"
+                  onClick={() => setImportDialogOpen(true)}
+                  disabled={importingTasks}
+                  className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-sm font-medium text-[var(--text)] shadow-sm transition hover:bg-[var(--panel-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  <Upload size={15} />
+                  {importingTasks ? "导入中" : "导入"}
+                </button>
+                <button
+                  type="button"
                   onClick={exportTaskTable}
-                  className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-sm font-medium text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
+                  className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-sm font-medium text-[var(--text)] shadow-sm transition hover:bg-[var(--panel-soft)]"
                 >
                   <Download size={15} />
                   导出
                 </button>
+                <input
+                  ref={importInputRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    if (file) {
+                      void importTaskTable(file);
+                    }
+                  }}
+                />
               </div>
             </div>
             {viewMode === "board" ? (
@@ -2307,6 +2558,16 @@ export default function KanbanApp({
           showCancel={confirmDialog.showCancel}
           onClose={() => setConfirmDialog(null)}
           onConfirm={confirmDialog.onConfirm}
+        />
+      ) : null}
+      {importDialogOpen ? (
+        <ImportTaskDialog
+          importing={importingTasks}
+          onImport={async (file) => {
+            await importTaskTable(file);
+          }}
+          onDownloadTemplate={downloadTaskImportTemplate}
+          onClose={() => setImportDialogOpen(false)}
         />
       ) : null}
     </main>
@@ -4060,9 +4321,103 @@ function RequiredMark() {
   return <span className="ml-1 font-semibold text-[var(--danger)]">*</span>;
 }
 
+function ImportTaskDialog({
+  importing,
+  onImport,
+  onDownloadTemplate,
+  onClose,
+}: {
+  importing: boolean;
+  onImport: (file: File) => Promise<void>;
+  onDownloadTemplate: () => void;
+  onClose: () => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [dragOver, setDragOver] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleFile(file: File | undefined) {
+    if (!file) return;
+    setError("");
+    setBusy(true);
+    try {
+      await onImport(file);
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "导入失败，请检查文件格式是否正确。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40" onClick={onClose}>
+      <div
+        className="w-full max-w-[420px] rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-6 shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-[var(--text)]">导入任务</h2>
+          <button type="button" onClick={onClose} className="cursor-pointer rounded-md p-1.5 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="mt-5 space-y-4">
+          <div
+            className={`cursor-pointer rounded-xl border-2 border-dashed p-8 text-center transition ${
+              dragOver ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border)] hover:border-[var(--accent)]/40"
+            }`}
+            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+            onDragLeave={() => setDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]); }}
+            onClick={() => fileRef.current?.click()}
+          >
+            <Upload size={32} className="mx-auto text-[var(--muted)]" />
+            <p className="mt-3 text-sm text-[var(--muted)]">
+              点击上传或拖拽 Excel 文件到此处
+            </p>
+            <p className="mt-1 text-xs text-[var(--muted)]/60">支持 .xlsx / .xls 格式</p>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".xlsx,.xls"
+              className="hidden"
+              disabled={importing}
+              onChange={(e) => handleFile(e.target.files?.[0])}
+            />
+          </div>
+
+          {error ? (
+            <div className="whitespace-pre-line rounded-lg border border-[var(--danger)] bg-[var(--danger-soft)] px-4 py-3 text-sm text-[var(--danger)]">{error}</div>
+          ) : null}
+
+          <div className="flex items-center gap-2 rounded-lg bg-[var(--panel-soft)] px-4 py-3">
+            <FileSpreadsheet size={18} className="shrink-0 text-[var(--accent)]" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm text-[var(--text)]">还没准备数据？</p>
+              <p className="text-xs text-[var(--muted)]">下载模板，按格式填写后上传即可</p>
+            </div>
+            <button
+              type="button"
+              onClick={onDownloadTemplate}
+              className="shrink-0 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[var(--accent-hover)]"
+            >
+              下载模板
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
+
 function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
   return (
-    <label className="flex flex-col gap-1.5 text-sm text-[var(--muted)] [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-[var(--border)] [&_input]:bg-[var(--input)] [&_input]:px-2 [&_input]:py-2 [&_input]:text-base [&_input::placeholder]:text-base [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--input)] [&_select]:px-2 [&_select]:py-2 [&_select]:text-base [&_textarea]:w-full [&_textarea]:rounded-md [&_textarea]:border [&_textarea]:border-[var(--border)] [&_textarea]:bg-[var(--input)] [&_textarea]:px-2 [&_textarea]:py-2 [&_textarea]:text-base [&_textarea::placeholder]:text-base">
+    <label className="flex flex-col gap-1.5 text-base text-[var(--muted)] [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-[var(--border)] [&_input]:bg-[var(--input)] [&_input]:px-2 [&_input]:py-2 [&_input]:text-base [&_input]:text-[var(--text)] [&_input::placeholder]:text-base [&_input::placeholder]:text-[var(--muted)] [&_input::placeholder]:opacity-50 [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--input)] [&_select]:px-2 [&_select]:py-2 [&_select]:text-base [&_select]:text-[var(--text)] [&_textarea]:w-full [&_textarea]:rounded-md [&_textarea]:border [&_textarea]:border-[var(--border)] [&_textarea]:bg-[var(--input)] [&_textarea]:px-2 [&_textarea]:py-2 [&_textarea]:text-base [&_textarea]:text-[var(--text)] [&_textarea::placeholder]:text-base [&_textarea::placeholder]:text-[var(--muted)] [&_textarea::placeholder]:opacity-50">
       <span>{label}{required ? <RequiredMark /> : null}</span>
       {children}
     </label>

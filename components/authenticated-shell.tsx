@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import Image from "next/image";
 import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import { avatarOptions, jobTitleOptions, techStackOptions, timezoneOptions } from "@/lib/ui-options";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
+import { X } from "lucide-react";
 
 export default function AuthenticatedShell({
   user,
@@ -337,12 +338,22 @@ function ShellModal({
   onClose: () => void;
 }) {
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/25 px-4 py-8">
-      <div className="w-full max-w-[520px] rounded-[28px] border border-white/70 bg-white p-6 shadow-2xl shadow-slate-900/15">
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/25 px-4 py-8"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-[520px] rounded-[28px] border border-white/70 bg-white p-6 shadow-2xl shadow-slate-900/15"
+        onClick={(event: ReactMouseEvent<HTMLDivElement>) => event.stopPropagation()}
+      >
         <div className="mb-5 flex items-center justify-between">
           <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
-          <button type="button" onClick={onClose} className="rounded-full border border-slate-200 px-3 py-1 text-sm font-semibold text-slate-600">
-            关闭
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-10 w-10 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition hover:text-slate-900"
+          >
+            <X size={16} />
           </button>
         </div>
         {children}
