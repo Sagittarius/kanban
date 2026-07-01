@@ -9,6 +9,7 @@ import {
 } from "react";
 import KanbanApp from "@/components/kanban-app";
 import type { BoardData } from "@/lib/board-data";
+import type { ChangelogEntry } from "@/lib/changelog";
 
 type ErrorSource =
   | "error-boundary"
@@ -29,6 +30,7 @@ type KanbanRuntimeGuardProps = {
   initialBoard: BoardData;
   todayKey: string;
   appVersion: string;
+  changelogEntries: ChangelogEntry[];
   initialThemeId?: string;
 };
 
@@ -162,6 +164,7 @@ export default function KanbanRuntimeGuard({
   initialBoard,
   todayKey,
   appVersion,
+  changelogEntries,
   initialThemeId,
 }: KanbanRuntimeGuardProps) {
   return (
@@ -171,6 +174,7 @@ export default function KanbanRuntimeGuard({
         initialBoard={initialBoard}
         todayKey={todayKey}
         appVersion={appVersion}
+        changelogEntries={changelogEntries}
         initialThemeId={initialThemeId}
       />
     </RuntimeErrorBoundary>

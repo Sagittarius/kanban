@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { AlertTriangle, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
+import MemberProfileCard from "@/components/member-profile-card";
+import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
-import { avatarOptions, jobTitleLabel, roleLabel } from "@/lib/ui-options";
+import { avatarOptions, jobTitleLabel } from "@/lib/ui-options";
 import type { CurrentUser, TeamSummary } from "@/lib/auth-models";
 import type { BoardStatus } from "@/lib/board-data";
 
@@ -263,6 +265,16 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
 
   return (
     <main data-dashboard-theme={theme} className="relative min-h-screen overflow-hidden bg-[var(--dash-bg)] text-[var(--dash-text)]">
+      {!publicView ? (
+        <OnboardingGuide
+          username={props.currentUser.username}
+          role={props.currentUser.role}
+          scope="dashboard"
+          actions={{
+            goKanban: () => window.location.assign("/"),
+          }}
+        />
+      ) : null}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(103,232,249,0.08),transparent_36%),radial-gradient(circle_at_78%_18%,rgba(167,139,250,0.14),transparent_28%),radial-gradient(circle_at_50%_100%,rgba(59,130,246,0.12),transparent_38%)]" />
         <div className="absolute left-[-8%] top-[-12%] h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_68%)] blur-3xl" />
@@ -369,6 +381,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
               <Link
                 href="/"
                 prefetch={false}
+                data-tour="dashboard-enter-kanban"
                 className="inline-flex h-11 items-center rounded-2xl bg-[linear-gradient(135deg,var(--dash-accent),var(--dash-hot))] px-4 text-sm font-semibold text-[var(--dash-accent-text)] shadow-[0_18px_38px_var(--dash-shadow)] transition hover:opacity-95"
               >
                 进入看板
@@ -578,7 +591,21 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
           onClose={() => setSelectedTask(null)}
         />
       ) : null}
-      {selectedMember ? <DashboardMemberDialog member={selectedMember} onClose={() => setSelectedMember(null)} /> : null}
+      {selectedMember ? (
+        <MemberProfileCard
+          member={{
+            username: selectedMember.username,
+            displayName: selectedMember.displayName,
+            avatarKey: selectedMember.avatarKey,
+            role: selectedMember.role as "super_admin" | "project_manager" | "development_manager" | "team_member",
+            jobTitle: selectedMember.jobTitle,
+            techStacks: selectedMember.techStacks,
+            phone: selectedMember.phone,
+          }}
+          onClose={() => setSelectedMember(null)}
+          theme="dashboard-dark"
+        />
+      ) : null}
     </main>
   );
 }
@@ -777,12 +804,21 @@ function DashboardCompactTaskRow({
   onSelect: (task: DashboardTask) => void;
   showTags?: boolean;
 }) {
+  function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onSelect(task);
+    }
+  }
+
   return (
-    <button
-      type="button"
+    <div
+      role="button"
+      tabIndex={0}
       title={[task.title, task.projectName, task.description].filter(Boolean).join(" · ")}
       onClick={() => onSelect(task)}
-      className={`group flex w-full flex-col overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] px-3 py-2.5 text-sm transition ${taskWarningFrameClass(task)}`}
+      onKeyDown={handleKeyDown}
+      className={`group flex w-full cursor-pointer flex-col overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] px-3 py-2.5 text-sm transition ${taskWarningFrameClass(task)}`}
     >
       <span className="flex w-full min-w-0 items-start gap-3 text-left">
         <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
@@ -829,7 +865,7 @@ function DashboardCompactTaskRow({
         </div>
         <span className="text-right text-[11px] font-semibold text-[var(--dash-muted)]">{task.progress}%</span>
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -880,47 +916,6 @@ function DashboardProjectDialog({
               )}
             </div>
           </div>
-        </div>
-      </div>
-    </DialogShell>
-  );
-}
-
-function DashboardMemberDialog({
-  member,
-  onClose,
-}: {
-  member: DashboardMember;
-  onClose: () => void;
-}) {
-  return (
-    <DialogShell onClose={onClose} maxWidth="max-w-[520px]">
-      <div className="flex items-stretch gap-4">
-        <DashboardAvatar member={member} size="xl" />
-        <div className="grid h-[88px] min-w-0 flex-1 content-center gap-3 py-0.5">
-          <p className="truncate text-xl font-semibold leading-none text-[var(--dash-name)]">{member.displayName || member.username}</p>
-          <span className="inline-flex w-fit items-center overflow-hidden rounded-full border border-[var(--dash-rim)] text-xs font-semibold leading-none">
-            <span className="border-r border-[var(--dash-line)] bg-[var(--dash-card)] px-2 py-1 text-[var(--dash-muted)]">系统角色</span>
-            <span className="bg-[var(--dash-accent-soft)] px-2.5 py-1 text-[var(--dash-accent)]">{roleLabel(member.role)}</span>
-          </span>
-        </div>
-      </div>
-      <div className="mt-5 grid gap-3 sm:grid-cols-2">
-        <DashInfo label="职位" value={jobTitleLabel(member.jobTitle)} />
-        <DashInfo label="手机" value={member.phone || "-"} />
-      </div>
-      <div className="mt-3 rounded-2xl border border-[var(--dash-line)] bg-[var(--dash-card)] px-4 py-3">
-        <div className="text-xs text-[var(--dash-muted)]">技术栈</div>
-        <div className="mt-2 flex flex-wrap gap-2">
-          {member.techStacks.length > 0 ? (
-            member.techStacks.map((item) => (
-              <span key={item} className="rounded-full border border-[var(--dash-hot)] bg-[var(--dash-hot-glow)] px-2.5 py-1 text-xs font-semibold text-[var(--dash-hot)]">
-                {item}
-              </span>
-            ))
-          ) : (
-            <span className="rounded-full bg-[var(--dash-track)] px-2.5 py-1 text-xs text-[var(--dash-muted)]">未设置技术栈</span>
-          )}
         </div>
       </div>
     </DialogShell>

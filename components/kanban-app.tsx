@@ -27,6 +27,7 @@ import {
   Eye,
   FileSpreadsheet,
   FolderPlus,
+  History,
   LayoutGrid,
   PanelRightOpen,
   Plus,
@@ -41,15 +42,18 @@ import {
 } from "lucide-react";
 import { read, utils, writeFileXLSX } from "xlsx";
 import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
+import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect, { type MultiSelectOption } from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import {
+  type Dispatch,
   useEffect,
   useMemo,
   useRef,
   useState,
   type FormEvent,
   type ReactNode,
+  type SetStateAction,
 } from "react";
 import {
   columnsFromSettings,
@@ -68,6 +72,7 @@ import {
   type Subtask,
   type SystemSettings,
 } from "@/lib/board-data";
+import type { ChangelogEntry } from "@/lib/changelog";
 
 type SyncState = "synced" | "syncing" | "local";
 type DrawerMode = "task" | "project" | "activity" | "settings" | null;
@@ -879,11 +884,13 @@ export default function KanbanApp({
   initialBoard,
   todayKey,
   appVersion,
+  changelogEntries,
   initialThemeId = "notion",
 }: {
   initialBoard: BoardData;
   todayKey: string;
   appVersion: string;
+  changelogEntries: ChangelogEntry[];
   initialThemeId?: string;
 }) {
   const [board, setBoard] = useState(initialBoard);
@@ -908,6 +915,8 @@ export default function KanbanApp({
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogAction | null>(null);
   const [importingTasks, setImportingTasks] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [taskCreateOpen, setTaskCreateOpen] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
   const localIdCounter = useRef(0);
   const metricRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
@@ -1474,6 +1483,7 @@ export default function KanbanApp({
       dueDate: "",
       tags: "",
     }));
+    setTaskCreateOpen(false);
     openTask(optimistic.id);
     setSyncState("syncing");
 
@@ -1807,6 +1817,16 @@ export default function KanbanApp({
     listStatusFilters.length > 0
       ? listTasks.filter(({ task }) => listStatusFilters.includes(task.status))
       : listTasks;
+  const sidebarStageCounts = board.columns.map((column) => ({
+    id: column.id,
+    title: column.title,
+    tone: column.tone,
+    count: filteredTasks.filter((task) => task.status === column.id).length,
+  }));
+  const sidebarOverviewItems = [
+    { id: "all", title: "总计", tone: "bg-[var(--accent)]", count: filteredTasks.length },
+    ...sidebarStageCounts,
+  ];
 
   function exportTaskTable() {
     const rows = listTasks.map(({ task, project, statusLabel }) =>
@@ -1964,6 +1984,21 @@ export default function KanbanApp({
 
   return (
     <main data-theme={themeId} className="kanban-theme flex min-h-screen flex-col bg-[var(--app-bg)] text-[var(--text)]">
+      {currentUser ? (
+        <OnboardingGuide
+          username={currentUser.username}
+          role={currentUser.role}
+          scope="kanban"
+          actions={{
+            closeMenu: () => {
+              window.dispatchEvent(new CustomEvent("kanban:onboarding-close-menu"));
+            },
+            openTaskCreate: () => setTaskCreateOpen(true),
+            openProjectCreate: () => openProject(null),
+            goDashboard: () => window.location.assign("/dashboard"),
+          }}
+        />
+      ) : null}
       <div className="mx-auto grid min-h-screen w-full max-w-[2160px] flex-1 grid-rows-[auto_1fr] gap-4 px-5 py-4 2xl:px-8">
         <header className="flex flex-col gap-4 border-b border-[var(--border)] pb-4 2xl:flex-row 2xl:items-end 2xl:justify-between">
           <div>
@@ -1972,9 +2007,15 @@ export default function KanbanApp({
                 <span className="mr-2 h-2 w-2 rounded-full bg-current opacity-75" />
                 KANBAN
               </span>
-              <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-1 text-[11px] font-semibold text-[var(--muted)]">
+              <button
+                type="button"
+                onClick={() => setChangelogOpen(true)}
+                className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 py-1 text-[11px] font-semibold text-[var(--muted)] transition hover:border-[var(--accent)]/30 hover:bg-[var(--card-section)] hover:text-[var(--text)]"
+                title="查看版本更新记录"
+              >
                 {appVersion}
-              </span>
+                <History size={12} />
+              </button>
             </div>
             <h1 className="mt-3 text-3xl font-semibold 2xl:text-5xl">{boardTitle}</h1>
           </div>
@@ -2034,6 +2075,7 @@ export default function KanbanApp({
                 <button
                   type="button"
                   title="新建项目"
+                  data-tour="kanban-create-project"
                   onClick={() => openProject(null)}
                   className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-2 text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
                 >
@@ -2120,161 +2162,18 @@ export default function KanbanApp({
               />
             </SidebarSection>
 
-            <SidebarSection title="新任务" icon={<Plus size={15} />}>
-              <form onSubmit={createTask} className="grid gap-3.5">
-                <label className="grid gap-1.5 text-base text-[var(--muted)]">
-                  <span>任务名称<RequiredMark /></span>
-                  <input
-                    name="newTaskTitle"
-                    value={newTask.title}
-                    onChange={(event) => setNewTask((current) => ({ ...current, title: event.target.value }))}
-                    placeholder="输入任务名称"
-                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
-                  />
-                </label>
-                <label className="grid gap-1.5 text-base text-[var(--muted)]">
-                  <span>任务描述<RequiredMark /></span>
-                  <textarea
-                    name="newTaskDescription"
-                    value={newTask.description}
-                    onChange={(event) => setNewTask((current) => ({ ...current, description: event.target.value }))}
-                    placeholder="输入任务描述"
-                    rows={4}
-                    className="min-h-[112px] w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
-                  />
-                </label>
-                <div className="grid gap-1.5 text-sm text-[var(--muted)]">
-                  <span>项目<RequiredMark /></span>
-                  {activeProjectOptions.length > 0 ? (
-                    <SearchableSelect
-                      value={newTaskProjectId || activeProjectOptions[0]?.value || ""}
-                      options={activeProjectOptions}
-                      onChange={(value) =>
-                        setNewTask((current) => ({
-                          ...current,
-                          projectId: value,
-                          ownerUserId: "",
-                          owner: "",
-                          testerUserId: "",
-                          tester: "",
-                        }))
-                      }
-                      placeholder="选择项目"
-                    />
-                  ) : canManageProjects ? (
-                    <button
-                      type="button"
-                      onClick={() => openProject(null)}
-                      className="h-10 w-full rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--text)]"
-                    >
-                      创建项目
-                    </button>
-                  ) : (
-                    <div className="grid h-10 place-items-center rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] text-sm text-[var(--muted)]">
-                      暂无可选项目
+            <SidebarSection title="看板概览" icon={<Activity size={15} />}>
+              <div className="grid grid-cols-2 gap-2">
+                {sidebarOverviewItems.map((item) => (
+                  <div key={item.id} className="rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+                    <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+                      <span className={`h-2 w-2 rounded-full ${item.tone}`} />
+                      <span>{item.title}</span>
                     </div>
-                  )}
-                  {newTaskProjectId && newTaskMemberOptions.length === 0 ? (
-                    <div className="rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] px-3 py-3 text-xs leading-5 text-[var(--muted)]">
-                      当前项目没有可用团队成员，可先创建任务，稍后在后台管理维护团队成员。
-                    </div>
-                  ) : null}
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <SearchableSelect
-                    value={newTask.ownerUserId}
-                    options={newTaskMemberOptions}
-                    onChange={(value) => {
-                      const member = newTaskMembers.find((item) => item.id === value);
-                      setNewTask((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
-                    }}
-                    placeholder={newTaskProjectId ? "负责人" : "先选择项目"}
-                    clearable
-                    disabled={!newTaskProjectId}
-                  />
-                  <SearchableSelect
-                    value={newTask.testerUserId}
-                    options={newTaskMemberOptions}
-                    onChange={(value) => {
-                      const member = newTaskMembers.find((item) => item.id === value);
-                      setNewTask((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
-                    }}
-                    placeholder={newTaskProjectId ? "测试员" : "先选择项目"}
-                    clearable
-                    disabled={!newTaskProjectId}
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <SearchableSelect
-                    value={newTask.priority}
-                    options={priorityOptions}
-                    onChange={(value) => setNewTask((current) => ({ ...current, priority: value as Priority }))}
-                    placeholder="优先级"
-                  />
-                  <input
-                    name="newTaskWorkloadDays"
-                    type="number"
-                    min="0.5"
-                    step="0.5"
-                    value={newTask.workloadDays}
-                    onChange={(event) => setNewTask((current) => ({ ...current, workloadDays: event.target.value }))}
-                    placeholder="工作量（人日）"
-                    className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-2">
-                  <label className="grid gap-1.5 text-base text-[var(--muted)]">
-                    <span>设计截止</span>
-                    <input
-                      name="newTaskDesignDueDate"
-                      type="date"
-                      placeholder="yyyy-mm-dd"
-                      value={newTask.designDueDate}
-                      onChange={(event) => setNewTask((current) => ({ ...current, designDueDate: event.target.value }))}
-                      className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
-                    />
-                  </label>
-                  <label className="grid gap-1.5 text-base text-[var(--muted)]">
-                    <span>提测日期</span>
-                    <input
-                      name="newTaskTestDueDate"
-                      type="date"
-                      placeholder="yyyy-mm-dd"
-                      value={newTask.testDueDate}
-                      onChange={(event) => setNewTask((current) => ({ ...current, testDueDate: event.target.value }))}
-                      className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
-                    />
-                  </label>
-                </div>
-                <label className="grid gap-1.5 text-base text-[var(--muted)]">
-                  <span>交付日期</span>
-                  <input
-                    name="newTaskDueDate"
-                    type="date"
-                    placeholder="yyyy-mm-dd"
-                    value={newTask.dueDate}
-                    onChange={(event) => setNewTask((current) => ({ ...current, dueDate: event.target.value }))}
-                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
-                  />
-                </label>
-                <label className="grid gap-1.5 text-base text-[var(--muted)]">
-                  <span>标签</span>
-                  <input
-                    name="newTaskTags"
-                    value={newTask.tags}
-                    onChange={(event) => setNewTask((current) => ({ ...current, tags: event.target.value }))}
-                    placeholder="用空格或逗号分隔"
-                    className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
-                  />
-                </label>
-                <button
-                  type="submit"
-                  className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]"
-                >
-                  <Plus size={15} />
-                  添加任务
-                </button>
-              </form>
+                    <div className="mt-2 text-xl font-semibold text-[var(--text)]">{item.count}</div>
+                  </div>
+                ))}
+              </div>
             </SidebarSection>
 
             {archivedProjects.length > 0 ? (
@@ -2325,6 +2224,17 @@ export default function KanbanApp({
                     <Rows3 size={15} />
                   </button>
                 </div>
+                <button
+                  type="button"
+                  data-tour="kanban-create-task"
+                  onClick={() => setTaskCreateOpen(true)}
+                  className="inline-flex h-10 items-center gap-2 rounded-md border border-[var(--accent)] bg-[var(--panel)] px-3.5 text-sm font-semibold text-[var(--accent)] transition hover:bg-[var(--accent-soft)]"
+                >
+                  <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-[var(--accent)] text-white">
+                    <Plus size={12} />
+                  </span>
+                  <span>任务卡</span>
+                </button>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {viewMode === "list" ? (
@@ -2466,6 +2376,7 @@ export default function KanbanApp({
         <button
           type="button"
           title="项目负载大屏"
+          data-tour="kanban-go-dashboard"
           onClick={() => window.location.assign("/dashboard")}
           className={floatingActionButtonClass}
         >
@@ -2560,6 +2471,29 @@ export default function KanbanApp({
           onConfirm={confirmDialog.onConfirm}
         />
       ) : null}
+      {changelogOpen ? (
+        <ChangelogDialog
+          appVersion={appVersion}
+          entries={changelogEntries}
+          onClose={() => setChangelogOpen(false)}
+        />
+      ) : null}
+      {taskCreateOpen ? (
+        <TaskCreateDialog
+          open={taskCreateOpen}
+          newTask={newTask}
+          newTaskProjectId={newTaskProjectId}
+          newTaskMembers={newTaskMembers}
+          newTaskMemberOptions={newTaskMemberOptions}
+          activeProjectOptions={activeProjectOptions}
+          priorityOptions={priorityOptions}
+          canManageProjects={canManageProjects}
+          onClose={() => setTaskCreateOpen(false)}
+          onOpenProjectCreate={() => openProject(null)}
+          onSubmit={createTask}
+          onChange={setNewTask}
+        />
+      ) : null}
       {importDialogOpen ? (
         <ImportTaskDialog
           importing={importingTasks}
@@ -2642,6 +2576,7 @@ function HorizontalBoardColumn({
     <div
       role="region"
       aria-label={`${column.title}列表`}
+      data-tour={column.id === "backlog" ? "column-backlog" : undefined}
       className={`rounded-lg border bg-[var(--column-bg)] transition ${
         activeDropTarget
           ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]"
@@ -2739,6 +2674,7 @@ function BoardColumnView({
     <div
       role="region"
       aria-label={`${column.title}列表`}
+      data-tour={column.id === "design" ? "column-design" : undefined}
       className={`flex min-w-[300px] flex-[0_0_300px] flex-col overflow-hidden rounded-lg border bg-[var(--column-bg)] transition 2xl:min-w-[320px] 2xl:flex-1 ${
         activeDropTarget
           ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]"
@@ -4047,13 +3983,15 @@ function ProjectDrawer({
           </Field>
           <Field label="团队">
             {teams.length > 0 ? (
-              <SearchableSelect
-                value={draft.teamId}
-                options={teamOptions}
-                onChange={(value) => setDraft({ ...draft, teamId: value, ownerUserId: "", owner: "" })}
-                placeholder="选择团队"
-                clearable
-              />
+              <div data-tour="kanban-project-team">
+                <SearchableSelect
+                  value={draft.teamId}
+                  options={teamOptions}
+                  onChange={(value) => setDraft({ ...draft, teamId: value, ownerUserId: "", owner: "" })}
+                  placeholder="选择团队"
+                  clearable
+                />
+              </div>
             ) : (
               <button type="button" onClick={() => window.location.assign("/admin")} className="h-10 w-full rounded-md border border-dashed border-[var(--border)] text-sm text-[var(--muted)]">
                 创建团队
@@ -4103,7 +4041,7 @@ function ProjectDrawer({
           </Field>
         </fieldset>
         {editable ? (
-          <button type="submit" className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
+          <button type="submit" data-tour="kanban-project-save" className="flex w-full items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
             <CheckCircle2 size={16} />
             保存项目
           </button>
@@ -4321,6 +4259,227 @@ function RequiredMark() {
   return <span className="ml-1 font-semibold text-[var(--danger)]">*</span>;
 }
 
+function TaskCreateDialog({
+  open,
+  newTask,
+  newTaskProjectId,
+  newTaskMembers,
+  newTaskMemberOptions,
+  activeProjectOptions,
+  priorityOptions,
+  canManageProjects,
+  onClose,
+  onOpenProjectCreate,
+  onSubmit,
+  onChange,
+}: {
+  open: boolean;
+  newTask: NewTaskForm;
+  newTaskProjectId: string;
+  newTaskMembers: BoardUserOption[];
+  newTaskMemberOptions: SearchableSelectOption[];
+  activeProjectOptions: SearchableSelectOption[];
+  priorityOptions: SearchableSelectOption[];
+  canManageProjects: boolean;
+  onClose: () => void;
+  onOpenProjectCreate: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  onChange: Dispatch<SetStateAction<NewTaskForm>>;
+}) {
+  if (!open) return null;
+
+  return (
+    <div className="fixed inset-0 z-[84] flex items-center justify-center bg-black/40 px-4 py-6" onClick={onClose}>
+      <div
+        data-tour="kanban-create-task-dialog"
+        className="flex max-h-[calc(100vh-32px)] w-full max-w-[760px] flex-col overflow-hidden rounded-[28px] border border-[var(--border)] bg-[var(--panel)] shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-[var(--border)] px-6 py-5">
+          <div>
+            <h2 className="text-xl font-semibold text-[var(--text)]">新建任务卡</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-2 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <form onSubmit={(event) => void onSubmit(event)} className="min-h-0 overflow-y-auto px-6 py-5">
+          <div className="grid gap-4">
+            <label className="grid gap-1.5 text-base text-[var(--muted)]">
+              <span>任务名称<RequiredMark /></span>
+              <input
+                name="newTaskTitle"
+                value={newTask.title}
+                onChange={(event) => onChange((current) => ({ ...current, title: event.target.value }))}
+                placeholder="输入任务名称"
+                className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+              />
+            </label>
+            <label className="grid gap-1.5 text-base text-[var(--muted)]">
+              <span>任务描述<RequiredMark /></span>
+              <textarea
+                name="newTaskDescription"
+                value={newTask.description}
+                onChange={(event) => onChange((current) => ({ ...current, description: event.target.value }))}
+                placeholder="输入任务描述"
+                rows={5}
+                className="min-h-[136px] w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+              />
+            </label>
+            <div className="grid gap-1.5 text-sm text-[var(--muted)]">
+              <span>项目<RequiredMark /></span>
+              {activeProjectOptions.length > 0 ? (
+                <SearchableSelect
+                  value={newTaskProjectId || activeProjectOptions[0]?.value || ""}
+                  options={activeProjectOptions}
+                  onChange={(value) =>
+                    onChange((current) => ({
+                      ...current,
+                      projectId: value,
+                      ownerUserId: "",
+                      owner: "",
+                      testerUserId: "",
+                      tester: "",
+                    }))
+                  }
+                  placeholder="选择项目"
+                />
+              ) : canManageProjects ? (
+                <button
+                  type="button"
+                  onClick={onOpenProjectCreate}
+                  className="h-10 w-full rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] text-sm text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--text)]"
+                >
+                  创建项目
+                </button>
+              ) : (
+                <div className="grid h-10 place-items-center rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] text-sm text-[var(--muted)]">
+                  暂无可选项目
+                </div>
+              )}
+              {newTaskProjectId && newTaskMemberOptions.length === 0 ? (
+                <div className="rounded-md border border-dashed border-[var(--border)] bg-[var(--panel)] px-3 py-3 text-xs leading-5 text-[var(--muted)]">
+                  当前项目没有可用团队成员，可先创建任务，稍后在后台管理维护团队成员。
+                </div>
+              ) : null}
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <SearchableSelect
+                value={newTask.ownerUserId}
+                options={newTaskMemberOptions}
+                onChange={(value) => {
+                  const member = newTaskMembers.find((item) => item.id === value);
+                  onChange((current) => ({ ...current, ownerUserId: value, owner: userName(member) }));
+                }}
+                placeholder={newTaskProjectId ? "负责人" : "先选择项目"}
+                clearable
+                disabled={!newTaskProjectId}
+              />
+              <SearchableSelect
+                value={newTask.testerUserId}
+                options={newTaskMemberOptions}
+                onChange={(value) => {
+                  const member = newTaskMembers.find((item) => item.id === value);
+                  onChange((current) => ({ ...current, testerUserId: value, tester: userName(member) }));
+                }}
+                placeholder={newTaskProjectId ? "测试员" : "先选择项目"}
+                clearable
+                disabled={!newTaskProjectId}
+              />
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <SearchableSelect
+                value={newTask.priority}
+                options={priorityOptions}
+                onChange={(value) => onChange((current) => ({ ...current, priority: value as Priority }))}
+                placeholder="优先级"
+              />
+              <input
+                name="newTaskWorkloadDays"
+                type="number"
+                min="0.5"
+                step="0.5"
+                value={newTask.workloadDays}
+                onChange={(event) => onChange((current) => ({ ...current, workloadDays: event.target.value }))}
+                placeholder="工作量（人日）"
+                className="h-10 w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+              />
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-3">
+              <label className="grid gap-1.5 text-base text-[var(--muted)]">
+                <span>设计截止</span>
+                <input
+                  name="newTaskDesignDueDate"
+                  type="date"
+                  value={newTask.designDueDate}
+                  onChange={(event) => onChange((current) => ({ ...current, designDueDate: event.target.value }))}
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                />
+              </label>
+              <label className="grid gap-1.5 text-base text-[var(--muted)]">
+                <span>提测日期</span>
+                <input
+                  name="newTaskTestDueDate"
+                  type="date"
+                  value={newTask.testDueDate}
+                  onChange={(event) => onChange((current) => ({ ...current, testDueDate: event.target.value }))}
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                />
+              </label>
+              <label className="grid gap-1.5 text-base text-[var(--muted)]">
+                <span>交付日期</span>
+                <input
+                  name="newTaskDueDate"
+                  type="date"
+                  value={newTask.dueDate}
+                  onChange={(event) => onChange((current) => ({ ...current, dueDate: event.target.value }))}
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
+                />
+              </label>
+            </div>
+
+            <label className="grid gap-1.5 text-base text-[var(--muted)]">
+              <span>标签</span>
+              <input
+                name="newTaskTags"
+                value={newTask.tags}
+                onChange={(event) => onChange((current) => ({ ...current, tags: event.target.value }))}
+                placeholder="用空格或逗号分隔"
+                className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)] outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+              />
+            </label>
+          </div>
+
+          <div className="mt-5 flex items-center justify-end gap-3 border-t border-[var(--border)] pt-4">
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md border border-[var(--border)] px-4 py-2 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
+            >
+              取消
+            </button>
+            <button
+              type="submit"
+              className="inline-flex items-center gap-2 rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]"
+            >
+              <Plus size={15} />
+              创建任务
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function ImportTaskDialog({
   importing,
   onImport,
@@ -4406,6 +4565,74 @@ function ImportTaskDialog({
             >
               下载模板
             </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ChangelogDialog({
+  appVersion,
+  entries,
+  onClose,
+}: {
+  appVersion: string;
+  entries: ChangelogEntry[];
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 px-4 py-6" onClick={onClose}>
+      <div
+        className="flex max-h-[min(84vh,860px)] w-full max-w-[820px] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-5">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--accent)]">
+                版本记录
+              </span>
+              <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--card-section)] px-2.5 py-1 text-xs font-semibold text-[var(--muted)]">
+                当前 {appVersion}
+              </span>
+            </div>
+            <h2 className="mt-3 text-xl font-semibold text-[var(--text)]">Changelog</h2>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-soft)] text-[var(--muted)] transition hover:bg-[var(--card-section)] hover:text-[var(--text)]"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          <div className="space-y-4">
+            {entries.map((entry) => (
+              <section key={`${entry.version}-${entry.date}`} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h3 className="text-base font-semibold text-[var(--text)]">{entry.version}</h3>
+                    {entry.date ? <p className="mt-1 text-xs text-[var(--muted)]">{entry.date}</p> : null}
+                  </div>
+                  {entry.version === appVersion || entry.version === appVersion.replace(/@.+$/, "") ? (
+                    <span className="inline-flex items-center rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--accent)]">
+                      当前版本
+                    </span>
+                  ) : null}
+                </div>
+                <ul className="mt-3 space-y-2">
+                  {entry.items.map((item, index) => (
+                    <li key={`${entry.version}-${index}`} className="flex items-start gap-2 text-sm leading-6 text-[var(--text)]">
+                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)] opacity-80" />
+                      <span>{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
           </div>
         </div>
       </div>

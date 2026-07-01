@@ -200,7 +200,9 @@ export default function SearchableSelect({
   const dropdown = open && !disabled ? (
     <div
       ref={dropdownRef}
-      className={`z-[80] overflow-hidden rounded-md border border-[var(--select-border)] bg-[var(--select-panel)] shadow-lg ${
+      className={`overflow-hidden rounded-md border border-[var(--select-border)] bg-[var(--select-panel)] shadow-lg ${
+        portalHost ? "z-[140]" : "z-[80]"
+      } ${
         portalHost ? "fixed" : "absolute right-0 top-full mt-1 w-full min-w-[260px] max-w-[min(92vw,360px)]"
       }`}
       style={portalHost ? { ...selectStyle, ...dropdownStyle } : selectStyle}

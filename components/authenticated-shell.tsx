@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type R
 import Image from "next/image";
 import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
+import OnboardingGuide from "@/components/onboarding-guide";
 import { avatarOptions, jobTitleOptions, techStackOptions, timezoneOptions } from "@/lib/ui-options";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
 import { X } from "lucide-react";
@@ -23,6 +24,7 @@ export default function AuthenticatedShell({
   const [boardList] = useState(boards);
   const [menuOpen, setMenuOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
+  const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
   const [flash, setFlash] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [passwordDraft, setPasswordDraft] = useState({
@@ -69,6 +71,14 @@ export default function AuthenticatedShell({
     window.addEventListener("mousedown", handlePointerDown);
     return () => window.removeEventListener("mousedown", handlePointerDown);
   }, [menuOpen]);
+
+  useEffect(() => {
+    function handleCloseMenu() {
+      setMenuOpen(false);
+    }
+    window.addEventListener("kanban:onboarding-close-menu", handleCloseMenu as EventListener);
+    return () => window.removeEventListener("kanban:onboarding-close-menu", handleCloseMenu as EventListener);
+  }, []);
 
   async function switchBoard(boardId: string) {
     await fetch(`/api/boards/${boardId}/select`, { method: "POST" });
@@ -122,6 +132,7 @@ export default function AuthenticatedShell({
           <button
             type="button"
             onClick={() => setMenuOpen((current) => !current)}
+            data-tour="shell-menu"
             className="flex h-12 items-center gap-3 rounded-full border border-white/70 bg-white/88 px-3 pr-4 text-sm font-medium text-slate-700 shadow-[0_14px_40px_rgba(15,23,42,0.12)] backdrop-blur transition hover:bg-white"
           >
             <UserAvatar
@@ -159,12 +170,12 @@ export default function AuthenticatedShell({
                 </div>
 
                 <div className="space-y-2">
-                  <MenuButton onClick={() => window.location.assign("/dashboard")}>项目负载</MenuButton>
-                  <MenuButton onClick={() => { setProfileOpen(true); setMenuOpen(false); }}>
+                  <MenuButton onClick={() => window.location.assign("/dashboard")} dataTour="menu-dashboard">项目负载</MenuButton>
+                  <MenuButton onClick={() => { setProfileOpen(true); setMenuOpen(false); }} dataTour="menu-profile">
                     个人设置
                   </MenuButton>
                   {canUseAdmin ? (
-                    <MenuButton onClick={() => window.location.assign("/admin")}>后台管理</MenuButton>
+                    <MenuButton onClick={() => window.location.assign("/admin")} dataTour="menu-admin">后台管理</MenuButton>
                   ) : null}
                   <MenuButton onClick={() => void logout()}>退出登录</MenuButton>
                 </div>
@@ -187,9 +198,46 @@ export default function AuthenticatedShell({
       ) : null}
       {children}
 
+      <OnboardingGuide
+        username={currentUser.username}
+        role={currentUser.role}
+        scope="shell"
+        actions={{
+          openMenu: () => setMenuOpen(true),
+          closeMenu: () => setMenuOpen(false),
+          goAdmin: () => {
+            setMenuOpen(false);
+            window.location.assign("/admin");
+          },
+          goDashboard: () => {
+            setMenuOpen(false);
+            window.location.assign("/dashboard");
+          },
+        }}
+      />
+
       {profileOpen ? (
-        <ShellModal title="个人设置" onClose={() => setProfileOpen(false)}>
+        <ShellModal title="个人设置" onClose={() => setProfileOpen(false)} maxWidth="max-w-[560px]">
           <div className="space-y-4">
+            <div className="flex justify-center pb-1">
+              <button
+                type="button"
+                onClick={() => setAvatarPickerOpen(true)}
+                className="group relative cursor-pointer rounded-full"
+                title="更换头像"
+              >
+                <Image
+                  src={avatarOptions.find((item) => item.key === profileDraft.avatarKey)?.src ?? avatarOptions[0].src}
+                  alt="当前头像"
+                  width={88}
+                  height={88}
+                  className="h-[88px] w-[88px] rounded-full border border-slate-200 object-cover shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition duration-200 group-hover:scale-[1.03] group-hover:shadow-[0_18px_42px_rgba(15,118,110,0.18)]"
+                />
+                <span className="pointer-events-none absolute inset-0 grid place-items-center rounded-full bg-slate-950/0 text-xs font-semibold tracking-[0.18em] text-white opacity-0 transition group-hover:bg-slate-950/28 group-hover:opacity-100">
+                  更换
+                </span>
+              </button>
+            </div>
             <label className="block space-y-2 text-sm">
               <span className="font-medium text-slate-700">用户名</span>
               <input value={currentUser.username} disabled className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-500" />
@@ -272,22 +320,6 @@ export default function AuthenticatedShell({
                 placeholder="再次输入新密码"
               />
             </label>
-            <div className="space-y-2 text-sm">
-              <span className="font-medium text-slate-700">头像</span>
-              <div className="grid grid-cols-4 gap-3">
-                {avatarOptions.map((avatar) => (
-                  <button
-                    key={avatar.key}
-                    type="button"
-                    onClick={() => setProfileDraft((current) => ({ ...current, avatarKey: avatar.key }))}
-                    className={`rounded-2xl border p-2 transition ${profileDraft.avatarKey === avatar.key ? "border-[#0f766e] bg-[#e7f5f2]" : "border-slate-200 hover:bg-slate-50"}`}
-                  >
-                    <Image src={avatar.src} alt={avatar.label} width={56} height={56} className="h-14 w-14 rounded-xl" />
-                    <span className="mt-1 block truncate text-[11px] font-medium text-slate-600">{avatar.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
             <div className="flex justify-end gap-3 pt-2">
               <button type="button" onClick={() => setProfileOpen(false)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
                 取消
@@ -300,15 +332,39 @@ export default function AuthenticatedShell({
         </ShellModal>
       ) : null}
 
+      {avatarPickerOpen ? (
+        <ShellModal title="选择头像" onClose={() => setAvatarPickerOpen(false)} maxWidth="max-w-[640px]">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
+            {avatarOptions.map((avatar) => (
+              <button
+                key={avatar.key}
+                type="button"
+                onClick={() => {
+                  setProfileDraft((current) => ({ ...current, avatarKey: avatar.key }));
+                  setAvatarPickerOpen(false);
+                }}
+                className={`rounded-2xl border p-3 text-left transition ${
+                  profileDraft.avatarKey === avatar.key ? "border-[#0f766e] bg-[#e7f5f2]" : "border-slate-200 bg-white hover:bg-slate-50"
+                }`}
+              >
+                <Image src={avatar.src} alt={avatar.label} width={80} height={80} className="h-20 w-20 rounded-2xl object-cover" />
+                <span className="mt-2 block truncate text-xs font-semibold text-slate-700">{avatar.label}</span>
+              </button>
+            ))}
+          </div>
+        </ShellModal>
+      ) : null}
+
     </>
   );
 }
 
-function MenuButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+function MenuButton({ children, onClick, dataTour }: { children: ReactNode; onClick: () => void; dataTour?: string }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      data-tour={dataTour}
       className="flex h-11 w-full items-center rounded-2xl px-3 text-left text-sm font-medium leading-none text-slate-700 transition hover:bg-slate-50"
     >
       {children}
@@ -332,18 +388,20 @@ function ShellModal({
   title,
   children,
   onClose,
+  maxWidth = "max-w-[520px]",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
+  maxWidth?: string;
 }) {
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/25 px-4 py-8"
+      className="fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto bg-slate-950/25 px-4 py-4 sm:py-8"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-[520px] rounded-[28px] border border-white/70 bg-white p-6 shadow-2xl shadow-slate-900/15"
+        className={`my-auto flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white p-5 shadow-2xl shadow-slate-900/15 sm:p-6 ${maxWidth}`}
         onClick={(event: ReactMouseEvent<HTMLDivElement>) => event.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between">
@@ -356,7 +414,7 @@ function ShellModal({
             <X size={16} />
           </button>
         </div>
-        {children}
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
       </div>
     </div>
   );

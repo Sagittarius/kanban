@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>浏览器版本过低</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #04111f;
+        --bg-soft: rgba(7, 22, 38, 0.88);
+        --panel: rgba(10, 26, 44, 0.82);
+        --panel-strong: rgba(9, 32, 55, 0.96);
+        --line: rgba(103, 232, 249, 0.18);
+        --line-strong: rgba(103, 232, 249, 0.38);
+        --text: #eef7ff;
+        --muted: rgba(208, 227, 243, 0.72);
+        --accent: #67e8f9;
+        --accent-strong: #22d3ee;
+        --warn: #fbbf24;
+        --shadow: rgba(5, 17, 30, 0.42);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        font-family:
+          "SF Pro Display",
+          "PingFang SC",
+          "Microsoft YaHei",
+          system-ui,
+          sans-serif;
+        background:
+          radial-gradient(circle at 20% 18%, rgba(34, 211, 238, 0.22), transparent 28%),
+          radial-gradient(circle at 78% 8%, rgba(14, 165, 233, 0.22), transparent 26%),
+          radial-gradient(circle at 84% 72%, rgba(56, 189, 248, 0.14), transparent 24%),
+          linear-gradient(180deg, #061524 0%, #020812 100%);
+        color: var(--text);
+      }
+
+      body {
+        overflow: hidden;
+      }
+
+      .backdrop-grid,
+      .backdrop-grid::before,
+      .backdrop-grid::after {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+      }
+
+      .backdrop-grid::before {
+        content: "";
+        background-image:
+          linear-gradient(rgba(103, 232, 249, 0.06) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(103, 232, 249, 0.05) 1px, transparent 1px);
+        background-size: 42px 42px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.96), transparent 90%);
+      }
+
+      .backdrop-grid::after {
+        content: "";
+        background:
+          radial-gradient(circle at 24% 22%, rgba(103, 232, 249, 0.12), transparent 18%),
+          radial-gradient(circle at 70% 18%, rgba(56, 189, 248, 0.12), transparent 16%),
+          radial-gradient(circle at 62% 68%, rgba(34, 211, 238, 0.08), transparent 22%);
+        filter: blur(36px);
+        opacity: 0.95;
+      }
+
+      .shell {
+        position: relative;
+        z-index: 1;
+        display: grid;
+        min-height: 100vh;
+        place-items: center;
+        padding: 32px 18px;
+      }
+
+      .panel {
+        position: relative;
+        width: min(960px, 100%);
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 32px;
+        background:
+          linear-gradient(180deg, rgba(10, 32, 52, 0.98), rgba(6, 20, 36, 0.94));
+        box-shadow:
+          0 30px 90px var(--shadow),
+          inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }
+
+      .panel::before {
+        content: "";
+        position: absolute;
+        inset: 0;
+        background:
+          radial-gradient(circle at right top, rgba(34, 211, 238, 0.2), transparent 34%);
+        pointer-events: none;
+      }
+
+      .header {
+        padding: 28px 28px 20px;
+        border-bottom: 1px solid rgba(103, 232, 249, 0.1);
+      }
+
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: center;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: rgba(103, 232, 249, 0.08);
+        color: var(--accent);
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }
+
+      .badge-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: currentColor;
+        box-shadow: 0 0 16px currentColor;
+      }
+
+      h1 {
+        margin: 18px 0 0;
+        font-size: clamp(30px, 4vw, 52px);
+        line-height: 1.04;
+        letter-spacing: 0;
+      }
+
+      .subtle {
+        margin: 14px 0 0;
+        max-width: 720px;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.8;
+      }
+
+      .content {
+        display: grid;
+        grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+        gap: 20px;
+        padding: 24px 28px 28px;
+      }
+
+      .card {
+        border: 1px solid rgba(103, 232, 249, 0.1);
+        border-radius: 24px;
+        background:
+          linear-gradient(180deg, rgba(12, 36, 58, 0.9), rgba(8, 24, 42, 0.72));
+        padding: 20px;
+      }
+
+      .card h2 {
+        margin: 0;
+        font-size: 15px;
+        color: var(--text);
+      }
+
+      .list {
+        margin: 14px 0 0;
+        padding: 0;
+        list-style: none;
+        display: grid;
+        gap: 12px;
+      }
+
+      .list li {
+        display: flex;
+        gap: 12px;
+        align-items: flex-start;
+        color: var(--muted);
+        font-size: 14px;
+        line-height: 1.7;
+      }
+
+      .list li::before {
+        content: "";
+        margin-top: 9px;
+        width: 7px;
+        height: 7px;
+        flex: 0 0 7px;
+        border-radius: 999px;
+        background: var(--accent-strong);
+        box-shadow: 0 0 18px rgba(34, 211, 238, 0.42);
+      }
+
+      .meta-grid {
+        display: grid;
+        gap: 12px;
+      }
+
+      .meta {
+        padding: 14px 16px;
+        border-radius: 18px;
+        border: 1px solid rgba(103, 232, 249, 0.12);
+        background: rgba(255, 255, 255, 0.03);
+      }
+
+      .meta-label {
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .meta-value {
+        margin-top: 8px;
+        color: var(--text);
+        font-size: 14px;
+        line-height: 1.6;
+        word-break: break-all;
+      }
+
+      .actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .button {
+        appearance: none;
+        border: 1px solid rgba(103, 232, 249, 0.16);
+        border-radius: 16px;
+        padding: 12px 16px;
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        font-size: 14px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+      }
+
+      .button:hover {
+        transform: translateY(-1px);
+        border-color: var(--line-strong);
+        background: rgba(255, 255, 255, 0.07);
+      }
+
+      .button.primary {
+        background: linear-gradient(135deg, var(--accent-strong), #38bdf8);
+        color: #042236;
+        border-color: transparent;
+        box-shadow: 0 10px 28px rgba(34, 211, 238, 0.28);
+      }
+
+      .hint {
+        margin-top: 14px;
+        color: rgba(251, 191, 36, 0.92);
+        font-size: 12px;
+        line-height: 1.7;
+      }
+
+      @media (max-width: 860px) {
+        body {
+          overflow: auto;
+        }
+
+        .content {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="backdrop-grid"></div>
+    <main class="shell">
+      <section class="panel">
+        <header class="header">
+          <div class="badge-row">
+            <span class="badge"><span class="badge-dot"></span>KANBAN</span>
+            <span class="badge">兼容模式</span>
+          </div>
+          <h1>请升级浏览器后再访问</h1>
+          <p class="subtle">
+            当前环境暂不支持打开 KANBAN。
+          </p>
+        </header>
+        <div class="content">
+          <section class="card">
+            <h2>下一步</h2>
+            <ul class="list">
+              <li>升级到组织推荐的 Chrome 或 Edge 版本后，再重新访问。</li>
+              <li>如果当前终端无法升级，请联系管理员处理。</li>
+              <li>处理完成后，点击“重新检测”。</li>
+            </ul>
+            <div class="actions">
+              <button class="button primary" type="button" id="retryButton">重新检测</button>
+              <button class="button" type="button" id="continueButton">继续访问</button>
+              <button class="button" type="button" id="backButton">返回上一页</button>
+            </div>
+            <div class="hint" id="hintText"></div>
+          </section>
+          <aside class="meta-grid">
+            <section class="meta">
+              <div class="meta-label">最低支持基线</div>
+              <div class="meta-value" id="requiredText">-</div>
+            </section>
+            <section class="meta">
+              <div class="meta-label">触发原因</div>
+              <div class="meta-value" id="reasonText">-</div>
+            </section>
+            <section class="meta">
+              <div class="meta-label">异常详情</div>
+              <div class="meta-value" id="detailText">-</div>
+            </section>
+            <section class="meta">
+              <div class="meta-label">来源地址</div>
+              <div class="meta-value" id="fromText">-</div>
+            </section>
+            <section class="meta">
+              <div class="meta-label">浏览器信息</div>
+              <div class="meta-value" id="uaText">-</div>
+            </section>
+          </aside>
+        </div>
+      </section>
+    </main>
+    <script>
+      (function () {
+        function query(name) {
+          var match = window.location.search.match(new RegExp("(?:^|[?&])" + name + "=([^&]*)"));
+          return match ? decodeURIComponent(match[1]) : "";
+        }
+
+        var required = query("required") || "Chrome 89+ / Edge 89+ / Firefox 90+ / Safari 15+";
+        var reason = query("reason") || "unknown";
+        var detail = query("detail") || "-";
+        var from = query("from") || "/";
+        var ua = query("ua") || window.navigator.userAgent || "-";
+
+        document.getElementById("requiredText").textContent = required;
+        document.getElementById("fromText").textContent = from;
+        document.getElementById("uaText").textContent = ua;
+        document.getElementById("detailText").textContent = detail;
+
+        var reasonMap = {
+          demo: "演示模式",
+          "missing-es-runtime": "缺少基础运行时能力",
+          "missing-web-runtime": "缺少必要的 Web 能力",
+          "missing-platform-runtime": "缺少平台运行时能力",
+          "missing-dom-runtime": "缺少页面运行能力",
+          "missing-object-hasown": "缺少 Object.hasOwn",
+          "missing-array-helpers": "缺少 Array.prototype.flat / at",
+          "missing-string-replaceall": "缺少 String.prototype.replaceAll",
+          "feature-check-failed": "浏览器检测失败"
+        };
+
+        var friendlyReason = reasonMap[reason] || reason;
+        document.getElementById("reasonText").textContent = friendlyReason;
+
+        var hint = "升级浏览器后，可点击“重新检测”。";
+        if (reason === "demo") {
+          hint = "当前为演示页面。";
+        }
+        document.getElementById("hintText").textContent = hint;
+
+        document.getElementById("retryButton").onclick = function () {
+          var target = from;
+          if (target.indexOf("compat_demo=1") !== -1) {
+            target = target
+              .replace(/([?&])compat_demo=1(&?)/, function (_, prefix, suffix) {
+                return prefix === "?" && suffix ? "?" : prefix;
+              })
+              .replace(/[?&]$/, "");
+          }
+          if (target.indexOf("?") === -1) {
+            target += "?compat_bypass=1";
+          } else {
+            target += "&compat_bypass=1";
+          }
+          window.location.replace(target);
+        };
+
+        document.getElementById("continueButton").onclick = function () {
+          var target = from || "/";
+          if (target.indexOf("compat_demo=1") !== -1) {
+            target = target
+              .replace(/([?&])compat_demo=1(&?)/, function (_, prefix, suffix) {
+                return prefix === "?" && suffix ? "?" : prefix;
+              })
+              .replace(/[?&]$/, "");
+          }
+          if (target.indexOf("?") === -1) {
+            target += "?compat_bypass=1";
+          } else {
+            target += "&compat_bypass=1";
+          }
+          window.location.replace(target);
+        };
+
+        document.getElementById("backButton").onclick = function () {
+          if (window.history.length > 1) {
+            window.history.back();
+            return;
+          }
+          window.location.replace("/");
+        };
+      })();
+    </script>
+  </body>
+</html>

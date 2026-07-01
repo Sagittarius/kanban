@@ -20,6 +20,9 @@ const localBindingConfig = {
 };
 
 export default defineConfig(({ command }) => ({
+  build: {
+    target: ["chrome89", "edge89", "firefox90", "safari15"],
+  },
   plugins: [
     vinext(),
     sites(),

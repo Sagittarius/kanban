@@ -6,6 +6,7 @@ import LoginPage from "@/components/login-page";
 import { cookies } from "next/headers";
 import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import { getAppVersion, getImageTag } from "@/lib/app-meta";
+import { readChangelogEntries } from "@/lib/changelog";
 import { readMaintenanceState } from "@/lib/maintenance";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { getOptionalSessionUser, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
@@ -32,6 +33,7 @@ export default async function Home() {
   const maintenanceState = await readMaintenanceState();
   const appVersion = getAppVersion();
   const imageTag = getImageTag();
+  const changelogEntries = readChangelogEntries();
   const themeCookie = (await cookies()).get("kanban_theme")?.value;
   const initialThemeId = isThemeId(themeCookie) ? themeCookie : "notion";
 
@@ -62,6 +64,7 @@ export default async function Home() {
         initialBoard={board}
         todayKey={board.todayKey ?? todayKeyInChina()}
         appVersion={appVersion}
+        changelogEntries={changelogEntries}
         initialThemeId={initialThemeId}
       />
     );

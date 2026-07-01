@@ -23,6 +23,9 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV KANBAN_LOG_DIR=/data/logs
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends curl iputils-ping vim-tiny \
+  && rm -rf /var/lib/apt/lists/*
 ARG KANBAN_APP_VERSION=0.0.0
 ARG KANBAN_IMAGE_TAG=kanban:unknown
 ENV KANBAN_APP_VERSION=${KANBAN_APP_VERSION}
@@ -43,4 +46,4 @@ RUN chmod +x /app/scripts/docker-entrypoint.sh
 
 EXPOSE 3000
 
-CMD ["sh", "/app/scripts/docker-entrypoint.sh"]
+ENTRYPOINT ["sh", "/app/scripts/docker-entrypoint.sh"]

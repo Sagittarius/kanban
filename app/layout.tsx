@@ -1,5 +1,14 @@
 import type { Metadata } from "next";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import BrowserCompatReady from "@/components/browser-compat-ready";
+import { buildBrowserCompatGateScript } from "@/lib/browser-compat";
 import "./globals.css";
+
+const require = createRequire(import.meta.url);
+const coreJsBundlePath = require.resolve("core-js-bundle/minified.js");
+const legacyPolyfills = readFileSync(coreJsBundlePath, "utf8");
+const browserCompatGate = buildBrowserCompatGateScript();
 
 export const metadata: Metadata = {
   title: "项目看板",
@@ -17,7 +26,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: browserCompatGate }} />
+        <script dangerouslySetInnerHTML={{ __html: legacyPolyfills }} />
+      </head>
+      <body>
+        <BrowserCompatReady />
+        {children}
+      </body>
     </html>
   );
 }

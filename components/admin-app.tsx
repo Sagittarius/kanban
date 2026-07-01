@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
+import MemberProfileCard, { MemberProfileAvatar, toMemberProfile } from "@/components/member-profile-card";
+import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import { isThemeId, jobTitleLabel, jobTitleOptions, techStackOptions, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
@@ -194,6 +196,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const [auditQuery, setAuditQuery] = useState("");
   const [memberQuery, setMemberQuery] = useState("");
   const [selectedTeam, setSelectedTeam] = useState<TeamSummary | null>(null);
+  const [selectedTeamMember, setSelectedTeamMember] = useState<TeamMemberSummary | null>(null);
   const [selectedBoardId, setSelectedBoardId] = useState("");
   const [userPage, setUserPage] = useState(1);
   const [teamPage, setTeamPage] = useState(1);
@@ -690,6 +693,17 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
 
   return (
     <main data-theme={themeId} className="kanban-theme min-h-screen bg-[var(--app-bg)] text-[var(--text)]">
+      <OnboardingGuide
+        username={currentUser.username}
+        role={currentUser.role}
+        scope="admin"
+        actions={{
+          openAdminUsers: () => setActiveTab("users"),
+          openAdminTeams: () => setActiveTab("teams"),
+          openAdminBoards: () => setActiveTab("boards"),
+          goKanban: () => window.location.assign("/"),
+        }}
+      />
       <header className="border-b border-[var(--border)] bg-[var(--panel)] px-5 py-4">
         <div className="mx-auto flex max-w-[1760px] flex-wrap items-center gap-3">
           <div>
@@ -703,7 +717,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               onChange={(value) => changeTheme(value as ThemeId)}
               placeholder="配色方案"
             />
-            <Link href="/" prefetch={false} className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
+            <Link href="/" prefetch={false} data-tour="admin-return-kanban" className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
               返回看板
             </Link>
           </div>
@@ -717,6 +731,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               key={id}
               type="button"
               onClick={() => setActiveTab(id)}
+              data-tour={id === "teams" ? "admin-tab-teams" : id === "boards" ? "admin-tab-boards" : undefined}
               className={`h-10 rounded-xl px-4 text-sm font-semibold transition ${
                 currentTab === id
                   ? "bg-[var(--text)] text-[var(--panel)]"
@@ -762,7 +777,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
 
         {currentTab === "users" ? (
           <div className="mt-5 grid gap-5 xl:grid-cols-[420px_minmax(0,1fr)]">
-            <Panel title={userDraft.id ? "编辑用户" : "创建用户"}>
+            <Panel title={userDraft.id ? "编辑用户" : "创建用户"} dataTour="admin-users-panel">
               {permissions.canManageUsers ? (
                 <form onSubmit={saveUser} className="space-y-4">
                   <Field label="用户名">
@@ -903,7 +918,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
 
         {currentTab === "teams" ? (
           <div className="mt-5 grid gap-5 xl:grid-cols-[440px_minmax(0,1fr)]">
-            <Panel title={teamDraft.id ? "编辑团队" : "创建团队"}>
+            <Panel title={teamDraft.id ? "编辑团队" : "创建团队"} dataTour="admin-team-form">
               <form onSubmit={saveTeam} className="space-y-4">
                 <Field label="名称">
                   <input
@@ -940,12 +955,14 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   </Field>
                 ) : null}
                 <Field label="成员">
-                  <SearchMultiSelect
-                    value={teamDraft.memberIds}
-                    options={assignableUserOptions}
-                    onChange={(memberIds) => setTeamDraft((current) => ({ ...current, memberIds }))}
-                    placeholder="搜索成员"
-                  />
+                  <div data-tour="admin-team-members">
+                    <SearchMultiSelect
+                      value={teamDraft.memberIds}
+                      options={assignableUserOptions}
+                      onChange={(memberIds) => setTeamDraft((current) => ({ ...current, memberIds }))}
+                      placeholder="搜索成员"
+                    />
+                  </div>
                 </Field>
                 <div className="flex gap-2">
                   <button disabled={saving} className="h-10 flex-1 rounded-xl bg-[var(--accent)] text-sm font-semibold text-white disabled:opacity-60">
@@ -1034,7 +1051,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
         {currentTab === "boards" ? (
           <div className="mt-5 grid gap-5 xl:grid-cols-[360px_minmax(360px,0.9fr)_minmax(0,1.3fr)]">
             <section className="space-y-5">
-              <Panel title={boardDraft.id ? "编辑看板" : "创建看板"}>
+              <Panel title={boardDraft.id ? "编辑看板" : "创建看板"} dataTour="admin-board-form">
                 <form onSubmit={saveBoard} className="space-y-4">
                   <Field label="看板名称">
                     <input
@@ -1064,14 +1081,16 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   ) : null}
                   <Field label="关联团队">
                     {teamOptions.length > 0 ? (
-                      <SearchMultiSelect
-                        value={boardDraft.teamIds}
-                        options={teamOptions}
-                        onChange={(teamIds) => setBoardDraft((current) => ({ ...current, teamIds }))}
-                        placeholder="搜索团队"
-                        summaryLabel="团队"
-                        searchPlaceholder="搜索团队"
-                      />
+                      <div data-tour="admin-board-teams">
+                        <SearchMultiSelect
+                          value={boardDraft.teamIds}
+                          options={teamOptions}
+                          onChange={(teamIds) => setBoardDraft((current) => ({ ...current, teamIds }))}
+                          placeholder="搜索团队"
+                          summaryLabel="团队"
+                          searchPlaceholder="搜索团队"
+                        />
+                      </div>
                     ) : (
                       <button
                         type="button"
@@ -1363,6 +1382,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
             .filter((member): member is TeamMemberSummary => Boolean(member))}
           canManage={canManageTeam(selectedTeam)}
           onClose={() => setSelectedTeam(null)}
+          onSelectMember={setSelectedTeamMember}
           onEdit={() => {
             editTeam(selectedTeam);
             setSelectedTeam(null);
@@ -1380,6 +1400,14 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               },
             })
           }
+        />
+      ) : null}
+      {selectedTeamMember ? (
+        <MemberProfileCard
+          member={toMemberProfile(selectedTeamMember)}
+          onClose={() => setSelectedTeamMember(null)}
+          theme="admin"
+          zIndexClass="z-[82]"
         />
       ) : null}
       {confirmState ? (
@@ -1441,9 +1469,9 @@ function BoardMetric({ label, value, compact = false }: { label: string; value: 
   );
 }
 
-function Panel({ title, count, children }: { title: string; count?: number; children: ReactNode }) {
+function Panel({ title, count, children, dataTour }: { title: string; count?: number; children: ReactNode; dataTour?: string }) {
   return (
-    <section className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-sm">
+    <section data-tour={dataTour} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">{title}</h2>
         {typeof count === "number" ? (
@@ -1637,13 +1665,15 @@ function ModalShell({
   children,
   onClose,
   maxWidth = "max-w-[720px]",
+  zIndexClass = "z-[70]",
 }: {
   children: ReactNode;
   onClose: () => void;
   maxWidth?: string;
+  zIndexClass?: string;
 }) {
   return (
-    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/36 px-4 py-4 backdrop-blur-[2px]" onClick={onClose}>
+    <div className={`fixed inset-0 ${zIndexClass} flex items-center justify-center bg-slate-950/36 px-4 py-4 backdrop-blur-[2px]`} onClick={onClose}>
       <div
         className={`relative flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-[26px] border border-[var(--border)] bg-[var(--panel)] shadow-2xl ${maxWidth}`}
         onClick={(event) => event.stopPropagation()}
@@ -1670,6 +1700,7 @@ function TeamDetailDialog({
   members,
   canManage,
   onClose,
+  onSelectMember,
   onEdit,
   onDelete,
 }: {
@@ -1677,6 +1708,7 @@ function TeamDetailDialog({
   members: TeamMemberSummary[];
   canManage: boolean;
   onClose: () => void;
+  onSelectMember: (member: TeamMemberSummary) => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -1726,14 +1758,22 @@ function TeamDetailDialog({
             {members.length > 0 ? (
               <div className="grid gap-2.5">
                 {members.map((member) => (
-                  <div key={member.id} className="flex items-start gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
-                    <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-[var(--tag-bg)] text-sm font-semibold text-[var(--text)]">
-                      {(member.displayName || member.username).slice(0, 1).toUpperCase()}
-                    </div>
+                  <div key={member.id} className="flex items-center gap-3 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-3 py-3">
+                    <button
+                      type="button"
+                      onClick={() => onSelectMember(member)}
+                      className="shrink-0 cursor-pointer rounded-full transition hover:scale-[1.03] focus:outline-none focus:ring-2 focus:ring-[var(--accent-soft)]"
+                      title={`查看${member.displayName || member.username}`}
+                    >
+                      <MemberProfileAvatar member={toMemberProfile(member)} theme="admin" size={34} />
+                    </button>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-semibold text-[var(--text)]">{member.displayName || member.username}</div>
-                      <div className="mt-1 truncate text-xs text-[var(--muted)]">@{member.username} · {roleLabels[member.role]}</div>
-                      <div className="mt-2 truncate text-xs text-[var(--muted)]">{jobTitleLabel(member.jobTitle)}</div>
+                      <div className="mt-1 flex min-w-0 items-center gap-1.5 text-xs text-[var(--muted)]">
+                        <span className="truncate">@{member.username}</span>
+                        <span className="shrink-0">·</span>
+                        <span className="shrink-0">{jobTitleLabel(member.jobTitle)}</span>
+                      </div>
                     </div>
                   </div>
                 ))}
