@@ -9,6 +9,10 @@ export type ChangelogEntry = {
 
 export function readChangelogEntries() {
   const filePath = path.join(process.cwd(), "CHANGELOG.md");
+  if (!fs.existsSync(filePath)) {
+    return [];
+  }
+
   const raw = fs.readFileSync(filePath, "utf8");
   const lines = raw.split(/\r?\n/);
   const entries: ChangelogEntry[] = [];

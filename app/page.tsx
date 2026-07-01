@@ -8,11 +8,13 @@ import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import { getAppVersion, getImageTag } from "@/lib/app-meta";
 import { readChangelogEntries } from "@/lib/changelog";
 import { readMaintenanceState } from "@/lib/maintenance";
+import { errorFields, getLogger } from "@/lib/logger";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { getOptionalSessionUser, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
 import { isThemeId } from "@/lib/ui-options";
 
 export const dynamic = "force-dynamic";
+const homePageLogger = getLogger("home-page");
 
 function todayKeyInChina() {
   const parts = Object.fromEntries(
@@ -27,6 +29,11 @@ function todayKeyInChina() {
   );
 
   return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function isExpectedBoardAccessError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return message === "看板不存在" || message === "Unauthorized" || message === "Forbidden";
 }
 
 export default async function Home() {
@@ -83,6 +90,20 @@ export default async function Home() {
       </AuthenticatedShell>
     );
   } catch (error) {
+    const logFields = {
+      ...errorFields(error),
+      userId: user.id,
+      username: user.username,
+      role: user.role,
+      authEnabled: isAuthFeatureEnabled(),
+    };
+
+    if (isExpectedBoardAccessError(error)) {
+      homePageLogger.warn("home page access fallback", logFields);
+    } else {
+      homePageLogger.error("home page render failed", logFields);
+    }
+
     return (
       <AppErrorPage
         title="当前账号没有可访问的看板"

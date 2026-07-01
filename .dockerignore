@@ -11,6 +11,7 @@ node_modules/.cache
 dist
 *.md
 !README.md
+!CHANGELOG.md
 offline-packages
 docker-images
 _deliverables
