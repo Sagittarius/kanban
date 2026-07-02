@@ -2,7 +2,7 @@
 
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import path from "node:path";
 
 const publicPort = Number.parseInt(process.env.PORT || "3000", 10);
@@ -16,6 +16,8 @@ if (!nextServerPath) {
   console.error("[kanban-server] unable to locate Next standalone server.js");
   process.exit(1);
 }
+
+ensureLocalStandaloneAssets(nextServerPath);
 
 const child = spawn(process.execPath, [nextServerPath], {
   cwd: process.cwd(),
@@ -93,6 +95,24 @@ function resolveNextServerPath() {
     path.join(process.cwd(), ".next", "standalone", "server.js"),
   ];
   return candidates.find((candidate) => existsSync(candidate));
+}
+
+function ensureLocalStandaloneAssets(serverPath) {
+  const standaloneDir = path.join(process.cwd(), ".next", "standalone");
+  if (path.resolve(serverPath) !== path.resolve(standaloneDir, "server.js")) {
+    return;
+  }
+
+  ensureSymlink(path.join(standaloneDir, ".next", "static"), path.join("..", "..", "static"));
+  ensureSymlink(path.join(standaloneDir, "public"), path.join("..", "..", "public"));
+}
+
+function ensureSymlink(linkPath, targetPath) {
+  if (existsSync(linkPath)) {
+    return;
+  }
+  mkdirSync(path.dirname(linkPath), { recursive: true });
+  symlinkSync(targetPath, linkPath, "dir");
 }
 
 function moveDiagnosticsScriptsToHeadStart(html) {
