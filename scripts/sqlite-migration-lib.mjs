@@ -1,6 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
 
+const SQLITE_MIGRATIONS_TABLE = "kanban_migrations";
+const SQLITE_LEGACY_MIGRATIONS_TABLE = "d1_migrations";
+const DEFAULT_TIMEZONE = "Asia/Shanghai";
+
 export function resolveDatabasePath() {
   return (
     process.env.KANBAN_SQLITE_PATH ??
@@ -18,8 +22,9 @@ export function ensureDatabaseDirectory(databasePath) {
 
 export function ensureMigrationsTable(database) {
   database.exec(
-    "CREATE TABLE IF NOT EXISTS d1_migrations (name TEXT PRIMARY KEY NOT NULL, applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL)"
+    `CREATE TABLE IF NOT EXISTS ${SQLITE_MIGRATIONS_TABLE} (name TEXT PRIMARY KEY NOT NULL, applied_at TEXT DEFAULT CURRENT_TIMESTAMP NOT NULL)`
   );
+  migrateLegacyMigrationsTable(database);
 }
 
 export function listMigrationFiles(migrationsDir = resolveMigrationsDir()) {
@@ -31,7 +36,7 @@ export function listMigrationFiles(migrationsDir = resolveMigrationsDir()) {
 
 export function getAppliedMigrationNames(database) {
   ensureMigrationsTable(database);
-  const rows = database.prepare("SELECT name FROM d1_migrations ORDER BY name").all();
+  const rows = database.prepare(`SELECT name FROM ${SQLITE_MIGRATIONS_TABLE} ORDER BY name`).all();
   return new Set(rows.map((row) => String(row.name)));
 }
 
@@ -62,7 +67,7 @@ export function applyMigrations(database, migrationsDir = resolveMigrationsDir()
         }
       }
     }
-    database.prepare("INSERT INTO d1_migrations (name) VALUES (?)").run(migration);
+    database.prepare(`INSERT INTO ${SQLITE_MIGRATIONS_TABLE} (name) VALUES (?)`).run(migration);
     applied += 1;
   }
 
@@ -88,6 +93,38 @@ export function readImageTag() {
   return configuredTag.replaceAll("{version}", appVersion);
 }
 
+export function resolveLogTimeZone() {
+  return process.env.TZ?.trim() || process.env.KANBAN_DEFAULT_TIMEZONE?.trim() || DEFAULT_TIMEZONE;
+}
+
+export function formatLogTimestamp(value = new Date(), timeZone = resolveLogTimeZone()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+    hour12: false,
+    hourCycle: "h23",
+    timeZoneName: "longOffset",
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).map((part) => [part.type, part.value]));
+  const offset = String(parts.timeZoneName ?? "GMT+00:00").replace(/^GMT/, "");
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond ?? "000"}${offset}`;
+}
+
+export function filesystemSafeTimestamp(value = new Date(), timeZone = resolveLogTimeZone()) {
+  return formatLogTimestamp(value, timeZone).replace(/:/g, "-");
+}
+
 function isIgnorableSchemaConflict(statement, error) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   const normalized = statement.toLowerCase();
@@ -105,6 +142,21 @@ function isIgnorableSchemaConflict(statement, error) {
 
 function summarizeStatement(statement) {
   return statement.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+function migrateLegacyMigrationsTable(database) {
+  const legacyExists = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(SQLITE_LEGACY_MIGRATIONS_TABLE);
+
+  if (!legacyExists) {
+    return;
+  }
+
+  database.exec(
+    `INSERT OR IGNORE INTO ${SQLITE_MIGRATIONS_TABLE} (name, applied_at)
+     SELECT name, applied_at FROM ${SQLITE_LEGACY_MIGRATIONS_TABLE}`
+  );
 }
 
 export function ensureUpgradeMetadataTables(database) {

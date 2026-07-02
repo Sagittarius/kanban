@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolveDatabasePath } from "./sqlite-migration-lib.mjs";
+import { filesystemSafeTimestamp, resolveDatabasePath } from "./sqlite-migration-lib.mjs";
 
 const backupPath = process.argv[2];
 
@@ -22,7 +22,7 @@ fs.mkdirSync(path.dirname(databasePath), { recursive: true });
 if (fs.existsSync(databasePath)) {
   const rollbackDir = path.join(path.dirname(databasePath), "manual-rollback");
   fs.mkdirSync(rollbackDir, { recursive: true });
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const timestamp = filesystemSafeTimestamp();
   const snapshotPath = path.join(
     rollbackDir,
     `${path.basename(databasePath, path.extname(databasePath))}.before-restore.${timestamp}.sqlite`

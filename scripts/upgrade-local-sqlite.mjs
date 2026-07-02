@@ -6,6 +6,8 @@ import {
   applyMigrations,
   ensureDatabaseDirectory,
   ensureUpgradeMetadataTables,
+  filesystemSafeTimestamp,
+  formatLogTimestamp,
   getPendingMigrations,
   readAppVersion,
   recordUpgradeSuccess,
@@ -85,7 +87,7 @@ export function runSafeUpgrade() {
   const databasePath = resolveDatabasePath();
   const migrationsDir = resolveMigrationsDir();
   const appVersion = readAppVersion();
-  const startedAt = new Date().toISOString();
+  const startedAt = formatLogTimestamp();
   const backupDir =
     process.env.KANBAN_SQLITE_BACKUP_DIR ??
     path.join(path.dirname(databasePath), "backups");
@@ -123,7 +125,7 @@ export function runSafeUpgrade() {
     recordUpgradeSuccess(database, {
       appVersion,
       startedAt,
-      completedAt: new Date().toISOString(),
+      completedAt: formatLogTimestamp(),
       databasePath,
       backupPath: fs.existsSync(backupPath) ? backupPath : "",
       details: `applied=${result.applied};pending=${result.pending.join(",")}`,
@@ -164,13 +166,13 @@ function listPendingForMissingDatabase(databasePath, migrationsDir) {
 }
 
 function buildBackupPath(databasePath, backupDir, startedAt, appVersion) {
-  const timestamp = startedAt.replace(/[:.]/g, "-");
+  const timestamp = filesystemSafeTimestamp(startedAt);
   const baseName = path.basename(databasePath, path.extname(databasePath));
   return path.join(backupDir, `${baseName}.backup.${timestamp}.v${appVersion}.sqlite`);
 }
 
 function buildTempPath(databasePath, startedAt) {
-  const timestamp = startedAt.replace(/[:.]/g, "-");
+  const timestamp = filesystemSafeTimestamp(startedAt);
   return `${databasePath}.upgrade.${timestamp}.tmp`;
 }
 

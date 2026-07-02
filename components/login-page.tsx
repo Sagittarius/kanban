@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties, type FormEvent } from "react";
+import { clientFetch } from "@/lib/client-observability";
 
 const particles = [
   { x: 8, y: 18, size: 3, delay: 0, duration: 9 },
@@ -75,11 +76,11 @@ export default function LoginPage() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/auth/login", {
+      const response = await clientFetch("/api/auth/login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password }),
-      });
+      }, { operation: "auth.login" });
       const payload = (await response.json().catch(() => ({}))) as { error?: string };
       if (!response.ok) {
         throw new Error(payload.error ?? "登录失败");

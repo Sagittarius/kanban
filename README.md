@@ -176,7 +176,6 @@ tar \
   --exclude .data \
   --exclude project-kanban-board-offline.tgz \
   --exclude .next \
-  --exclude .wrangler \
   --exclude .vinext \
   -czf project-kanban-board-offline.tgz .
 ```
@@ -355,7 +354,7 @@ Start-Service project-kanban-board
 
 项目支持在 `amd64` 和 `arm64` 架构上构建。
 
-运行镜像使用多阶段构建：builder 阶段安装完整依赖并编译，runner 阶段只安装生产依赖，避免 eslint、wrangler、tailwind、drizzle-kit、typescript 等开发依赖进入最终镜像。
+运行镜像使用多阶段构建：builder 阶段安装完整依赖并编译，runner 阶段只安装生产依赖，避免 eslint、tailwind、drizzle-kit、typescript 等开发依赖进入最终镜像。
 
 本地单平台构建：
 
@@ -371,19 +370,29 @@ docker build --platform linux/arm64 -t project-kanban-board:arm64 .
 docker buildx create --name kanban-builder --use
 
 docker buildx build \
+  --builder kanban-builder \
   --platform linux/amd64,linux/arm64 \
   -t your-registry/project-kanban-board:latest \
   --push .
 ```
 
-如果只想导出多架构离线包：
+如果只想导出 `arm64` 离线包给内网 `docker load` 使用，项目固定使用 Docker archive 格式，不使用 OCI layout：
 
 ```bash
 docker buildx build \
-  --platform linux/amd64,linux/arm64 \
+  --builder kanban-builder \
+  --platform linux/arm64 \
   -t project-kanban-board:latest \
-  --output type=tar,dest=kanban-multiarch.tar .
+  --output type=docker,dest=kanban-arm64-docker.tar .
+
+gzip -c kanban-arm64-docker.tar > kanban-arm64-docker.tar.gz
 ```
+
+说明：
+
+- `type=docker` 导出的包可直接执行 `docker load -i kanban-arm64-docker.tar.gz`
+- 不要把 `type=oci` 的 layout tar 直接交给较老的 Docker daemon，它可能会在 `docker load` 阶段报 `blobs/json` 相关错误
+- 如果离线包体积突然从 200MB 级别变成 700MB 左右，优先检查导出方式是否跑偏，而不是先判断业务镜像内容异常膨胀
 
 #### SQLite Compose 部署
 
@@ -703,9 +712,40 @@ node scripts/restore-local-sqlite-backup.mjs /data/backups/kanban.backup.2026-06
 
 服务端运行日志统一输出为结构化 JSON。API 入口会记录 `requestId`、`operation`、HTTP 方法、路径、状态码、耗时、IP 和 User-Agent；未捕获异常和前端运行时上报的 client error 会记录错误名称、消息和堆栈。生产 Docker 镜像默认设置 `KANBAN_LOG_DIR=/data/logs`，因此会同时输出控制台日志并写入 `/data/logs/kanban.log`。如只依赖 Docker 控制台日志，可设置 `KANBAN_LOG_FILE_ENABLED=false` 关闭文件日志。文件日志默认单文件 50MB 滚动，最多保留 10 个滚动文件，并清理超过 30 天的滚动日志。
 
+服务端页面入口会记录 `page render completed` / `page render failed`。页面渲染失败时，错误页会展示 `Request ID`，日志里会同时写入 `path`、`requestId`、`userId`、`boardId`、`errorName`、`errorMessage` 和 `errorStack`。浏览器端在 React 启动前会先挂载诊断脚本，捕获 `early-window-error`、`early-unhandledrejection` 以及 `script` / `link` / `img` 的 `resource-error`。React 启动后，Error Boundary 和运行时监听继续上报 `error-boundary`、`window-error` 和 `unhandledrejection`。
+
+前端运行时错误、未处理 Promise 异常、静态资源加载失败和主要 API 请求的 5xx/网络失败会通过 `POST /api/client-errors` 上报。前端请求会自动携带 `x-request-id` 和 `x-client-session-id`，服务端响应会回写 `x-request-id`；排查生产问题时，可用 client error 日志里的 `apiRequestId` / `frontendRequestId` / `requestId` 关联同一时间段的 API 日志，并结合 `clientSessionId`、`route`、`activeBoardId`、`viewport`、`userAgent` 判断用户环境。前端上报不记录请求体原文，日志工具会对 `password`、`token`、`secret`、`cookie` 等字段和值做脱敏。
+
 关键业务日志和运行日志分离，默认复用 `KANBAN_LOG_DIR` 并写入 `/data/logs/kanban-business.log`，同时也会按 `KANBAN_BUSINESS_LOG_CONSOLE` 输出到控制台。登录失败、维护口令错误、重复升级等业务拒绝事件按 `warn` 记录，业务动作成功按 `info` 记录，审计写入失败和维护任务启动失败按 `error` 记录。业务日志同样支持按大小滚动、按文件数和保留天数清理，可通过 `KANBAN_BUSINESS_LOG_*` 单独覆盖。
 
 审计日志存放在 `audit_logs` 表，和普通协作活动记录分离。登录成功/失败、退出登录、修改密码、用户管理、看板管理、团队管理、系统参数、项目、任务、任务拆解和跨阶段移动等关键操作都会写入审计表。后台管理提供 `审计` 页签，超管可查看最近全局审计记录，项目经理只查看自己的审计记录。
+
+### 如何查看日志和定位问题
+
+容器标准输出：
+
+```bash
+docker logs kanban --tail 200
+docker logs kanban -f
+```
+
+文件日志：
+
+```bash
+docker exec -it kanban sh
+tail -n 200 /data/logs/kanban.log
+grep '"requestId":"替换为错误页上的 Request ID"' /data/logs/kanban.log
+grep '"msg":"client error reported"' /data/logs/kanban.log
+grep '"source":"resource-error"' /data/logs/kanban.log
+```
+
+后台诊断页：
+
+```text
+/admin/diagnostics
+```
+
+该页面仅超级管理员可访问，会展示最近错误日志、客户端错误、资源加载错误、应用版本、镜像标签、数据库类型和日志配置。生产排障建议先从用户截图里的 `Request ID` 查 `kanban.log`，再沿着同一条记录里的 `path`、`userId`、`boardId`、`clientSessionId`、`apiRequestId` 追踪关联的 API、页面渲染和浏览器错误。
 
 ## 数据库
 

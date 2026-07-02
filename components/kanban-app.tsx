@@ -1,17 +1,32 @@
 "use client";
 
 import {
-  DragDropProvider,
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  pointerWithin,
+  rectIntersection,
+  type CollisionDetection,
+  type DragCancelEvent,
   type DragEndEvent,
   type DragOverEvent,
   type DragStartEvent,
   useDroppable,
-} from "@dnd-kit/react";
+  useSensor,
+  useSensors,
+  type UniqueIdentifier,
+} from "@dnd-kit/core";
 import {
-  isSortable,
+  arrayMove,
+  horizontalListSortingStrategy,
+  SortableContext,
+  sortableKeyboardCoordinates,
   useSortable,
-} from "@dnd-kit/react/sortable";
-import { move } from "@dnd-kit/helpers";
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   Activity,
   Archive,
@@ -51,6 +66,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
   type FormEvent,
   type ReactNode,
   type SetStateAction,
@@ -73,6 +89,7 @@ import {
   type SystemSettings,
 } from "@/lib/board-data";
 import type { ChangelogEntry } from "@/lib/changelog";
+import { clientFetch } from "@/lib/client-observability";
 
 type SyncState = "synced" | "syncing" | "local";
 type DrawerMode = "task" | "project" | "activity" | "settings" | null;
@@ -96,6 +113,15 @@ type DragTargetData =
 
 const floatingActionButtonClass =
   "inline-flex h-11 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--text)] px-4 text-[14px] font-semibold leading-none text-[var(--panel)] shadow-lg transition hover:opacity-90";
+const kanbanCollisionDetection: CollisionDetection = (args) => {
+  const pointerCollisions = pointerWithin(args);
+  if (pointerCollisions.length > 0) {
+    return pointerCollisions;
+  }
+
+  const intersecting = rectIntersection(args);
+  return intersecting.length > 0 ? intersecting : closestCenter(args);
+};
 
 type NewTaskForm = {
   title: string;
@@ -548,12 +574,27 @@ function isDragTargetData(value: unknown): value is DragTargetData {
   return (data.type === "task" || data.type === "column") && isBoardStatus(data.status);
 }
 
-function targetStatusFromEntity(target: { id: string | number; data?: unknown } | null | undefined) {
-  if (isDragTargetData(target?.data)) {
-    if (target.data.type === "delete-zone") {
+type DndDataEntry = {
+  id: UniqueIdentifier;
+  data?: unknown;
+} | null | undefined;
+
+function dragDataFromEntry(entry: DndDataEntry) {
+  const rawData = entry?.data;
+  const data = rawData && typeof rawData === "object" && "current" in rawData
+    ? (rawData as { current?: unknown }).current
+    : rawData;
+
+  return isDragTargetData(data) ? data : null;
+}
+
+function targetStatusFromEntity(target: DndDataEntry) {
+  const data = dragDataFromEntry(target);
+  if (data) {
+    if (data.type === "delete-zone") {
       return null;
     }
-    return target.data.status;
+    return data.status;
   }
 
   return typeof target?.id === "string" && isBoardStatus(target.id)
@@ -561,8 +602,32 @@ function targetStatusFromEntity(target: { id: string | number; data?: unknown } 
     : null;
 }
 
-function isDeleteDropTarget(target: { id: string | number; data?: unknown } | null | undefined) {
-  return target?.id === "delete-zone";
+function isDeleteDropTarget(target: DndDataEntry) {
+  return target?.id === "delete-zone" || dragDataFromEntry(target)?.type === "delete-zone";
+}
+
+function activeTaskIdFromEvent(event: DragStartEvent | DragOverEvent | DragEndEvent | DragCancelEvent) {
+  return typeof event.active.id === "string" ? event.active.id : null;
+}
+
+function activeTaskStatusFromEvent(
+  event: DragStartEvent | DragOverEvent | DragEndEvent | DragCancelEvent,
+  fallbackStatus?: BoardStatus | null
+) {
+  if (fallbackStatus) {
+    return fallbackStatus;
+  }
+
+  const data = dragDataFromEntry(event.active);
+  if (data?.type === "task") {
+    return data.status;
+  }
+  return null;
+}
+
+function overTaskIdFromEvent(event: DragOverEvent | DragEndEvent | DragCancelEvent) {
+  const data = dragDataFromEntry(event.over);
+  return data?.type === "task" && typeof event.over?.id === "string" ? event.over.id : null;
 }
 
 function tasksByStatus(tasks: BoardTask[]) {
@@ -591,10 +656,49 @@ function boardTasksFromGroups(currentTasks: BoardTask[], groups: Record<BoardSta
   return currentTasks.map((task) => updates.get(task.id) ?? task);
 }
 
-function tasksFromDragEvent(tasks: BoardTask[], event: DragOverEvent | DragEndEvent) {
+function moveTaskNearTarget(
+  tasks: BoardTask[],
+  activeId: string,
+  targetStatus: BoardStatus,
+  targetTaskId: string | null
+) {
   const groups = tasksByStatus(tasks);
-  const nextGroups = move(groups, event);
-  return boardTasksFromGroups(tasks, nextGroups);
+  const currentTask = tasks.find((task) => task.id === activeId);
+
+  if (!currentTask) {
+    return tasks;
+  }
+
+  if (currentTask.status === targetStatus && targetTaskId) {
+    const group = groups[targetStatus];
+    const oldIndex = group.findIndex((task) => task.id === activeId);
+    const newIndex = group.findIndex((task) => task.id === targetTaskId);
+
+    if (oldIndex >= 0 && newIndex >= 0) {
+      groups[targetStatus] = arrayMove(group, oldIndex, newIndex);
+      return boardTasksFromGroups(tasks, groups);
+    }
+  }
+
+  (Object.keys(groups) as BoardStatus[]).forEach((status) => {
+    groups[status] = groups[status].filter((task) => task.id !== activeId);
+  });
+
+  const movedTask = { ...currentTask, status: targetStatus };
+  const destination = groups[targetStatus];
+  const insertIndex = targetTaskId ? destination.findIndex((task) => task.id === targetTaskId) : -1;
+
+  if (insertIndex >= 0) {
+    groups[targetStatus] = [
+      ...destination.slice(0, insertIndex),
+      movedTask,
+      ...destination.slice(insertIndex),
+    ];
+  } else {
+    groups[targetStatus] = [...destination, movedTask];
+  }
+
+  return boardTasksFromGroups(tasks, groups);
 }
 
 function moveTaskToStatusEnd(tasks: BoardTask[], taskId: string, targetStatus: BoardStatus) {
@@ -628,38 +732,42 @@ function moveTaskToStatusEnd(tasks: BoardTask[], taskId: string, targetStatus: B
   return boardTasksFromGroups(tasks, groups);
 }
 
-function tasksFromDragTarget(tasks: BoardTask[], event: DragOverEvent | DragEndEvent, targetStatus: BoardStatus) {
-  const source = event.operation.source;
-  const target = event.operation.target;
+function tasksFromDragTarget(
+  tasks: BoardTask[],
+  event: DragOverEvent | DragEndEvent,
+  targetStatus: BoardStatus,
+  sourceInitialStatus?: BoardStatus | null
+) {
+  const sourceId = activeTaskIdFromEvent(event);
+  const sourceStatus = activeTaskStatusFromEvent(event, sourceInitialStatus);
 
-  if (!isSortable(source) || typeof source.id !== "string" || !isBoardStatus(source.initialGroup)) {
+  if (!sourceId || !sourceStatus) {
     return tasks;
   }
 
-  const isCrossRegion = targetStatus !== source.initialGroup;
-  const targetTaskCount = tasks.filter((task) => task.status === targetStatus && task.id !== source.id).length;
+  const targetTaskId = overTaskIdFromEvent(event);
+  const isCrossRegion = targetStatus !== sourceStatus;
+  const targetTaskCount = tasks.filter((task) => task.status === targetStatus && task.id !== sourceId).length;
 
-  if (isCrossRegion && (!isSortable(target) || targetTaskCount <= 1)) {
-    return moveTaskToStatusEnd(tasks, source.id, targetStatus);
+  if (isCrossRegion && (!targetTaskId || targetTaskCount <= 1)) {
+    return moveTaskToStatusEnd(tasks, sourceId, targetStatus);
   }
 
-  return tasksFromDragEvent(tasks, event);
+  return moveTaskNearTarget(tasks, sourceId, targetStatus, targetTaskId);
 }
 
-function shouldMoveTasks(event: DragOverEvent | DragEndEvent, targetStatus: BoardStatus) {
-  const source = event.operation.source;
-  const target = event.operation.target;
-
-  if (!isSortable(source)) {
-    return false;
-  }
-
-  if (!isBoardStatus(source.initialGroup)) {
+function shouldMoveTasks(
+  event: DragOverEvent | DragEndEvent,
+  targetStatus: BoardStatus,
+  sourceInitialStatus?: BoardStatus | null
+) {
+  const sourceStatus = activeTaskStatusFromEvent(event, sourceInitialStatus);
+  if (!sourceStatus) {
     return false;
   }
 
   // 同一区域排序只接受卡片作为目标；拖到本列表空白处不应触发末尾/首位误让位。
-  if (targetStatus === source.initialGroup && !isSortable(target)) {
+  if (targetStatus === sourceStatus && dragDataFromEntry(event.over)?.type !== "task") {
     return false;
   }
 
@@ -842,15 +950,18 @@ function sameTaskOrder(left: BoardTask[], right: BoardTask[]) {
 
 
 async function apiRequest<T>(url: string, method: string, body?: unknown) {
-  const response = await fetch(url, {
+  const response = await clientFetch(url, {
     method,
     headers: body === undefined ? undefined : { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+  }, {
+    operation: `kanban.${method.toLowerCase()}`,
   });
 
   if (!response.ok) {
     const payload = (await response.json().catch(() => ({}))) as { error?: string };
-    throw new Error(payload.error ?? "Request failed");
+    const requestId = response.headers.get("x-request-id");
+    throw new Error(payload.error ?? (requestId ? `Request failed (${requestId})` : "Request failed"));
   }
 
   return (await response.json()) as T;
@@ -878,6 +989,60 @@ function notifyDashboardRefresh() {
     channel.postMessage(payload);
     channel.close();
   }
+}
+
+function installPointerCaptureGuard() {
+  if (typeof Element === "undefined") {
+    return () => {};
+  }
+
+  const prototype = Element.prototype;
+  const originalSetPointerCapture = prototype.setPointerCapture;
+  const originalReleasePointerCapture = prototype.releasePointerCapture;
+
+  if (typeof originalSetPointerCapture !== "function") {
+    return () => {};
+  }
+
+  prototype.setPointerCapture = function guardedSetPointerCapture(pointerId: number) {
+    try {
+      originalSetPointerCapture.call(this, pointerId);
+    } catch (error) {
+      if (!isIgnorablePointerCaptureError(error)) {
+        throw error;
+      }
+    }
+  };
+
+  if (typeof originalReleasePointerCapture === "function") {
+    prototype.releasePointerCapture = function guardedReleasePointerCapture(pointerId: number) {
+      try {
+        originalReleasePointerCapture.call(this, pointerId);
+      } catch (error) {
+        if (!isIgnorablePointerCaptureError(error)) {
+          throw error;
+        }
+      }
+    };
+  }
+
+  return () => {
+    prototype.setPointerCapture = originalSetPointerCapture;
+    prototype.releasePointerCapture = originalReleasePointerCapture;
+  };
+}
+
+function isIgnorablePointerCaptureError(error: unknown) {
+  const record = error as { name?: unknown; message?: unknown } | null;
+  const name = typeof record?.name === "string" ? record.name : "";
+  const message = typeof record?.message === "string" ? record.message : "";
+  return (
+    name === "InvalidPointerId" ||
+    name === "InvalidStateError" ||
+    name === "NotFoundError" ||
+    message.includes("No active pointer") ||
+    message.includes("Invalid pointer id")
+  );
 }
 
 export default function KanbanApp({
@@ -921,7 +1086,12 @@ export default function KanbanApp({
   const metricRef = useRef<HTMLDivElement>(null);
   const importInputRef = useRef<HTMLInputElement>(null);
   const dragStartTasksRef = useRef<BoardTask[] | null>(null);
+  const dragStartStatusRef = useRef<BoardStatus | null>(null);
   const latestTasksRef = useRef<BoardTask[]>(board.tasks);
+  const dragSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
   const [newTask, setNewTask] = useState<NewTaskForm>({
     title: "",
     description: "",
@@ -948,6 +1118,8 @@ export default function KanbanApp({
     summary: "",
   });
 
+  useEffect(() => installPointerCaptureGuard(), []);
+
   async function refreshBoard(markSynced = true) {
     try {
       const data = await apiRequest<BoardData>("/api/board", "GET");
@@ -963,7 +1135,7 @@ export default function KanbanApp({
   useEffect(() => {
     let active = true;
 
-    fetch("/api/board")
+    clientFetch("/api/board", undefined, { operation: "kanban.initial-board" })
       .then((response) => {
         if (!response.ok) {
           throw new Error("Board API unavailable");
@@ -1013,6 +1185,12 @@ export default function KanbanApp({
   const selectedTask = selectedTaskId
     ? board.tasks.find((task) => task.id === selectedTaskId) ?? null
     : null;
+  const draggingTask = draggingTaskId
+    ? board.tasks.find((task) => task.id === draggingTaskId) ?? null
+    : null;
+  const draggingTaskProject = draggingTask
+    ? projectById(board.projects, draggingTask.projectId)
+    : fallbackProject;
   const selectedTaskEditable = selectedTask ? canEditTask(selectedTask) : false;
   const selectedProject = selectedProjectId
     ? board.projects.find((project) => project.id === selectedProjectId) ?? null
@@ -1582,41 +1760,43 @@ export default function KanbanApp({
   }
 
   function handleDragStart(event: DragStartEvent) {
-    const source = event.operation.source;
-    if (!isSortable(source) || typeof source.id !== "string" || !isBoardStatus(source.initialGroup)) {
+    const sourceId = activeTaskIdFromEvent(event);
+    const sourceStatus = activeTaskStatusFromEvent(event);
+    if (!sourceId || !sourceStatus) {
       return;
     }
 
     dragStartTasksRef.current = board.tasks;
+    dragStartStatusRef.current = sourceStatus;
     latestTasksRef.current = board.tasks;
-    setDraggingTaskId(source.id);
-    setCrossDragTarget(source.initialGroup);
+    setDraggingTaskId(sourceId);
+    setCrossDragTarget(sourceStatus);
   }
 
   function handleDragOver(event: DragOverEvent) {
-    const source = event.operation.source;
-    if (!isSortable(source)) {
+    if (!activeTaskIdFromEvent(event)) {
       return;
     }
 
-    const targetStatus = targetStatusFromEntity(event.operation.target);
+    const targetStatus = targetStatusFromEntity(event.over);
     if (!targetStatus) {
       return;
     }
 
-    if (!isBoardStatus(source.initialGroup)) {
+    const sourceStatus = dragStartStatusRef.current ?? activeTaskStatusFromEvent(event);
+    if (!sourceStatus) {
       setCrossDragTarget(null);
       return;
     }
 
     setCrossDragTarget(targetStatus);
 
-    if (!shouldMoveTasks(event, targetStatus)) {
+    if (!shouldMoveTasks(event, targetStatus, sourceStatus)) {
       return;
     }
 
     setBoard((current) => {
-      const finalTasks = tasksFromDragTarget(current.tasks, event, targetStatus);
+      const finalTasks = tasksFromDragTarget(current.tasks, event, targetStatus, sourceStatus);
       if (sameTaskOrder(current.tasks, finalTasks)) {
         return current;
       }
@@ -1627,50 +1807,46 @@ export default function KanbanApp({
   }
 
   async function handleDragEnd(event: DragEndEvent) {
-    const source = event.operation.source;
     setCrossDragTarget(null);
     setDraggingTaskId(null);
-    const targetStatus = targetStatusFromEntity(event.operation.target);
-    const deleteDrop = isDeleteDropTarget(event.operation.target);
+    const targetStatus = targetStatusFromEntity(event.over);
+    const deleteDrop = isDeleteDropTarget(event.over);
+    const sourceId = activeTaskIdFromEvent(event);
+    const sourceStatus = dragStartStatusRef.current ?? activeTaskStatusFromEvent(event);
 
-    if (!isSortable(source)) {
+    if (!sourceId || !sourceStatus) {
       dragStartTasksRef.current = null;
+      dragStartStatusRef.current = null;
       return;
     }
 
     const startTasks = dragStartTasksRef.current;
 
-    if (event.canceled) {
-      if (startTasks) {
-        latestTasksRef.current = startTasks;
-        setBoard((current) => ({ ...current, tasks: startTasks }));
-      }
-      dragStartTasksRef.current = null;
-      return;
-    }
-
     const liveTasks = latestTasksRef.current;
     if (!startTasks) {
       dragStartTasksRef.current = null;
+      dragStartStatusRef.current = null;
       return;
     }
 
-    if (deleteDrop && typeof source.id === "string") {
+    if (deleteDrop) {
       latestTasksRef.current = startTasks;
       setBoard((current) => ({ ...current, tasks: startTasks }));
       dragStartTasksRef.current = null;
-      await removeTask(source.id);
+      dragStartStatusRef.current = null;
+      await removeTask(sourceId);
       return;
     }
 
     const finalTasks = applyDoneSideEffectsToTasks(sameTaskOrder(startTasks, liveTasks)
-      ? targetStatus && shouldMoveTasks(event, targetStatus)
-        ? tasksFromDragTarget(liveTasks, event, targetStatus)
+      ? targetStatus && shouldMoveTasks(event, targetStatus, sourceStatus)
+        ? tasksFromDragTarget(liveTasks, event, targetStatus, sourceStatus)
         : liveTasks
       : liveTasks);
 
     if (sameTaskOrder(startTasks, finalTasks)) {
       dragStartTasksRef.current = null;
+      dragStartStatusRef.current = null;
       return;
     }
 
@@ -1680,6 +1856,19 @@ export default function KanbanApp({
     );
     void persistCurrentOrder(finalTasks, startTasks);
     dragStartTasksRef.current = null;
+    dragStartStatusRef.current = null;
+  }
+
+  function handleDragCancel(_event: DragCancelEvent) {
+    setCrossDragTarget(null);
+    setDraggingTaskId(null);
+    const startTasks = dragStartTasksRef.current;
+    if (startTasks) {
+      latestTasksRef.current = startTasks;
+      setBoard((current) => ({ ...current, tasks: startTasks }));
+    }
+    dragStartTasksRef.current = null;
+    dragStartStatusRef.current = null;
   }
 
   async function persistCurrentOrder(tasksToPersist = board.tasks, rollbackTasks?: BoardTask[]) {
@@ -2287,60 +2476,80 @@ export default function KanbanApp({
               </div>
             </div>
             {viewMode === "board" ? (
-              <DragDropProvider
+              <DndContext
+                sensors={dragSensors}
+                collisionDetection={kanbanCollisionDetection}
                 onDragStart={handleDragStart}
                 onDragOver={handleDragOver}
                 onDragEnd={(event) => void handleDragEnd(event)}
+                onDragCancel={handleDragCancel}
               >
-            {/* 需求池：横向布局 - 始终显示，拖拽时不消失 */}
-            <div className="border-b border-[var(--border)] p-3">
-              {board.columns.slice(0, 1).map((column) => {
-                const columnTasks = sortTasks(
-                  filteredTasks.filter((task) => task.status === column.id)
-                );
-                return (
-                <HorizontalBoardColumn
-                    key={column.id}
-                    column={column}
-                    tasks={columnTasks}
-                    projects={board.projects}
-                    collapsed={backlogCollapsed}
-                    selectedTaskId={selectedTaskId}
-                    todayKey={todayKey}
-                    dueSoonDays={dueSoonDays}
-                    taskCardStripeEnabled={taskCardStripeEnabled}
-                    crossDragTarget={crossDragTarget}
-                    onToggleCollapse={() => setBacklogCollapsed((current) => !current)}
-                    onOpenTask={openTask}
-                  />
-                );
-              })}
-            </div>
-            {/* 其余4列：纵向布局 */}
-            <div className="flex h-full min-h-[760px] gap-3 overflow-x-auto p-3 2xl:min-h-[900px]">
-              {board.columns.slice(1).map((column) => {
-                const columnTasks = sortTasks(
-                  filteredTasks.filter((task) => task.status === column.id)
-                );
+                {/* 需求池：横向布局 - 始终显示，拖拽时不消失 */}
+                <div className="border-b border-[var(--border)] p-3">
+                  {board.columns.slice(0, 1).map((column) => {
+                    const columnTasks = sortTasks(
+                      filteredTasks.filter((task) => task.status === column.id)
+                    );
+                    return (
+                      <HorizontalBoardColumn
+                        key={column.id}
+                        column={column}
+                        tasks={columnTasks}
+                        projects={board.projects}
+                        collapsed={backlogCollapsed}
+                        selectedTaskId={selectedTaskId}
+                        todayKey={todayKey}
+                        dueSoonDays={dueSoonDays}
+                        taskCardStripeEnabled={taskCardStripeEnabled}
+                        crossDragTarget={crossDragTarget}
+                        onToggleCollapse={() => setBacklogCollapsed((current) => !current)}
+                        onOpenTask={openTask}
+                      />
+                    );
+                  })}
+                </div>
+                {/* 其余4列：纵向布局 */}
+                <div className="flex h-full min-h-[760px] gap-3 overflow-x-auto p-3 2xl:min-h-[900px]">
+                  {board.columns.slice(1).map((column) => {
+                    const columnTasks = sortTasks(
+                      filteredTasks.filter((task) => task.status === column.id)
+                    );
 
-                return (
-                  <BoardColumnView
-                    key={column.id}
-                    column={column}
-                    tasks={columnTasks}
-                    projects={board.projects}
-                    selectedTaskId={selectedTaskId}
-                    todayKey={todayKey}
-                    dueSoonDays={dueSoonDays}
-                    taskCardStripeEnabled={taskCardStripeEnabled}
-                    crossDragTarget={crossDragTarget}
-                    onOpenTask={openTask}
-                  />
-                );
-              })}
-            </div>
-            <DeleteDropZone visible={draggingTaskId !== null} />
-            </DragDropProvider>
+                    return (
+                      <BoardColumnView
+                        key={column.id}
+                        column={column}
+                        tasks={columnTasks}
+                        projects={board.projects}
+                        selectedTaskId={selectedTaskId}
+                        todayKey={todayKey}
+                        dueSoonDays={dueSoonDays}
+                        taskCardStripeEnabled={taskCardStripeEnabled}
+                        crossDragTarget={crossDragTarget}
+                        onOpenTask={openTask}
+                      />
+                    );
+                  })}
+                </div>
+                <DeleteDropZone visible={draggingTaskId !== null} />
+                <DragOverlay dropAnimation={null} zIndex={160}>
+                  {draggingTask ? (
+                    <div className="w-[300px] max-w-[min(72vw,320px)]">
+                      <TaskCard
+                        task={draggingTask}
+                        todayKey={todayKey}
+                        dueSoonDays={dueSoonDays}
+                        project={draggingTaskProject}
+                        selected={draggingTask.id === selectedTaskId}
+                        stripeEnabled={taskCardStripeEnabled}
+                        dragging
+                        draggable={false}
+                        onSelect={() => {}}
+                      />
+                    </div>
+                  ) : null}
+                </DragOverlay>
+              </DndContext>
             ) : (
               <KanbanListView
                 tasks={visibleListTasks}
@@ -2565,12 +2774,12 @@ function HorizontalBoardColumn({
   onToggleCollapse: () => void;
   onOpenTask: (taskId: string) => void;
 }) {
-  const { ref, isDropTarget } = useDroppable({
+  const { setNodeRef, isOver } = useDroppable({
     id: column.id,
     data: { type: "column", status: column.id } satisfies DragTargetData,
-    accept: "task",
   });
-  const activeDropTarget = crossDragTarget === column.id || isDropTarget;
+  const activeDropTarget = crossDragTarget === column.id || isOver;
+  const taskIds = tasks.map((task) => task.id);
 
   return (
     <div
@@ -2614,24 +2823,26 @@ function HorizontalBoardColumn({
       >
         <div className="min-h-0 overflow-hidden">
             <div
-              ref={ref}
+              ref={setNodeRef}
               data-board-drop-status={column.id}
               className="flex min-h-[118px] flex-nowrap items-stretch gap-3.5 overflow-x-auto overflow-y-hidden rounded-b-lg bg-[var(--lane-bg)] px-3.5 py-3"
             >
-              {tasks.map((task, index) => (
-                <HorizontalSortableTaskCard
-                  key={task.id}
-                  task={task}
-                  index={index}
-                  todayKey={todayKey}
-                  dueSoonDays={dueSoonDays}
-                  project={projectById(projects, task.projectId)}
-                  selected={task.id === selectedTaskId}
-                  stripeEnabled={taskCardStripeEnabled}
-                  className="w-[280px] shrink-0"
-                  onSelect={() => onOpenTask(task.id)}
-                />
-              ))}
+              <SortableContext id={column.id} items={taskIds} strategy={horizontalListSortingStrategy}>
+                {tasks.map((task, index) => (
+                  <HorizontalSortableTaskCard
+                    key={task.id}
+                    task={task}
+                    index={index}
+                    todayKey={todayKey}
+                    dueSoonDays={dueSoonDays}
+                    project={projectById(projects, task.projectId)}
+                    selected={task.id === selectedTaskId}
+                    stripeEnabled={taskCardStripeEnabled}
+                    className="w-[280px] shrink-0"
+                    onSelect={() => onOpenTask(task.id)}
+                  />
+                ))}
+              </SortableContext>
               {tasks.length === 0 ? (
                 <EmptyLaneCard axis="horizontal" active={activeDropTarget} />
               ) : null}
@@ -2663,12 +2874,12 @@ function BoardColumnView({
   crossDragTarget: BoardStatus | null;
   onOpenTask: (taskId: string) => void;
 }) {
-  const { ref, isDropTarget } = useDroppable({
+  const { setNodeRef, isOver } = useDroppable({
     id: column.id,
     data: { type: "column", status: column.id } satisfies DragTargetData,
-    accept: "task",
   });
-  const activeDropTarget = crossDragTarget === column.id || isDropTarget;
+  const activeDropTarget = crossDragTarget === column.id || isOver;
+  const taskIds = tasks.map((task) => task.id);
 
   return (
     <div
@@ -2697,21 +2908,23 @@ function BoardColumnView({
           </span>
         </div>
       </div>
-      <div ref={ref} data-board-drop-status={column.id} className="flex min-h-[220px] flex-1 flex-col gap-3.5 overflow-y-auto bg-[var(--lane-bg)] p-3.5">
-          {tasks.map((task, index) => (
-            <VerticalSortableTaskCard
-              key={task.id}
-              task={task}
-              index={index}
-              todayKey={todayKey}
-              dueSoonDays={dueSoonDays}
-              project={projectById(projects, task.projectId)}
-              selected={task.id === selectedTaskId}
-              stripeEnabled={taskCardStripeEnabled}
-              className="w-full"
-              onSelect={() => onOpenTask(task.id)}
-            />
-          ))}
+      <div ref={setNodeRef} data-board-drop-status={column.id} className="flex min-h-[220px] flex-1 flex-col gap-3.5 overflow-y-auto bg-[var(--lane-bg)] p-3.5">
+          <SortableContext id={column.id} items={taskIds} strategy={verticalListSortingStrategy}>
+            {tasks.map((task, index) => (
+              <VerticalSortableTaskCard
+                key={task.id}
+                task={task}
+                index={index}
+                todayKey={todayKey}
+                dueSoonDays={dueSoonDays}
+                project={projectById(projects, task.projectId)}
+                selected={task.id === selectedTaskId}
+                stripeEnabled={taskCardStripeEnabled}
+                className="w-full"
+                onSelect={() => onOpenTask(task.id)}
+              />
+            ))}
+          </SortableContext>
           {tasks.length === 0 ? (
             <EmptyLaneCard axis="vertical" active={activeDropTarget} />
           ) : null}
@@ -2844,18 +3057,29 @@ function HorizontalDraggableTaskCard({
   className?: string;
   onSelect: () => void;
 }) {
-  const { ref, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: task.id,
-    index,
-    group: task.status,
-    type: "task",
     data: { type: "task", status: task.status } satisfies DragTargetData,
   });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  } satisfies CSSProperties;
 
   return (
     <div
-      ref={ref}
-      className={`${className ?? ""} touch-none ${isDragging ? "pointer-events-none relative z-30" : ""}`}
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={`${className ?? ""} touch-none ${isDragging ? "pointer-events-none relative z-30 opacity-0" : ""}`}
       data-shadow={isDragging || undefined}
     >
       <TaskCard
@@ -2930,18 +3154,29 @@ function VerticalDraggableTaskCard({
   className?: string;
   onSelect: () => void;
 }) {
-  const { ref, isDragging } = useSortable({
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
     id: task.id,
-    index,
-    group: task.status,
-    type: "task",
     data: { type: "task", status: task.status } satisfies DragTargetData,
   });
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  } satisfies CSSProperties;
 
   return (
     <div
-      ref={ref}
-      className={`${className ?? ""} touch-none ${isDragging ? "pointer-events-none relative z-30" : ""}`}
+      ref={setNodeRef}
+      style={style}
+      {...attributes}
+      {...listeners}
+      className={`${className ?? ""} touch-none ${isDragging ? "pointer-events-none relative z-30 opacity-0" : ""}`}
       data-shadow={isDragging || undefined}
     >
       <TaskCard
@@ -3156,22 +3391,21 @@ function ProjectRow({
 }
 
 function DeleteDropZone({ visible }: { visible: boolean }) {
-  const { ref, isDropTarget } = useDroppable({
+  const { setNodeRef, isOver } = useDroppable({
     id: "delete-zone",
     data: { type: "delete-zone" } satisfies DragTargetData,
-    accept: "task",
   });
 
   return (
     <div
-      ref={ref}
+      ref={setNodeRef}
       className={`fixed bottom-8 right-6 z-40 transition-all duration-200 ${
         visible ? "pointer-events-auto translate-y-0 opacity-100" : "pointer-events-none translate-y-4 opacity-0"
       }`}
     >
       <div
         className={`grid min-h-[150px] min-w-[260px] place-items-center rounded-lg border-2 border-dashed px-7 py-6 text-center shadow-xl transition ${
-          isDropTarget
+          isOver
             ? "scale-[1.02] border-[var(--danger)] bg-[var(--danger)] text-white"
             : "border-[var(--danger)] bg-[var(--panel)] text-[var(--danger)]"
         }`}
@@ -3179,7 +3413,7 @@ function DeleteDropZone({ visible }: { visible: boolean }) {
         <div className="flex flex-col items-center gap-3">
           <span
             className={`grid h-12 w-12 place-items-center rounded-full transition ${
-              isDropTarget ? "bg-white/20" : "bg-[var(--danger-soft)]"
+              isOver ? "bg-white/20" : "bg-[var(--danger-soft)]"
             }`}
           >
             <Trash2 size={24} />
@@ -3340,9 +3574,19 @@ function TaskCardInfo({ label, children }: { label: string; children: ReactNode 
 }
 
 function Drawer({ children, onClose, side = "right" }: { children: ReactNode; onClose: () => void; side?: "left" | "right" }) {
+  function closeFromBackdrop(event: { target: EventTarget; currentTarget: EventTarget }) {
+    if (event.target === event.currentTarget) {
+      onClose();
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 bg-black/20">
-      <button type="button" aria-label="关闭抽屉" className="absolute inset-0 cursor-default" onClick={onClose} />
+    <div
+      className="fixed inset-0 z-50 bg-black/20"
+      onClick={closeFromBackdrop}
+      onMouseDown={closeFromBackdrop}
+      onPointerDown={closeFromBackdrop}
+    >
       <aside
         className={`absolute top-0 h-full w-full max-w-[560px] overflow-y-auto bg-[var(--panel)] p-5 shadow-2xl ${
           side === "left"

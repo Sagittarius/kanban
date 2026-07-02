@@ -1,6 +1,13 @@
-/** Cloudflare Worker entry point for the vinext-starter template. */
+/**
+ * Legacy vinext worker entry kept for template compatibility.
+ * The self-hosted Docker path does not depend on this file.
+ */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+
+interface Fetcher {
+  fetch(request: Request, init?: RequestInit): Promise<Response>;
+}
 
 interface Env {
   ASSETS: Fetcher;

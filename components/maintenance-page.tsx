@@ -2,6 +2,7 @@
 
 import { AlertTriangle, CheckCircle2, CircleX, Database, HardDriveDownload, LoaderCircle, RefreshCw, ShieldAlert, Wrench, type LucideIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { clientFetch } from "@/lib/client-observability";
 import type { MaintenanceState } from "@/lib/maintenance";
 
 type MaintenancePageProps = {
@@ -83,7 +84,11 @@ export default function MaintenancePage({
 
     const timer = window.setInterval(async () => {
       try {
-        const response = await fetch("/api/maintenance/status", { cache: "no-store" });
+        const response = await clientFetch(
+          "/api/maintenance/status",
+          { cache: "no-store" },
+          { operation: "maintenance.status" }
+        );
         const payload = (await response.json()) as StatusPayload;
 
         if (cancelled) {
@@ -137,13 +142,13 @@ export default function MaintenancePage({
     setMessage("");
 
     try {
-      const response = await fetch("/api/maintenance/upgrade", {
+      const response = await clientFetch("/api/maintenance/upgrade", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ token }),
-      });
+      }, { operation: "maintenance.upgrade" });
 
       const payload = await response.json();
 

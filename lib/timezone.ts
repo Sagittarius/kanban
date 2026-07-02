@@ -53,3 +53,36 @@ export function formatDateTimeInTimeZone(value: string, timeZone = DEFAULT_TIMEZ
 
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}`;
 }
+
+export function logTimeZone() {
+  return normalizeTimeZone(process.env.TZ ?? process.env.KANBAN_DEFAULT_TIMEZONE ?? DEFAULT_TIMEZONE);
+}
+
+export function formatZonedTimestamp(value: Date | string | number = new Date(), timeZone = logTimeZone()) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+
+  const normalized = normalizeTimeZone(timeZone);
+  const formatter = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: normalized,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+    hour12: false,
+    hourCycle: "h23",
+    timeZoneName: "longOffset",
+  });
+
+  const parts = Object.fromEntries(
+    formatter.formatToParts(date).map((part) => [part.type, part.value])
+  );
+
+  const offset = String(parts.timeZoneName ?? "GMT+00:00").replace(/^GMT/, "");
+  return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}:${parts.second}.${parts.fractionalSecond ?? "000"}${offset}`;
+}

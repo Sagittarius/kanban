@@ -1,15 +1,10 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
   --background: #f6f7f9;
   --foreground: #17191f;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: Arial, Helvetica, sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,6 +18,51 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb, rgba(100, 116, 139, 0.62)) var(--scrollbar-track, rgba(226, 232, 240, 0.42));
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, rgba(226, 232, 240, 0.42));
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 44px;
+  border: 2px solid var(--scrollbar-track, rgba(226, 232, 240, 0.42));
+  border-radius: 999px;
+  background: var(--scrollbar-thumb, rgba(100, 116, 139, 0.62));
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, rgba(71, 85, 105, 0.8));
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+html[data-input-mode="pointer"] button:focus,
+html[data-input-mode="pointer"] [role="button"]:focus,
+html[data-input-mode="pointer"] a[href]:focus,
+html[data-input-mode="pointer"] summary:focus {
+  outline: none;
+}
+
+html[data-input-mode="keyboard"] button:focus,
+html[data-input-mode="keyboard"] [role="button"]:focus,
+html[data-input-mode="keyboard"] a[href]:focus,
+html[data-input-mode="keyboard"] summary:focus {
+  outline: 2px solid var(--accent, var(--dash-accent, #0f766e));
+  outline-offset: 2px;
 }
 
 .kanban-theme {
@@ -43,6 +83,9 @@ body {
   --text: #17191f;
   --muted: #687083;
   --border: #d9dee7;
+  --scrollbar-track: rgba(217, 222, 231, 0.42);
+  --scrollbar-thumb: rgba(104, 112, 131, 0.54);
+  --scrollbar-thumb-hover: rgba(94, 106, 210, 0.74);
   --accent: #5e6ad2;
   --accent-hover: #4f5cc6;
   --accent-soft: rgba(94, 106, 210, 0.18);
@@ -147,6 +190,9 @@ body {
   --text: #e7f6ff;
   --muted: #8aa9c7;
   --border: rgba(109, 136, 177, 0.22);
+  --scrollbar-track: rgba(10, 18, 36, 0.72);
+  --scrollbar-thumb: rgba(138, 169, 199, 0.46);
+  --scrollbar-thumb-hover: rgba(74, 222, 255, 0.74);
   --accent: #4adeff;
   --accent-hover: #2fc9ee;
   --accent-soft: rgba(74, 222, 255, 0.16);
@@ -173,6 +219,9 @@ body {
   --text: #f3f2ff;
   --muted: #a7a6bf;
   --border: #31374d;
+  --scrollbar-track: rgba(22, 24, 39, 0.82);
+  --scrollbar-thumb: rgba(167, 166, 191, 0.46);
+  --scrollbar-thumb-hover: rgba(139, 92, 246, 0.76);
   --accent: #8b5cf6;
   --accent-hover: #7c3aed;
   --accent-soft: rgba(139, 92, 246, 0.18);

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import path from "node:path";
+import { formatZonedTimestamp } from "@/lib/timezone";
 
 type LogLevel = "debug" | "info" | "warn" | "error";
 type LogFields = Record<string, unknown>;
@@ -66,6 +67,29 @@ export function errorFields(error: unknown): LogFields {
   return { errorMessage: String(error) };
 }
 
+export function getLogConfiguration() {
+  return {
+    app: {
+      level: configuredAppLevel,
+      consoleEnabled: isConsoleEnabled("app"),
+      fileEnabled: process.env.KANBAN_LOG_FILE_ENABLED !== "false",
+      filePath: resolveLogFilePath("app") || "",
+      maxSizeMb: readOptionalPositiveNumber(process.env.KANBAN_LOG_MAX_SIZE_MB, 50),
+      maxFiles: readOptionalPositiveInteger(process.env.KANBAN_LOG_MAX_FILES, 10),
+      retentionDays: readOptionalPositiveNumber(process.env.KANBAN_LOG_RETENTION_DAYS, 30),
+    },
+    business: {
+      level: configuredBusinessLevel,
+      consoleEnabled: isConsoleEnabled("business"),
+      fileEnabled: (process.env.KANBAN_BUSINESS_LOG_FILE_ENABLED ?? process.env.KANBAN_LOG_FILE_ENABLED) !== "false",
+      filePath: resolveLogFilePath("business") || "",
+      maxSizeMb: readOptionalPositiveNumber(logOption("business", "KANBAN_LOG_MAX_SIZE_MB", "KANBAN_BUSINESS_LOG_MAX_SIZE_MB"), 50),
+      maxFiles: readOptionalPositiveInteger(logOption("business", "KANBAN_LOG_MAX_FILES", "KANBAN_BUSINESS_LOG_MAX_FILES"), 10),
+      retentionDays: readOptionalPositiveNumber(logOption("business", "KANBAN_LOG_RETENTION_DAYS", "KANBAN_BUSINESS_LOG_RETENTION_DAYS"), 30),
+    },
+  };
+}
+
 function createLogger(bindings: LogFields = {}, destination: LogDestination = "app"): StructuredLogger {
   return {
     child(childBindings) {
@@ -92,7 +116,7 @@ function writeLog(level: LogLevel, message: string, bindings: LogFields, fields:
   }
 
   const payload = sanitize({
-    time: new Date().toISOString(),
+    time: formatZonedTimestamp(),
     level,
     msg: message,
     ...baseBindings,
@@ -226,7 +250,7 @@ class RotatingFileLogSink implements FileLogSink {
 
   private nextRotatedFilePath() {
     const parsed = path.parse(this.filePath);
-    const timestamp = new Date().toISOString().replaceAll(":", "-").replaceAll(".", "-");
+    const timestamp = formatZonedTimestamp().replaceAll(":", "-");
     let candidate = path.join(parsed.dir, `${parsed.name}.${timestamp}${parsed.ext}`);
     let index = 1;
 
@@ -305,7 +329,7 @@ function readOptionalPositiveInteger(value: string | undefined, fallback: number
 function writeInternalLoggerError(message: string, logFile: string, error: unknown) {
   process.stderr.write(
     `${JSON.stringify({
-      time: new Date().toISOString(),
+      time: formatZonedTimestamp(),
       level: "error",
       msg: message,
       logFile,
@@ -334,6 +358,9 @@ function sanitize(value: unknown): unknown {
   if (Array.isArray(value)) {
     return value.map(sanitize);
   }
+  if (typeof value === "string") {
+    return redactSensitiveString(value);
+  }
   if (typeof value === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
@@ -351,4 +378,11 @@ function sanitize(value: unknown): unknown {
 function isSensitiveKey(key: string) {
   const normalized = key.toLowerCase();
   return normalized.includes("password") || normalized.includes("token") || normalized.includes("secret") || normalized.includes("cookie");
+}
+
+function redactSensitiveString(value: string) {
+  return value
+    .replace(/(authorization\s*[:=]\s*bearer\s+)[^\s"'<>]+/gi, "$1[redacted]")
+    .replace(/((?:password|passwd|pwd|token|access_token|refresh_token|secret|cookie|set-cookie|session)\s*[:=]\s*)[^&\s"',;<>}]+/gi, "$1[redacted]")
+    .replace(/((?:password|passwd|pwd|token|access_token|refresh_token|secret|cookie|session)(?:%3D|=))[^&\s"',;<>}]+/gi, "$1[redacted]");
 }

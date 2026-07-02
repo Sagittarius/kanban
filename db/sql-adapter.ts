@@ -28,6 +28,11 @@ type PgPool = {
   query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
 };
 
+type MigrationTableConfig = {
+  primary: string;
+  legacy?: string;
+};
+
 let cachedAdapter: DatabaseAdapter | null = null;
 let cachedLocalDatabase: LocalSQLiteDatabase | null = null;
 let cachedPgPool: PgPool | null = null;
@@ -70,7 +75,10 @@ async function createSQLiteAdapter(): Promise<DatabaseAdapter> {
   fs.mkdirSync(path.dirname(databasePath), { recursive: true });
   cachedLocalDatabase = new DatabaseSync(databasePath) as LocalSQLiteDatabase;
   const adapter = createSQLiteAdapterFromDatabase(cachedLocalDatabase);
-  await applyFileMigrations(adapter, ["drizzle"], "d1_migrations");
+  await applyFileMigrations(adapter, ["drizzle"], {
+    primary: "kanban_migrations",
+    legacy: "d1_migrations",
+  });
   return adapter;
 }
 
@@ -121,7 +129,9 @@ async function createPostgresAdapter(): Promise<DatabaseAdapter> {
     },
   };
 
-  await applyFileMigrations(adapter, ["migrations", "postgres"], "kanban_migrations");
+  await applyFileMigrations(adapter, ["migrations", "postgres"], {
+    primary: "kanban_migrations",
+  });
   return adapter;
 }
 
@@ -130,7 +140,11 @@ async function loadFile(filePath: string): Promise<string> {
   return fs.readFileSync(filePath, "utf8");
 }
 
-async function applyFileMigrations(adapter: DatabaseAdapter, migrationsPath: string[], tableName: string) {
+async function applyFileMigrations(
+  adapter: DatabaseAdapter,
+  migrationsPath: string[],
+  tableConfig: MigrationTableConfig
+) {
   const [fs, path] = await Promise.all([import("node:fs"), import("node:path")]);
   const migrationsDir = path.join(process.cwd(), ...migrationsPath);
   if (!fs.existsSync(migrationsDir)) {
@@ -139,8 +153,15 @@ async function applyFileMigrations(adapter: DatabaseAdapter, migrationsPath: str
 
   const timestampType = adapter.mode === "postgres" ? "TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP" : "TEXT DEFAULT CURRENT_TIMESTAMP";
   await adapter.execute(
-    `CREATE TABLE IF NOT EXISTS ${tableName} (name TEXT PRIMARY KEY NOT NULL, applied_at ${timestampType} NOT NULL)`
+    `CREATE TABLE IF NOT EXISTS ${tableConfig.primary} (name TEXT PRIMARY KEY NOT NULL, applied_at ${timestampType} NOT NULL)`
   );
+
+  if (tableConfig.legacy && tableConfig.legacy !== tableConfig.primary) {
+    const legacyExists = await tableExists(adapter, tableConfig.legacy);
+    if (legacyExists) {
+      await copyLegacyMigrations(adapter, tableConfig.primary, tableConfig.legacy);
+    }
+  }
 
   const migrations = fs
     .readdirSync(migrationsDir)
@@ -149,7 +170,7 @@ async function applyFileMigrations(adapter: DatabaseAdapter, migrationsPath: str
 
   for (const migration of migrations) {
     const existing = await adapter.query<{ name: string }>(
-      `SELECT name FROM ${tableName} WHERE name = ?`,
+      `SELECT name FROM ${tableConfig.primary} WHERE name = ?`,
       [migration]
     );
     if (existing.length > 0) {
@@ -168,7 +189,42 @@ async function applyFileMigrations(adapter: DatabaseAdapter, migrationsPath: str
         throw err;
       }
     }
-    await adapter.execute(`INSERT INTO ${tableName} (name) VALUES (?)`, [migration]);
+    await adapter.execute(`INSERT INTO ${tableConfig.primary} (name) VALUES (?)`, [migration]);
+  }
+}
+
+async function tableExists(adapter: DatabaseAdapter, tableName: string) {
+  if (adapter.mode === "postgres") {
+    const rows = await adapter.query<{ exists: boolean }>(
+      "SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?) AS exists",
+      [tableName]
+    );
+    return rows[0]?.exists === true;
+  }
+
+  const rows = await adapter.query<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+    [tableName]
+  );
+  return rows.length > 0;
+}
+
+async function copyLegacyMigrations(adapter: DatabaseAdapter, targetTable: string, legacyTable: string) {
+  const legacyRows = await adapter.query<{ name: string; applied_at?: string }>(
+    `SELECT name, applied_at FROM ${legacyTable}`
+  );
+
+  for (const row of legacyRows) {
+    await adapter.execute(
+      `INSERT INTO ${targetTable} (name, applied_at) VALUES (?, ?)`,
+      [row.name, row.applied_at ?? null]
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (message.includes("UNIQUE") || message.includes("duplicate key")) {
+        return { changes: 0 };
+      }
+      throw error;
+    });
   }
 }
 

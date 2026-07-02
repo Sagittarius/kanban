@@ -85,29 +85,29 @@ const themeStyles: Record<ThemeMode, {
   admin: {
     overlay: "bg-slate-950/36 backdrop-blur-[2px]",
     shell:
-      "rounded-[28px] border border-[color:color-mix(in_oklab,var(--accent)_18%,var(--border))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--panel)_92%,white_8%),var(--panel))] shadow-[0_24px_72px_color-mix(in_oklab,var(--accent)_18%,transparent)]",
+      "rounded-[28px] border border-[var(--card-border-strong)] bg-[linear-gradient(180deg,var(--panel-soft),var(--panel))] shadow-[0_24px_72px_rgba(15,23,42,0.18)]",
     topGlow:
-      "pointer-events-none absolute right-[-12%] top-[-14%] h-28 w-28 rounded-full bg-[radial-gradient(circle,color-mix(in_oklab,var(--accent)_30%,transparent),transparent_70%)] blur-3xl opacity-90",
+      "pointer-events-none absolute right-[-12%] top-[-14%] h-28 w-28 rounded-full bg-[radial-gradient(circle,var(--accent-soft),transparent_70%)] blur-3xl opacity-90",
     headerLine:
-      "pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,color-mix(in_oklab,var(--accent)_48%,transparent),transparent)] opacity-90",
+      "pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--accent),transparent)] opacity-50",
     closeButton:
       "border border-[var(--border)] bg-[var(--panel-soft)] text-[var(--muted)] hover:bg-[var(--hover)] hover:text-[var(--text)]",
     eyebrow: "bg-[var(--accent-soft)] text-[var(--accent)]",
     valueBox:
-      "border border-[color:color-mix(in_oklab,var(--accent)_14%,var(--border))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--panel-soft)_92%,white_8%),var(--panel-soft))] shadow-[inset_0_1px_0_color-mix(in_oklab,white_60%,transparent)]",
+      "border border-[var(--card-border)] bg-[linear-gradient(180deg,var(--panel),var(--panel-soft))] shadow-[inset_0_1px_0_rgba(255,255,255,0.55)]",
     valueLabel: "text-[var(--muted)]",
     valueText: "text-[var(--text)]",
     techStackBox:
-      "border border-[color:color-mix(in_oklab,var(--accent)_14%,var(--border))] bg-[linear-gradient(180deg,color-mix(in_oklab,var(--panel-soft)_92%,white_8%),var(--panel-soft))]",
+      "border border-[var(--card-border)] bg-[linear-gradient(180deg,var(--panel),var(--panel-soft))]",
     techStackChip:
-      "border border-[color:color-mix(in_oklab,var(--accent)_28%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_78%,white_22%)] text-[var(--accent)]",
+      "border border-[var(--card-border-strong)] bg-[var(--accent-soft)] text-[var(--accent)]",
     techStackEmpty: "border border-dashed border-[var(--border)] bg-[var(--panel)] text-[var(--muted)]",
     avatarBorder:
-      "border border-[color:color-mix(in_oklab,var(--accent)_20%,var(--border))] shadow-[0_12px_28px_color-mix(in_oklab,var(--accent)_16%,transparent)]",
+      "border border-[var(--card-border-strong)] shadow-[0_12px_28px_rgba(15,23,42,0.16)]",
     fallbackAvatar: "bg-[var(--accent-soft)] text-[var(--accent)]",
     roleChip:
-      "border border-[color:color-mix(in_oklab,var(--accent)_22%,var(--border))] bg-[color:color-mix(in_oklab,var(--accent-soft)_76%,white_24%)] text-[var(--accent)]",
-    roleDivider: "border-[color:color-mix(in_oklab,var(--accent)_20%,var(--border))] text-[var(--muted)]",
+      "border border-[var(--card-border-strong)] bg-[var(--accent-soft)] text-[var(--accent)]",
+    roleDivider: "border-[var(--card-border-strong)] text-[var(--muted)]",
     title: "text-[var(--text)]",
   },
 };

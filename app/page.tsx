@@ -9,6 +9,7 @@ import { getAppVersion, getImageTag } from "@/lib/app-meta";
 import { readChangelogEntries } from "@/lib/changelog";
 import { readMaintenanceState } from "@/lib/maintenance";
 import { errorFields, getLogger } from "@/lib/logger";
+import { withPageLogging } from "@/lib/page-logging";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { getOptionalSessionUser, requireSessionUser, resolveActiveBoard } from "@/lib/server-session";
 import { isThemeId } from "@/lib/ui-options";
@@ -37,6 +38,7 @@ function isExpectedBoardAccessError(error: unknown) {
 }
 
 export default async function Home() {
+  return withPageLogging("/", async (pageLogContext) => {
   const maintenanceState = await readMaintenanceState();
   const appVersion = getAppVersion();
   const imageTag = getImageTag();
@@ -60,10 +62,12 @@ export default async function Home() {
   }
 
   const user = optionalUser ?? (await requireSessionUser());
+  pageLogContext.setContext({ userId: user.id });
   const repo = await getKanbanRepository();
 
   try {
     const activeBoard = await resolveActiveBoard(user);
+    pageLogContext.setContext({ boardId: activeBoard.id });
     const board = await repo.getBoard(user, activeBoard.id);
 
     const runtime = (
@@ -73,6 +77,7 @@ export default async function Home() {
         appVersion={appVersion}
         changelogEntries={changelogEntries}
         initialThemeId={initialThemeId}
+        activeBoardId={activeBoard.id}
       />
     );
 
@@ -85,6 +90,7 @@ export default async function Home() {
         user={user}
         boards={board.boards ?? []}
         activeBoardId={board.activeBoardId ?? activeBoard.id}
+        initialThemeId={initialThemeId}
       >
         {runtime}
       </AuthenticatedShell>
@@ -108,7 +114,9 @@ export default async function Home() {
       <AppErrorPage
         title="当前账号没有可访问的看板"
         detail={error instanceof Error ? error.message : "加载看板失败"}
+        requestId={pageLogContext.requestId}
       />
     );
   }
+  });
 }

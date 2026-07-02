@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { readAppVersion, readImageTag, resolveDatabasePath } from "./sqlite-migration-lib.mjs";
+import { formatLogTimestamp, readAppVersion, readImageTag, resolveDatabasePath } from "./sqlite-migration-lib.mjs";
 
 export function resolveMaintenanceStatePath() {
   return (
@@ -31,7 +31,7 @@ export function writeMaintenanceState(payload) {
       {
         appVersion: readAppVersion(),
         imageTag: readImageTag(),
-        updatedAt: new Date().toISOString(),
+        updatedAt: formatLogTimestamp(),
         ...payload,
       },
       null,

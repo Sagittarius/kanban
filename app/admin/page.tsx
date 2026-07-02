@@ -3,12 +3,14 @@ import { cookies } from "next/headers";
 import AdminApp from "@/components/admin-app";
 import LoginPage from "@/components/login-page";
 import { errorFields, getLogger } from "@/lib/logger";
+import { withPageLogging } from "@/lib/page-logging";
 import { getOptionalSessionUser } from "@/lib/server-session";
 import { isThemeId } from "@/lib/ui-options";
 
 const adminPageLogger = getLogger("admin-page");
 
 export default async function AdminPage() {
+  return withPageLogging("/admin", async (pageLogContext) => {
   try {
     const user = await getOptionalSessionUser();
     const themeCookie = (await cookies()).get("kanban_theme")?.value;
@@ -16,6 +18,7 @@ export default async function AdminPage() {
     if (!user) {
       return <LoginPage />;
     }
+    pageLogContext.setContext({ userId: user.id });
 
     if (user.role !== "super_admin" && user.role !== "project_manager" && user.role !== "development_manager") {
       return (
@@ -32,7 +35,12 @@ export default async function AdminPage() {
 
     return <AdminApp currentUser={user} initialThemeId={initialThemeId} />;
   } catch (error) {
-    adminPageLogger.error("admin page render failed", errorFields(error));
+    adminPageLogger.error("admin page render failed", {
+      requestId: pageLogContext.requestId,
+      path: "/admin",
+      ...errorFields(error),
+    });
     throw error;
   }
+  });
 }

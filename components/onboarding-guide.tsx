@@ -54,6 +54,15 @@ const managerSteps: GuideStep[] = [
     action: "openMenu",
   },
   {
+    id: "shell-board-switch",
+    scope: "shell",
+    selector: '[data-tour="menu-board-switch"]',
+    title: "切换看板",
+    detail: "这里可以在你有权限的看板之间切换。",
+    cta: "下一步",
+    onEnterAction: "openMenu",
+  },
+  {
     id: "shell-open-admin",
     scope: "shell",
     selector: '[data-tour="menu-admin"]',
@@ -199,6 +208,15 @@ const memberSteps: GuideStep[] = [
     detail: "后续常用入口都在这里。",
     cta: "打开菜单",
     action: "openMenu",
+  },
+  {
+    id: "shell-board-switch",
+    scope: "shell",
+    selector: '[data-tour="menu-board-switch"]',
+    title: "切换看板",
+    detail: "这里可以在你有权限的看板之间切换。",
+    cta: "下一步",
+    onEnterAction: "openMenu",
   },
   {
     id: "shell-profile",
@@ -428,13 +446,13 @@ export default function OnboardingGuide({
 
   return (
     <div className="pointer-events-none fixed inset-0 z-[140]">
-      <div className="absolute inset-0 bg-slate-950/28" />
+      <div className="absolute inset-0 bg-slate-950/56" />
       <div
-        className="absolute rounded-[28px] border border-cyan-300/80 shadow-[0_0_0_1px_rgba(103,232,249,0.2),0_0_0_9999px_rgba(2,6,23,0.22),0_0_36px_rgba(34,211,238,0.22)] transition-all"
+        className="absolute rounded-[28px] border border-cyan-200 shadow-[0_0_0_1px_rgba(103,232,249,0.34),0_0_0_9999px_rgba(2,6,23,0.5),0_0_42px_rgba(34,211,238,0.34)] transition-all"
         style={highlightStyle}
       />
       <section
-        className="pointer-events-auto absolute w-[min(340px,calc(100vw-40px))] rounded-[28px] border border-cyan-200/40 bg-slate-950/92 p-4 text-white shadow-[0_24px_60px_rgba(8,47,73,0.4)]"
+        className="pointer-events-auto absolute w-[min(340px,calc(100vw-40px))] rounded-[28px] border border-cyan-200/55 bg-slate-950 p-4 text-white shadow-[0_24px_60px_rgba(8,47,73,0.54)]"
         style={cardStyle}
       >
         <div className="flex items-start gap-3">

@@ -5,6 +5,7 @@ import Image from "next/image";
 import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import OnboardingGuide from "@/components/onboarding-guide";
+import { clientFetch } from "@/lib/client-observability";
 import { avatarOptions, jobTitleOptions, techStackOptions, timezoneOptions } from "@/lib/ui-options";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
 import { X } from "lucide-react";
@@ -13,11 +14,13 @@ export default function AuthenticatedShell({
   user,
   boards,
   activeBoardId,
+  initialThemeId = "notion",
   children,
 }: {
   user: CurrentUser;
   boards: BoardSummary[];
   activeBoardId: string;
+  initialThemeId?: string;
   children: ReactNode;
 }) {
   const [currentUser, setCurrentUser] = useState(user);
@@ -81,7 +84,7 @@ export default function AuthenticatedShell({
   }, []);
 
   async function switchBoard(boardId: string) {
-    await fetch(`/api/boards/${boardId}/select`, { method: "POST" });
+    await clientFetch(`/api/boards/${boardId}/select`, { method: "POST" }, { operation: "boards.select" });
     setMenuOpen(false);
     window.location.assign("/");
   }
@@ -95,7 +98,7 @@ export default function AuthenticatedShell({
     }
 
     setSavingProfile(true);
-    const response = await fetch("/api/auth/me", {
+    const response = await clientFetch("/api/auth/me", {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -107,7 +110,7 @@ export default function AuthenticatedShell({
         currentPassword: passwordDraft.currentPassword,
         newPassword: passwordDraft.newPassword,
       }),
-    });
+    }, { operation: "auth.profile.update" });
     const payload = (await response.json().catch(() => ({}))) as { user?: CurrentUser; error?: string };
     setSavingProfile(false);
     if (!response.ok || !payload.user) {
@@ -121,46 +124,46 @@ export default function AuthenticatedShell({
   }
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" });
+    await clientFetch("/api/auth/logout", { method: "POST" }, { operation: "auth.logout" });
     window.location.assign("/");
   }
 
   return (
-    <>
+    <div className="kanban-theme contents" data-theme={initialThemeId}>
       <div className="fixed right-5 top-5 z-40">
         <div className="relative" ref={menuRef}>
           <button
             type="button"
             onClick={() => setMenuOpen((current) => !current)}
             data-tour="shell-menu"
-            className="flex h-12 items-center gap-3 rounded-full border border-white/70 bg-white/88 px-3 pr-4 text-sm font-medium text-slate-700 shadow-[0_14px_40px_rgba(15,23,42,0.12)] backdrop-blur transition hover:bg-white"
+            className="flex h-12 items-center gap-3 rounded-full border border-[var(--border)] bg-[var(--panel)] px-3 pr-4 text-sm font-medium text-[var(--text)] shadow-[0_14px_40px_rgba(15,23,42,0.12)] backdrop-blur transition hover:bg-[var(--panel-soft)]"
           >
             <UserAvatar
               src={avatarOptions.find((item) => item.key === currentUser.avatarKey)?.src}
               name={currentUser.displayName || currentUser.username}
             />
             <div className="flex min-w-0 flex-col items-start leading-tight">
-              <span className="max-w-[150px] truncate text-sm font-semibold text-slate-900">{currentUser.displayName || currentUser.username}</span>
-              <span className="max-w-[150px] truncate text-xs text-slate-500">@{currentUser.username}</span>
+              <span className="max-w-[150px] truncate text-sm font-semibold text-[var(--text)]">{currentUser.displayName || currentUser.username}</span>
+              <span className="max-w-[150px] truncate text-xs text-[var(--muted)]">@{currentUser.username}</span>
             </div>
           </button>
 
           {menuOpen ? (
-            <div className="absolute right-0 top-[calc(100%+12px)] w-[340px] rounded-[24px] border border-white/80 bg-white/96 p-3 shadow-[0_24px_60px_rgba(15,23,42,0.18)] backdrop-blur">
-              <div className="flex items-center gap-3 rounded-2xl bg-slate-50 px-3 py-3">
+            <div className="absolute right-0 top-[calc(100%+12px)] w-[340px] rounded-[24px] border border-[var(--border)] bg-[var(--panel)] p-3 text-[var(--text)] shadow-[0_24px_60px_rgba(15,23,42,0.18)] backdrop-blur">
+              <div className="flex items-center gap-3 rounded-2xl bg-[var(--panel-soft)] px-3 py-3">
                 <UserAvatar
                   src={avatarOptions.find((item) => item.key === currentUser.avatarKey)?.src}
                   name={currentUser.displayName || currentUser.username}
                 />
                 <div className="min-w-0">
-                  <p className="truncate text-sm font-semibold text-slate-900">{currentUser.displayName || currentUser.username}</p>
-                  <p className="truncate text-xs text-slate-500">@{currentUser.username}</p>
+                  <p className="truncate text-sm font-semibold text-[var(--text)]">{currentUser.displayName || currentUser.username}</p>
+                  <p className="truncate text-xs text-[var(--muted)]">@{currentUser.username}</p>
                 </div>
               </div>
 
               <div className="space-y-3 px-1 py-3">
-                <div className="space-y-2">
-                  <div className="px-2 text-xs font-semibold text-slate-500">看板切换</div>
+                <div className="space-y-2" data-tour="menu-board-switch">
+                  <div className="px-2 text-xs font-semibold text-[var(--muted)]">看板切换</div>
                   <SearchableSelect
                     value={activeBoardId}
                     options={boardSelectOptions}
@@ -217,9 +220,10 @@ export default function AuthenticatedShell({
       />
 
       {profileOpen ? (
-        <ShellModal title="个人设置" onClose={() => setProfileOpen(false)} maxWidth="max-w-[560px]">
-          <div className="space-y-4">
-            <div className="flex justify-center pb-1">
+        <ShellModal title="个人设置" onClose={() => setProfileOpen(false)} maxWidth="max-w-[560px]" bodyClassName="flex overflow-hidden">
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="shrink-0 border-b border-[var(--border)] pb-4">
+              <div className="flex justify-center pb-3">
               <button
                 type="button"
                 onClick={() => setAvatarPickerOpen(true)}
@@ -231,36 +235,38 @@ export default function AuthenticatedShell({
                   alt="当前头像"
                   width={88}
                   height={88}
-                  className="h-[88px] w-[88px] rounded-full border border-slate-200 object-cover shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition duration-200 group-hover:scale-[1.03] group-hover:shadow-[0_18px_42px_rgba(15,118,110,0.18)]"
+                  className="h-[88px] w-[88px] rounded-full border border-[var(--border)] object-cover shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition duration-200 group-hover:scale-[1.03] group-hover:shadow-[0_18px_42px_rgba(15,118,110,0.18)]"
                 />
                 <span className="pointer-events-none absolute inset-0 grid place-items-center rounded-full bg-slate-950/0 text-xs font-semibold tracking-[0.18em] text-white opacity-0 transition group-hover:bg-slate-950/28 group-hover:opacity-100">
                   更换
                 </span>
               </button>
+              </div>
+              <label className="block space-y-2 text-sm">
+                <span className="font-medium text-[var(--muted)]">用户名</span>
+                <input value={currentUser.username} disabled className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-3 text-[var(--muted)]" />
+              </label>
+              <label className="mt-3 block space-y-2 text-sm">
+                <span className="font-medium text-[var(--muted)]">姓名</span>
+                <input
+                  value={profileDraft.displayName}
+                  disabled
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-3 text-[var(--muted)]"
+                />
+              </label>
             </div>
+            <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1 pt-4">
             <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">用户名</span>
-              <input value={currentUser.username} disabled className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-500" />
-            </label>
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">姓名</span>
-              <input
-                value={profileDraft.displayName}
-                disabled
-                className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-slate-500"
-              />
-            </label>
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">手机</span>
+              <span className="font-medium text-[var(--muted)]">手机</span>
               <input
                 value={profileDraft.phone}
                 onChange={(event) => setProfileDraft((current) => ({ ...current, phone: event.target.value }))}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
+                className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
                 placeholder="输入手机号"
               />
             </label>
             <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">职位</span>
+              <span className="font-medium text-[var(--muted)]">职位</span>
               <SearchableSelect
                 value={profileDraft.jobTitle}
                 options={jobTitleOptions.map((option) => ({ value: option.value, label: option.label }))}
@@ -269,7 +275,7 @@ export default function AuthenticatedShell({
               />
             </label>
             <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">时区</span>
+              <span className="font-medium text-[var(--muted)]">时区</span>
               <SearchableSelect
                 value={profileDraft.timezone}
                 options={timezoneSelectOptions}
@@ -278,7 +284,7 @@ export default function AuthenticatedShell({
               />
             </label>
             <div className="space-y-2 text-sm">
-              <span className="font-medium text-slate-700">技术栈</span>
+              <span className="font-medium text-[var(--muted)]">技术栈</span>
               <SearchMultiSelect
                 value={profileDraft.techStacks}
                 options={techStackOptions.map((item) => ({ value: item, label: item }))}
@@ -290,43 +296,44 @@ export default function AuthenticatedShell({
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <label className="block space-y-2 text-sm">
-                <span className="font-medium text-slate-700">当前密码</span>
+                <span className="font-medium text-[var(--muted)]">当前密码</span>
                 <input
                   type="password"
                   value={passwordDraft.currentPassword}
                   onChange={(event) => setPasswordDraft((current) => ({ ...current, currentPassword: event.target.value }))}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
                   placeholder="留空则不修改"
                 />
               </label>
               <label className="block space-y-2 text-sm">
-                <span className="font-medium text-slate-700">新密码</span>
+                <span className="font-medium text-[var(--muted)]">新密码</span>
                 <input
                   type="password"
                   value={passwordDraft.newPassword}
                   onChange={(event) => setPasswordDraft((current) => ({ ...current, newPassword: event.target.value }))}
-                  className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
                   placeholder="至少 6 位"
                 />
               </label>
             </div>
             <label className="block space-y-2 text-sm">
-              <span className="font-medium text-slate-700">确认新密码</span>
+              <span className="font-medium text-[var(--muted)]">确认新密码</span>
               <input
                 type="password"
                 value={passwordDraft.confirmPassword}
                 onChange={(event) => setPasswordDraft((current) => ({ ...current, confirmPassword: event.target.value }))}
-                className="h-11 w-full rounded-xl border border-slate-200 bg-white px-3 outline-none focus:border-[#0f766e]"
+                className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
                 placeholder="再次输入新密码"
               />
             </label>
             <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={() => setProfileOpen(false)} className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-semibold text-slate-700">
+              <button type="button" onClick={() => setProfileOpen(false)} className="h-10 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--panel-soft)]">
                 取消
               </button>
-              <button type="button" onClick={() => void saveProfile()} disabled={savingProfile} className="h-10 rounded-xl bg-[#0f766e] px-4 text-sm font-semibold text-white disabled:opacity-60">
+              <button type="button" onClick={() => void saveProfile()} disabled={savingProfile} className="h-10 rounded-xl bg-[var(--accent)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60">
                 {savingProfile ? "保存中..." : "保存"}
               </button>
+            </div>
             </div>
           </div>
         </ShellModal>
@@ -344,18 +351,17 @@ export default function AuthenticatedShell({
                   setAvatarPickerOpen(false);
                 }}
                 className={`rounded-2xl border p-3 text-left transition ${
-                  profileDraft.avatarKey === avatar.key ? "border-[#0f766e] bg-[#e7f5f2]" : "border-slate-200 bg-white hover:bg-slate-50"
+                  profileDraft.avatarKey === avatar.key ? "border-[var(--accent)] bg-[var(--accent-soft)]" : "border-[var(--border)] bg-[var(--panel)] hover:bg-[var(--panel-soft)]"
                 }`}
               >
                 <Image src={avatar.src} alt={avatar.label} width={80} height={80} className="h-20 w-20 rounded-2xl object-cover" />
-                <span className="mt-2 block truncate text-xs font-semibold text-slate-700">{avatar.label}</span>
+                <span className="mt-2 block truncate text-xs font-semibold text-[var(--text)]">{avatar.label}</span>
               </button>
             ))}
           </div>
         </ShellModal>
       ) : null}
-
-    </>
+    </div>
   );
 }
 
@@ -365,7 +371,7 @@ function MenuButton({ children, onClick, dataTour }: { children: ReactNode; onCl
       type="button"
       onClick={onClick}
       data-tour={dataTour}
-      className="flex h-11 w-full items-center rounded-2xl px-3 text-left text-sm font-medium leading-none text-slate-700 transition hover:bg-slate-50"
+      className="flex h-11 w-full items-center rounded-2xl px-3 text-left text-sm font-medium leading-none text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
     >
       {children}
     </button>
@@ -374,11 +380,11 @@ function MenuButton({ children, onClick, dataTour }: { children: ReactNode; onCl
 
 function UserAvatar({ src, name }: { src?: string; name: string }) {
   if (src) {
-    return <Image src={src} alt={name} width={32} height={32} className="h-8 w-8 rounded-full border border-slate-200 object-cover" />;
+    return <Image src={src} alt={name} width={32} height={32} className="h-8 w-8 rounded-full border border-[var(--border)] object-cover" />;
   }
 
   return (
-    <span className="grid h-8 w-8 place-items-center rounded-full bg-[#0f766e] text-xs font-semibold text-white">
+    <span className="grid h-8 w-8 place-items-center rounded-full bg-[var(--accent)] text-xs font-semibold text-white">
       {name.slice(0, 1).toUpperCase()}
     </span>
   );
@@ -389,32 +395,34 @@ function ShellModal({
   children,
   onClose,
   maxWidth = "max-w-[520px]",
+  bodyClassName = "overflow-y-auto pr-1",
 }: {
   title: string;
   children: ReactNode;
   onClose: () => void;
   maxWidth?: string;
+  bodyClassName?: string;
 }) {
   return (
     <div
-      className="fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto bg-slate-950/25 px-4 py-4 sm:py-8"
+      className="fixed inset-0 z-[120] flex items-center justify-center overflow-y-auto bg-slate-950/45 px-4 py-4 sm:py-8"
       onClick={onClose}
     >
       <div
-        className={`my-auto flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-[28px] border border-white/70 bg-white p-5 shadow-2xl shadow-slate-900/15 sm:p-6 ${maxWidth}`}
+        className={`my-auto flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-[28px] border border-[var(--border)] bg-[var(--panel)] p-5 text-[var(--text)] shadow-2xl shadow-slate-900/20 sm:p-6 ${maxWidth}`}
         onClick={(event: ReactMouseEvent<HTMLDivElement>) => event.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between">
-          <h2 className="text-xl font-semibold text-slate-900">{title}</h2>
+          <h2 className="text-xl font-semibold text-[var(--text)]">{title}</h2>
           <button
             type="button"
             onClick={onClose}
-            className="grid h-10 w-10 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-500 transition hover:text-slate-900"
+            className="grid h-10 w-10 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--text)]"
           >
             <X size={16} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1">{children}</div>
+        <div className={`min-h-0 flex-1 ${bodyClassName}`}>{children}</div>
       </div>
     </div>
   );

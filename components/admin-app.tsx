@@ -7,6 +7,7 @@ import MemberProfileCard, { MemberProfileAvatar, toMemberProfile } from "@/compo
 import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
+import { clientFetch } from "@/lib/client-observability";
 import { isThemeId, jobTitleLabel, jobTitleOptions, techStackOptions, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type {
   AdminPermissions,
@@ -111,7 +112,7 @@ function clientErrorMessage(error: unknown, fallback: string) {
 
 async function fetchAdminJson<T>(url: string, fallback: T, errors: string[], fallbackMessage: string): Promise<T> {
   try {
-    const response = await fetch(url);
+    const response = await clientFetch(url, undefined, { operation: "admin.load" });
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
       const message =
@@ -540,7 +541,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     clearMessage();
     const method = userDraft.id ? "PATCH" : "POST";
     const url = userDraft.id ? `/api/admin/users/${userDraft.id}` : "/api/admin/users";
-    const response = await fetch(url, {
+    const response = await clientFetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(userDraft),
@@ -557,14 +558,14 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   }
 
   async function deleteUser(user: ManagedUser) {
-    const response = await fetch(`/api/admin/users/${user.id}`, { method: "DELETE" });
+    const response = await clientFetch(`/api/admin/users/${user.id}`, { method: "DELETE" }, { operation: "admin.users.delete" });
     const payload = (await response.json().catch(() => ({}))) as { error?: string };
     showMessage(response.ok ? "用户已停用" : payload.error ?? "停用失败", response.ok ? "success" : "error");
     await Promise.all([refreshUsers(), refreshTeams(), refreshBoards()]);
   }
 
   async function resetPassword(userId: string) {
-    const response = await fetch(`/api/admin/users/${userId}/reset-password`, { method: "POST" });
+    const response = await clientFetch(`/api/admin/users/${userId}/reset-password`, { method: "POST" }, { operation: "admin.users.password.reset" });
     const payload = (await response.json().catch(() => ({}))) as { username?: string; password?: string; error?: string };
     showMessage(payload.password ? `${payload.username} 的密码已重置为：${payload.password}` : payload.error ?? "重置失败", payload.password ? "success" : "error");
   }
@@ -610,7 +611,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     clearMessage();
     const method = teamDraft.id ? "PATCH" : "POST";
     const url = teamDraft.id ? `/api/admin/teams/${teamDraft.id}` : "/api/admin/teams";
-    const response = await fetch(url, {
+    const response = await clientFetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(teamDraft),
@@ -632,7 +633,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     clearMessage();
     const method = boardDraft.id ? "PATCH" : "POST";
     const url = boardDraft.id ? `/api/boards/${boardDraft.id}` : "/api/boards";
-    const response = await fetch(url, {
+    const response = await clientFetch(url, {
       method,
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(boardDraft),
@@ -651,21 +652,21 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   }
 
   async function deleteTeam(team: TeamSummary) {
-    const response = await fetch(`/api/admin/teams/${team.id}`, { method: "DELETE" });
+    const response = await clientFetch(`/api/admin/teams/${team.id}`, { method: "DELETE" }, { operation: "admin.teams.delete" });
     const payload = (await response.json().catch(() => ({}))) as { error?: string };
     showMessage(response.ok ? "团队已删除" : payload.error ?? "删除失败", response.ok ? "success" : "error");
     await Promise.all([refreshTeams(), refreshBoards()]);
   }
 
   async function deleteBoard(board: AdminBoard) {
-    const response = await fetch(`/api/boards/${board.id}`, { method: "DELETE" });
+    const response = await clientFetch(`/api/boards/${board.id}`, { method: "DELETE" }, { operation: "admin.boards.delete" });
     const payload = (await response.json().catch(() => ({}))) as { error?: string };
     showMessage(response.ok ? "看板已删除" : payload.error ?? "删除失败", response.ok ? "success" : "error");
     await refreshBoards();
   }
 
   async function grant(boardId: string, userId: string, action: "grant" | "revoke") {
-    const response = await fetch(`/api/admin/boards/${boardId}/members`, {
+    const response = await clientFetch(`/api/admin/boards/${boardId}/members`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ userId, action }),
@@ -677,7 +678,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
 
   async function saveBoardTeams() {
     if (!selectedBoard) return;
-    const response = await fetch(`/api/boards/${selectedBoard.id}`, {
+    const response = await clientFetch(`/api/boards/${selectedBoard.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -717,6 +718,11 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               onChange={(value) => changeTheme(value as ThemeId)}
               placeholder="配色方案"
             />
+            {currentUser.role === "super_admin" ? (
+              <Link href="/admin/diagnostics" prefetch={false} className="rounded-xl border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-2 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--hover)]">
+                诊断中心
+              </Link>
+            ) : null}
             <Link href="/" prefetch={false} data-tour="admin-return-kanban" className="rounded-xl bg-[var(--accent)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)]">
               返回看板
             </Link>
@@ -764,7 +770,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
           </div>
         ) : null}
 
-        <div className="sticky top-4 z-10 mt-5 rounded-2xl border border-[var(--border)] bg-[color-mix(in_srgb,var(--panel)_90%,white_10%)] p-4 shadow-lg backdrop-blur">
+        <div className="sticky top-4 z-10 mt-5 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 shadow-lg backdrop-blur">
           <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
             <SummaryCard label="用户" value={stats.users} />
             <SummaryCard label="启用" value={stats.activeUsers} />

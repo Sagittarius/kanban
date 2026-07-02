@@ -22,6 +22,7 @@ export function withApiLogging<TArgs extends unknown[]>(operation: string, handl
     return withLogContext(context, async () => {
       apiLogger.debug("api request started");
       try {
+        throwIfDiagnosticsApiSimulationEnabled(request);
         const response = await handler(request, ...args);
         const durationMs = Math.round(performance.now() - startedAt);
         const fields = { status: response.status, durationMs };
@@ -36,13 +37,26 @@ export function withApiLogging<TArgs extends unknown[]>(operation: string, handl
         return response;
       } catch (error) {
         apiLogger.error("api request crashed", {
+          status: 500,
           durationMs: Math.round(performance.now() - startedAt),
           ...errorFields(error),
         });
-        return NextResponse.json({ error: "Internal Server Error", requestId }, { status: 500 });
+        const response = NextResponse.json({ error: "Internal Server Error", requestId }, { status: 500 });
+        response.headers.set("x-request-id", requestId);
+        return response;
       }
     });
   };
+}
+
+function throwIfDiagnosticsApiSimulationEnabled(request: Request) {
+  if (process.env.KANBAN_DIAGNOSTICS_TEST_ENABLED !== "true") {
+    return;
+  }
+  if (request.headers.get("x-kanban-diagnostics-simulate") !== "api-crash") {
+    return;
+  }
+  throw new Error("Simulated diagnostics API crash");
 }
 
 export function requestIp(request: Request) {

@@ -130,7 +130,7 @@ export default function SearchMultiSelect({
                   type="button"
                   title="重置搜索"
                   onClick={() => setQuery("")}
-                  className="absolute right-2 top-2 rounded p-1 text-[var(--sms-muted)] transition hover:bg-[var(--sms-panel-soft)] hover:text-[var(--sms-text)]"
+                  className="absolute right-1 top-1/2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded text-[var(--sms-muted)] transition hover:bg-[var(--sms-panel-soft)] hover:text-[var(--sms-text)]"
                 >
                   <X size={13} />
                 </button>

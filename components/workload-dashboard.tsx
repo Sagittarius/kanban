@@ -1,12 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
-import Link from "next/link";
 import Image from "next/image";
-import { AlertTriangle, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
+import { AlertTriangle, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Copyright, Edit3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
 import MemberProfileCard from "@/components/member-profile-card";
 import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
+import { clientFetch, reportClientError } from "@/lib/client-observability";
 import { avatarOptions, jobTitleLabel } from "@/lib/ui-options";
 import type { CurrentUser, TeamSummary } from "@/lib/auth-models";
 import type { BoardStatus } from "@/lib/board-data";
@@ -105,7 +105,7 @@ const emptyDashboard: DashboardData = {
 const dashboardRefreshEventKey = "kanban:dashboard-refresh";
 const dashboardThemeStorageKey = "kanban:dashboard-theme";
 
-export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean; initialTheme?: DashboardTheme }) {
+export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean; initialTheme?: DashboardTheme; appVersion?: string }) {
   const { publicView = false, initialTheme = "dark" } = props;
   const [data, setData] = useState<DashboardData>(emptyDashboard);
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
@@ -162,7 +162,11 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
     const params = new URLSearchParams();
     for (const teamId of selectedTeamIds) params.append("teamId", teamId);
     for (const projectId of selectedProjectIds) params.append("projectId", projectId);
-    const response = await fetch(`/api/dashboard?${params.toString()}`, { signal });
+    const response = await clientFetch(
+      `/api/dashboard?${params.toString()}`,
+      { signal },
+      { operation: "dashboard.load" }
+    );
     if (!response.ok) {
       throw new Error(`Dashboard request failed: ${response.status}`);
     }
@@ -178,7 +182,12 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
       })
       .catch((error: unknown) => {
         if (!active || controller.signal.aborted) return;
-        console.error(error);
+        reportClientError({
+          source: "dashboard-refresh",
+          message: error instanceof Error ? error.message : "Dashboard load failed",
+          stack: error instanceof Error ? error.stack : undefined,
+          operation: "dashboard.load",
+        });
       });
     return () => {
       active = false;
@@ -205,7 +214,12 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
           setData(payload);
         })
         .catch((error: unknown) => {
-          console.error(error);
+          reportClientError({
+            source: "dashboard-refresh",
+            message: error instanceof Error ? error.message : "Dashboard refresh failed",
+            stack: error instanceof Error ? error.stack : undefined,
+            operation: "dashboard.refresh",
+          });
         });
     };
 
@@ -355,7 +369,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                 summaryLabel="团队"
                 searchPlaceholder="搜索团队"
                 compact
-                panelClassName="bg-[var(--dash-panel)]"
+                panelClassName="dashboard-filter-panel"
               />
             </div>
             <div className="w-[280px] max-w-full">
@@ -367,7 +381,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                 summaryLabel="项目"
                 searchPlaceholder="搜索项目"
                 compact
-                panelClassName="bg-[var(--dash-panel)]"
+                panelClassName="dashboard-filter-panel"
               />
             </div>
             <button
@@ -378,14 +392,14 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
               {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
             </button>
             {!publicView ? (
-              <Link
-                href="/"
-                prefetch={false}
+              <button
+                type="button"
                 data-tour="dashboard-enter-kanban"
+                onClick={() => window.location.assign("/")}
                 className="inline-flex h-11 items-center rounded-2xl bg-[linear-gradient(135deg,var(--dash-accent),var(--dash-hot))] px-4 text-sm font-semibold text-[var(--dash-accent-text)] shadow-[0_18px_38px_var(--dash-shadow)] transition hover:opacity-95"
               >
                 进入看板
-              </Link>
+              </button>
             ) : null}
           </div>
         </header>
@@ -581,6 +595,25 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
           </aside>
         </section>
       </div>
+      <footer className="relative z-20 border-t border-[var(--dash-line)] bg-[var(--dash-bg)]/85 text-sm text-[var(--dash-muted)]">
+        <div className="mx-auto flex w-full max-w-[2160px] flex-col items-center gap-3 px-5 py-5 sm:flex-row sm:justify-between 2xl:px-8">
+          <div className="flex items-center gap-2">
+            <Copyright size={14} />
+            <span>2026 <strong>Kanban</strong></span>
+            {props.appVersion ? (
+              <span className="rounded bg-[var(--dash-track)] px-1.5 py-0.5 text-xs text-[var(--dash-muted)]">
+                v{props.appVersion}
+              </span>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <Edit3 size={13} />
+            <span className="h-3 w-px bg-[var(--dash-line)]" />
+            <span className="font-medium text-[var(--dash-text)]">kfzx-chenwh4</span>
+            <span className="rounded bg-[var(--dash-accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--dash-accent)]">0000959918</span>
+          </div>
+        </div>
+      </footer>
       <style>{dashboardThemeCss}</style>
       {selectedProject ? <DashboardProjectDialog project={selectedProject} onClose={() => setSelectedProject(null)} onSelectTask={setSelectedTask} /> : null}
       {selectedTask ? (
@@ -1096,6 +1129,7 @@ const dashboardThemeCss = `
     --dash-bg: #070b14;
     --dash-panel-strong: rgba(8, 13, 27, 0.78);
     --dash-panel: rgba(15, 23, 42, 0.82);
+    --dash-popover: #0f172a;
     --dash-card: rgba(30, 41, 59, 0.62);
     --dash-card-bottom: rgba(17, 24, 39, 0.78);
     --dash-text: #e5f3ff;
@@ -1104,6 +1138,9 @@ const dashboardThemeCss = `
     --dash-line: rgba(148, 163, 184, 0.22);
     --dash-hover: rgba(51, 65, 85, 0.8);
     --dash-track: rgba(148, 163, 184, 0.18);
+    --scrollbar-track: rgba(15, 23, 42, 0.74);
+    --scrollbar-thumb: rgba(138, 162, 189, 0.48);
+    --scrollbar-thumb-hover: rgba(103, 232, 249, 0.7);
     --dash-accent: #67e8f9;
     --dash-accent-soft: rgba(103, 232, 249, 0.12);
     --dash-accent-glow: rgba(103, 232, 249, 0.28);
@@ -1148,6 +1185,7 @@ const dashboardThemeCss = `
     --dash-bg: #eef4fb;
     --dash-panel-strong: rgba(255, 255, 255, 0.92);
     --dash-panel: rgba(255, 255, 255, 0.88);
+    --dash-popover: #ffffff;
     --dash-card: rgba(247, 250, 255, 0.96);
     --dash-card-bottom: rgba(237, 243, 253, 0.98);
     --dash-text: #0f172a;
@@ -1156,6 +1194,9 @@ const dashboardThemeCss = `
     --dash-line: rgba(15, 23, 42, 0.14);
     --dash-hover: #f3f7fd;
     --dash-track: rgba(15, 23, 42, 0.1);
+    --scrollbar-track: rgba(226, 232, 240, 0.76);
+    --scrollbar-thumb: rgba(91, 107, 132, 0.46);
+    --scrollbar-thumb-hover: rgba(15, 118, 110, 0.68);
     --dash-accent: #0f766e;
     --dash-accent-soft: rgba(15, 118, 110, 0.12);
     --dash-accent-glow: rgba(15, 118, 110, 0.18);
@@ -1198,6 +1239,9 @@ const dashboardThemeCss = `
   }
   .dashboard-particle {
     animation: dashboard-float linear infinite;
+  }
+  .dashboard-filter-panel {
+    background: var(--dash-popover);
   }
   .dashboard-particle.particle-cyan {
     background: var(--dash-particle-cyan);

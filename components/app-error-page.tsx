@@ -1,22 +1,23 @@
 "use client";
 
-import Link from "next/link";
 import { AlertTriangle, ChartNoAxesCombined, LogOut, RotateCcw } from "lucide-react";
 import type { ReactNode } from "react";
+import { clientFetch } from "@/lib/client-observability";
 
 type AppErrorPageProps = {
   title: string;
   message?: string;
   detail?: string;
+  requestId?: string;
   onRetry?: () => void;
 };
 
-export default function AppErrorPage({ title, message, detail, onRetry }: AppErrorPageProps) {
+export default function AppErrorPage({ title, message, detail, requestId, onRetry }: AppErrorPageProps) {
   const actionButtonClass =
     "inline-flex h-11 min-w-[120px] items-center justify-center rounded-xl px-4 text-sm font-semibold";
 
   async function logout() {
-    await fetch("/api/auth/logout", { method: "POST" }).catch(() => {});
+    await clientFetch("/api/auth/logout", { method: "POST" }, { operation: "auth.logout.error-page" }).catch(() => {});
     window.location.assign("/");
   }
 
@@ -37,6 +38,11 @@ export default function AppErrorPage({ title, message, detail, onRetry }: AppErr
             <h1 className="mt-2 text-2xl font-semibold text-white">{title}</h1>
             {message ? <p className="mt-3 text-sm leading-7 text-slate-300">{message}</p> : null}
             {detail ? <p className="mt-2 text-xs leading-6 text-slate-400">{detail}</p> : null}
+            {requestId ? (
+              <p className="mt-3 rounded-xl border border-cyan-100/12 bg-white/6 px-3 py-2 font-mono text-xs leading-6 text-cyan-100/85">
+                Request ID: {requestId}
+              </p>
+            ) : null}
 
             <div className="mt-7 flex flex-wrap gap-3">
               <button
@@ -53,13 +59,12 @@ export default function AppErrorPage({ title, message, detail, onRetry }: AppErr
               >
                 <ActionButtonContent icon={<LogOut size={15} />} label="退出登录" />
               </button>
-              <Link
+              <a
                 href="/dashboard"
-                prefetch={false}
                 className={`${actionButtonClass} border border-cyan-100/18 bg-slate-900/60 text-slate-200 transition hover:bg-slate-800/70`}
               >
                 <ActionButtonContent icon={<ChartNoAxesCombined size={15} />} label="返回大屏" />
-              </Link>
+              </a>
             </div>
           </div>
         </div>

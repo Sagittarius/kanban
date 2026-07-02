@@ -1,38 +1,24 @@
+import legacy from "@vitejs/plugin-legacy";
 import vinext from "vinext";
 import { defineConfig } from "vite";
-import { cloudflare } from "@cloudflare/vite-plugin";
-import hostingConfig from "./.openai/hosting.json";
 import { sites } from "./build/sites-vite-plugin";
 
-const { r2 } = hostingConfig;
-
-const localBindingConfig = {
-  main: "./worker/index.ts",
-  d1_databases: [],
-  r2_buckets: r2
-    ? [
-        {
-          binding: r2,
-          bucket_name: "site-creator-r2",
-        },
-      ]
-    : [],
-};
-
-export default defineConfig(({ command }) => ({
+export default defineConfig(() => ({
   build: {
-    target: ["chrome89", "edge89", "firefox90", "safari15"],
+    cssTarget: ["chrome87", "edge87", "firefox78", "safari14"],
   },
   plugins: [
+    legacy({
+      modernTargets: [
+        "Chrome >= 87",
+        "Edge >= 87",
+        "Firefox >= 78",
+        "Safari >= 14",
+      ],
+      modernPolyfills: true,
+      renderLegacyChunks: false,
+    }),
     vinext(),
     sites(),
-    ...(command === "build"
-      ? [
-          cloudflare({
-            viteEnvironment: { name: "rsc", childEnvironments: ["ssr"] },
-            config: localBindingConfig,
-          }),
-        ]
-      : []),
   ],
 }));

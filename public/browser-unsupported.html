@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>浏览器版本过低</title>
+    <title>建议升级浏览器</title>
     <style>
       :root {
         color-scheme: dark;
@@ -287,31 +287,27 @@
         <header class="header">
           <div class="badge-row">
             <span class="badge"><span class="badge-dot"></span>KANBAN</span>
-            <span class="badge">兼容模式</span>
+            <span class="badge" id="modeBadge">兼容提示</span>
           </div>
-          <h1>请升级浏览器后再访问</h1>
-          <p class="subtle">
-            当前环境暂不支持打开 KANBAN。
-          </p>
+          <h1 id="pageTitle">建议升级浏览器</h1>
+          <p class="subtle" id="pageSubtitle">为获得最佳体验，请升级到推荐版本。</p>
         </header>
         <div class="content">
           <section class="card">
             <h2>下一步</h2>
             <ul class="list">
-              <li>升级到组织推荐的 Chrome 或 Edge 版本后，再重新访问。</li>
-              <li>如果当前终端无法升级，请联系管理员处理。</li>
-              <li>处理完成后，点击“重新检测”。</li>
+              <li id="stepUpgrade">建议升级到推荐版本。</li>
+              <li id="stepAction">继续访问后，本机不再重复提示。</li>
             </ul>
             <div class="actions">
               <button class="button primary" type="button" id="retryButton">重新检测</button>
               <button class="button" type="button" id="continueButton">继续访问</button>
-              <button class="button" type="button" id="backButton">返回上一页</button>
             </div>
             <div class="hint" id="hintText"></div>
           </section>
           <aside class="meta-grid">
             <section class="meta">
-              <div class="meta-label">最低支持基线</div>
+              <div class="meta-label" id="requiredLabel">推荐版本</div>
               <div class="meta-value" id="requiredText">-</div>
             </section>
             <section class="meta">
@@ -338,16 +334,34 @@
       (function () {
         function query(name) {
           var match = window.location.search.match(new RegExp("(?:^|[?&])" + name + "=([^&]*)"));
-          return match ? decodeURIComponent(match[1]) : "";
+          return match ? decodeURIComponent(match[1].replace(/\+/g, " ")) : "";
         }
 
-        var required = query("required") || "Chrome 89+ / Edge 89+ / Firefox 90+ / Safari 15+";
+        var required = query("required") || "Chrome 87+ / Edge 87+ / Firefox 78+ / Safari 14+";
+        var recommended = query("recommended") || "Chrome/Edge 109+ / Firefox 115+ / Safari 16.4+";
         var reason = query("reason") || "unknown";
         var detail = query("detail") || "-";
+        var mode = query("mode") || "unsupported";
         var from = query("from") || "/";
         var ua = query("ua") || window.navigator.userAgent || "-";
+        var isRecommended = mode === "recommended" || /recommended/i.test(reason);
 
-        document.getElementById("requiredText").textContent = required;
+        document.title = isRecommended ? "建议升级浏览器" : "浏览器版本过低";
+        document.getElementById("modeBadge").textContent = isRecommended ? "建议升级" : "版本过低";
+        document.getElementById("pageTitle").textContent = isRecommended ? "建议升级浏览器" : "请升级浏览器";
+        var pageSubtitle = document.getElementById("pageSubtitle");
+        pageSubtitle.textContent = isRecommended
+          ? "为获得最佳体验，请升级到推荐版本。"
+          : "当前浏览器版本低于浏览器最低要求，建议升级。";
+        pageSubtitle.style.display = "";
+        document.getElementById("stepUpgrade").textContent = isRecommended
+          ? "推荐版本：Chrome/Edge 109+、Firefox 115+、Safari 16.4+。"
+          : "最低支持版本：Chrome 87+、Edge 87+、Firefox 78+、Safari 14+。";
+        document.getElementById("stepAction").textContent = isRecommended
+          ? "继续访问后，本机不再重复提示。"
+          : "继续访问后，本机不再重复提示。";
+        document.getElementById("requiredLabel").textContent = isRecommended ? "推荐版本" : "最低支持基线";
+        document.getElementById("requiredText").textContent = isRecommended ? recommended : required;
         document.getElementById("fromText").textContent = from;
         document.getElementById("uaText").textContent = ua;
         document.getElementById("detailText").textContent = detail;
@@ -361,18 +375,41 @@
           "missing-object-hasown": "缺少 Object.hasOwn",
           "missing-array-helpers": "缺少 Array.prototype.flat / at",
           "missing-string-replaceall": "缺少 String.prototype.replaceAll",
+          "missing-fetch": "缺少 Fetch API",
+          "missing-abort-controller": "缺少 AbortController",
+          "missing-urlsearchparams": "缺少 URLSearchParams",
+          "missing-promise": "缺少 Promise",
+          "missing-symbol": "缺少 Symbol",
+          "missing-weakmap": "缺少 WeakMap",
+          "unsupported-import-meta": "不支持 import.meta",
+          "unsupported-import-syntax": "不支持模块语法",
+          "unsupported-dynamic-import": "不支持动态 import",
+          "unsupported-optional-chaining": "不支持可选链语法",
+          "unsupported-nullish-coalescing": "不支持空值合并语法",
+          "unsupported-private-field": "不支持私有字段语法",
+          "internet-explorer": "Internet Explorer 不受支持",
+          "legacy-edge": "旧版 EdgeHTML 不受支持",
+          "edge-version-too-low": "Edge 版本过低",
+          "chrome-version-too-low": "Chrome 版本过低",
+          "firefox-version-too-low": "Firefox 版本过低",
+          "safari-version-too-low": "Safari 版本过低",
+          "edge-version-recommended": "Edge 低于推荐版本",
+          "chrome-version-recommended": "Chrome 低于推荐版本",
+          "firefox-version-recommended": "Firefox 低于推荐版本",
+          "safari-version-recommended": "Safari 低于推荐版本",
           "feature-check-failed": "浏览器检测失败"
         };
 
         var friendlyReason = reasonMap[reason] || reason;
         document.getElementById("reasonText").textContent = friendlyReason;
 
-        var hint = "升级浏览器后，可点击“重新检测”。";
+        var hint = isRecommended
+          ? "升级后可点击“重新检测”。"
+          : "升级浏览器后，可点击“重新检测”。";
         if (reason === "demo") {
           hint = "当前为演示页面。";
         }
         document.getElementById("hintText").textContent = hint;
-
         document.getElementById("retryButton").onclick = function () {
           var target = from;
           if (target.indexOf("compat_demo=1") !== -1) {
@@ -382,16 +419,17 @@
               })
               .replace(/[?&]$/, "");
           }
-          if (target.indexOf("?") === -1) {
-            target += "?compat_bypass=1";
-          } else {
-            target += "&compat_bypass=1";
-          }
           window.location.replace(target);
         };
 
         document.getElementById("continueButton").onclick = function () {
           var target = from || "/";
+          try {
+            window.localStorage.setItem("kanban_browser_notice_ack", "1");
+            if (isRecommended) {
+              window.localStorage.setItem("kanban_browser_recommended_ack", "1");
+            }
+          } catch (error) {}
           if (target.indexOf("compat_demo=1") !== -1) {
             target = target
               .replace(/([?&])compat_demo=1(&?)/, function (_, prefix, suffix) {
@@ -405,14 +443,6 @@
             target += "&compat_bypass=1";
           }
           window.location.replace(target);
-        };
-
-        document.getElementById("backButton").onclick = function () {
-          if (window.history.length > 1) {
-            window.history.back();
-            return;
-          }
-          window.location.replace("/");
         };
       })();
     </script>
