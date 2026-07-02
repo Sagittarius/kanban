@@ -32,6 +32,8 @@ ENV KANBAN_APP_VERSION=${KANBAN_APP_VERSION}
 ENV KANBAN_IMAGE_TAG=${KANBAN_IMAGE_TAG}
 
 COPY --from=builder /app/.next/standalone ./
+RUN mv /app/server.js /app/next-server.js
+COPY --from=builder /app/server.js ./server.js
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/scripts ./scripts

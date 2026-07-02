@@ -1,6 +1,6 @@
 # 私有化部署与诊断
 
-本文档用于内网或私有 Docker 环境部署。当前项目运行方式为标准 Next.js Node runtime，构建产物使用 Next standalone，容器入口为 `node server.js`。
+本文档用于内网或私有 Docker 环境部署。当前项目运行方式为标准 Next.js Node runtime，构建产物使用 Next standalone，容器入口为 `node server.js`。该入口会内部启动 Next standalone，并在 HTML 响应中确保 early diagnostics、core-js 和浏览器兼容检测早于客户端 bundle 执行。
 
 ## 部署方式
 
@@ -41,7 +41,7 @@ KANBAN_DB_DRIVER=sqlite KANBAN_SQLITE_PATH=.data/kanban.sqlite node scripts/migr
 KANBAN_AUTH_SECRET=change-this-secret pnpm run start
 ```
 
-`pnpm run start` 使用 `next start`，仅用于本地或非 standalone 场景。Docker 镜像使用 `.next/standalone/server.js`。
+`pnpm run start` 使用 `next start`，仅用于本地或非 standalone 场景。Docker 镜像使用项目根目录的 `server.js` 包装入口，内部代理 Next standalone 服务。
 
 ## 生产安全配置
 

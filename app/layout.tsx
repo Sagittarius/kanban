@@ -25,9 +25,16 @@ function readCoreJsBundle() {
     );
   } catch {
     try {
-      cachedCoreJsBundle = readFileSync(require.resolve("core-js-bundle/minified.js"), "utf8");
+      cachedCoreJsBundle = readFileSync(
+        /* turbopackIgnore: true */ join(process.cwd(), "..", "..", "node_modules", "core-js-bundle", "minified.js"),
+        "utf8"
+      );
     } catch {
-      cachedCoreJsBundle = "";
+      try {
+        cachedCoreJsBundle = readFileSync(require.resolve("core-js-bundle/minified.js"), "utf8");
+      } catch {
+        cachedCoreJsBundle = "";
+      }
     }
   }
 

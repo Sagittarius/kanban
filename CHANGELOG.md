@@ -6,7 +6,7 @@
 - Docker 镜像改为使用 Next standalone 输出，容器启动前执行 SQLite/PostgreSQL 迁移并通过 `node server.js` 运行。
 - 移除旧适配型运行依赖和配置文件，私有化部署只保留 SQLite/PostgreSQL。
 - 增加旧版浏览器兼容与升级建议提示，兼容实现基线收口到 Chrome/Edge 89、Firefox 90、Safari 15，推荐用户升级到 Chrome/Edge 109、Firefox 115、Safari 16.4 以上。
-- 在客户端 bundle 前注入 early diagnostics、core-js polyfill 和浏览器兼容检测，并补充低版本浏览器交互、滚动条、拖拽视觉和降级提示页优化。
+- 在客户端 bundle 前注入 early diagnostics、core-js polyfill 和浏览器兼容检测，Docker 入口会在 HTML 响应中前置这些脚本，并补充低版本浏览器交互、滚动条、拖拽视觉和降级提示页优化。
 - 统一后台团队详情与项目负载大屏的个人名片展示，并优化成员列表排版。
 - 统一单选、多选选择器组件、字号、占位符、浮层宽度和搜索图标对齐，减少重复选择器实现。
 - 优化项目负载大屏流星特效、密度、方向、速度和页脚展示，并同步登录页流星划过效果。

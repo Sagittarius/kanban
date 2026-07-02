@@ -2,8 +2,6 @@
 .gitignore
 .data
 .next
-.wrangler
-.vinext
 .claude
 .remember
 node_modules

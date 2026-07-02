@@ -106,6 +106,7 @@ Dockerfile 使用 Next standalone 输出：
 - 构建阶段执行 `pnpm run build`
 - 运行阶段复制 `.next/standalone`、`.next/static`、`public`、`scripts`、`drizzle`、`migrations`
 - 容器入口先执行数据库迁移/升级，再 `exec node server.js`
+- `server.js` 会内部启动 Next standalone，并在 HTML 响应中确保 early diagnostics、core-js 和浏览器兼容检测早于客户端 bundle 执行
 - 不依赖 `dist` 目录
 
 导出 arm64 离线包：
