@@ -1,3 +1,5 @@
+import "server-only";
+
 import fs from "node:fs";
 import { getAppVersion, getImageTag } from "@/lib/app-meta";
 import { getStorageMode } from "@/db/sql-adapter";

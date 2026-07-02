@@ -1,3 +1,5 @@
+import "server-only";
+
 import { AsyncLocalStorage } from "node:async_hooks";
 import fs from "node:fs";
 import path from "node:path";
@@ -237,7 +239,7 @@ class RotatingFileLogSink implements FileLogSink {
 
   private rotate() {
     try {
-      if (fs.existsSync(this.filePath) && this.currentSize > 0) {
+      if (fs.existsSync(/* turbopackIgnore: true */ this.filePath) && this.currentSize > 0) {
         fs.renameSync(this.filePath, this.nextRotatedFilePath());
       }
     } catch (error) {
@@ -251,11 +253,11 @@ class RotatingFileLogSink implements FileLogSink {
   private nextRotatedFilePath() {
     const parsed = path.parse(this.filePath);
     const timestamp = formatZonedTimestamp().replaceAll(":", "-");
-    let candidate = path.join(parsed.dir, `${parsed.name}.${timestamp}${parsed.ext}`);
+    let candidate = path.join(/* turbopackIgnore: true */ parsed.dir, `${parsed.name}.${timestamp}${parsed.ext}`);
     let index = 1;
 
-    while (fs.existsSync(candidate)) {
-      candidate = path.join(parsed.dir, `${parsed.name}.${timestamp}.${index}${parsed.ext}`);
+    while (fs.existsSync(/* turbopackIgnore: true */ candidate)) {
+      candidate = path.join(/* turbopackIgnore: true */ parsed.dir, `${parsed.name}.${timestamp}.${index}${parsed.ext}`);
       index += 1;
     }
 
@@ -287,14 +289,14 @@ class RotatingFileLogSink implements FileLogSink {
 function listRotatedFiles(dir: string, baseName: string, ext: string, currentFileName: string) {
   try {
     return fs
-      .readdirSync(dir)
+      .readdirSync(/* turbopackIgnore: true */ dir)
       .filter((fileName) => fileName !== currentFileName && fileName.startsWith(`${baseName}.`) && (ext ? fileName.endsWith(ext) : true))
       .map((fileName) => {
-        const filePath = path.join(dir, fileName);
-        const stat = fs.statSync(filePath);
+        const filePath = path.join(/* turbopackIgnore: true */ dir, fileName);
+        const stat = fs.statSync(/* turbopackIgnore: true */ filePath);
         return { path: filePath, mtimeMs: stat.mtimeMs };
       })
-      .filter((file) => fs.statSync(file.path).isFile())
+      .filter((file) => fs.statSync(/* turbopackIgnore: true */ file.path).isFile())
       .sort((left, right) => right.mtimeMs - left.mtimeMs);
   } catch (error) {
     writeInternalLoggerError("failed to list rotated log files", dir, error);
@@ -304,7 +306,7 @@ function listRotatedFiles(dir: string, baseName: string, ext: string, currentFil
 
 function getFileSize(filePath: string) {
   try {
-    return fs.statSync(filePath).size;
+    return fs.statSync(/* turbopackIgnore: true */ filePath).size;
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
       return 0;

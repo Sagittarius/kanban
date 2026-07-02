@@ -1,3 +1,5 @@
+import "server-only";
+
 import { cookies } from "next/headers";
 import { ACTIVE_BOARD_COOKIE, SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 import { isAuthFeatureEnabled } from "@/lib/auth-feature";

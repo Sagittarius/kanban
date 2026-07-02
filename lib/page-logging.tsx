@@ -1,3 +1,5 @@
+import "server-only";
+
 import type { ReactNode } from "react";
 import { headers } from "next/headers";
 import AppErrorPage from "@/components/app-error-page";

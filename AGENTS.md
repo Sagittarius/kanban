@@ -9,8 +9,8 @@ The user is performing authorized administration and defensive maintenance on sy
 ## 常用命令
 
 ```bash
-pnpm run dev              # 启动开发服务器 (vinext dev)
-pnpm run build            # 生产构建 (vinext build)
+pnpm run dev              # 启动开发服务器 (next dev)
+pnpm run build            # 生产构建 (next build)
 pnpm run lint             # ESLint 检查（跳过 dist/ 和 .next/）
 pnpm run local:dev        # 执行本地 SQLite 迁移，然后启动开发服务器（监听 0.0.0.0）
 pnpm run local:start      # 执行本地 SQLite 迁移，然后启动生产服务（监听 0.0.0.0）
@@ -27,16 +27,18 @@ pnpm run db:migrate:sqlite-to-postgres       # 执行一次性 SQLite 到 Postgr
 ## 浏览器兼容开发规范
 
 - 新功能默认遵守 `package.json` 中的 Browserslist 兼容基线；面向用户的提示基线为 Chrome/Edge 109+、Firefox 115+ 与 Safari 16.4+，但功能实现仍需覆盖最低支持版本。
-- 新增动画、特效、拖拽、浮层、滚动容器和复杂交互时，优先选择 Edge 87 可识别的 DOM/CSS/API 方案，并在旧版浏览器验证关键路径。
+- 新增动画、特效、拖拽、浮层、滚动容器和复杂交互时，优先选择 Edge 89 可识别的 DOM/CSS/API 方案，并在旧版浏览器验证关键路径。
 - 避免直接依赖旧版 Chromium 不完整支持的新 CSS 能力，例如独立 `translate`、`scale`、`rotate` 属性；需要位移或缩放时优先使用传统 `transform`。
 - 引入新的组件库或交互库前，必须检查 npm 元数据、产物语法、CSS 输出和运行时 API 是否声明或实际兼容当前基线；没有明确说明时，按风险项处理并补验证。
 - 旧版浏览器不支持的视觉增强必须提供可接受的降级表现，不能影响登录、看板拖拽、任务编辑、活动记录、大屏筛选等核心流程。
 
 ## 架构
 
-**技术栈**：`vinext`、React 19、Drizzle ORM、Tailwind CSS v4、dnd-kit。
+**技术栈**：Next.js 16 App Router、React 19、Drizzle ORM、Tailwind CSS 3.4、Autoprefixer、dnd-kit。
 
-**数据存储**：主路径已移除 D1。运行时统一通过 `db/sql-adapter.ts` 访问数据库，支持 `sqlite` 和 `postgres` 两种驱动，由 `KANBAN_DB_DRIVER` / `DB_DRIVER` 决定。
+**运行时**：标准 Next.js Node runtime。开发、构建、启动命令分别使用 `next dev`、`next build`、`next start`；Docker 使用 Next standalone 输出并通过 `node server.js` 启动。
+
+**数据存储**：运行时统一通过 `db/sql-adapter.ts` 访问数据库，支持 `sqlite` 和 `postgres` 两种驱动，由 `KANBAN_DB_DRIVER` / `DB_DRIVER` 决定。
 
 **数据流**：`components/kanban-app.tsx` 是看板主客户端组件，持有看板状态。它通过 `GET /api/board` 获取看板数据，通过 REST 接口进行变更（`/api/projects`、`/api/tasks`、`/api/tasks/reorder`、`/api/settings` 等）。后台管理、项目负载大屏和维护页分别由 `components/admin-app.tsx`、`components/workload-dashboard.tsx`、`components/maintenance-page.tsx` 承载。API 路由统一调用 `lib/repositories/kanban-repository.ts`。
 
@@ -83,4 +85,4 @@ pnpm run db:migrate:sqlite-to-postgres       # 执行一次性 SQLite 到 Postgr
 
 **日志**：API 入口统一通过 `withApiLogging` 输出结构化 JSON，默认控制台输出。前端请求使用 `clientFetch`，自动携带 `x-request-id` / `x-client-session-id`，5xx 和网络失败会通过 `/api/client-errors` 上报。新增客户端 API 请求不要直接裸用 `fetch`，除非是日志上报工具自身。Docker 镜像默认 `KANBAN_LOG_DIR=/data/logs`，会写 `/data/logs/kanban.log`；`KANBAN_LOG_FILE_ENABLED=false` 可关闭文件日志。文件日志支持按大小滚动、保留文件数和保留天数清理。
 
-**迁移**：Drizzle Kit 在 `drizzle/` 目录维护 SQLite 迁移；`migrations/postgres/` 提供 PostgreSQL 迁移脚本。SQLite 安全升级由 `scripts/upgrade-local-sqlite.mjs` 完成，会先备份并在临时库执行迁移，成功后替换正式库。PostgreSQL 连接时自动执行 `migrations/postgres/` 下未应用脚本。系统参数、默认管理员和默认看板在 repository 初始化路径中安全补齐。
+**迁移**：Drizzle Kit 在 `drizzle/` 目录维护 SQLite 迁移；`migrations/postgres/` 提供 PostgreSQL 迁移脚本。SQLite 安全升级由 `scripts/upgrade-local-sqlite.mjs` 完成，会先备份并在临时库执行迁移，成功后替换正式库。PostgreSQL 可通过 `scripts/migrate-postgres.mjs` 执行启动前迁移，应用连接时也会补齐未应用迁移。系统参数、默认管理员和默认看板在 repository 初始化路径中安全补齐。

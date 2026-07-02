@@ -111,8 +111,8 @@ CREATE TABLE IF NOT EXISTS system_parameters (
   value_type TEXT NOT NULL DEFAULT 'text',
   parameter_group TEXT NOT NULL DEFAULT '基础',
   unit TEXT NOT NULL DEFAULT '',
-  min_value INTEGER,
-  max_value INTEGER,
+  min_value NUMERIC(8,2),
+  max_value NUMERIC(8,2),
   order_index INTEGER NOT NULL DEFAULT 0,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

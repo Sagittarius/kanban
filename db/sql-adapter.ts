@@ -1,3 +1,5 @@
+import "server-only";
+
 export type StorageMode = "sqlite" | "postgres";
 export type SqlValue = string | number | boolean | null | undefined;
 

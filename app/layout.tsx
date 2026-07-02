@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { join } from "node:path";
 import BrowserCompatReady from "@/components/browser-compat-ready";
 import { getAppVersion } from "@/lib/app-meta";
@@ -7,24 +8,30 @@ import { buildBrowserCompatGateScript } from "@/lib/browser-compat";
 import { buildEarlyDiagnosticsScript } from "@/lib/early-diagnostics";
 import "./globals.css";
 
+const require = createRequire(import.meta.url);
 const browserCompatGate = buildBrowserCompatGateScript();
 
-let cachedModernPolyfillSrc: string | null | undefined;
+let cachedCoreJsBundle: string | undefined;
 
-function resolveModernPolyfillSrc() {
-  if (cachedModernPolyfillSrc !== undefined) {
-    return cachedModernPolyfillSrc;
+function readCoreJsBundle() {
+  if (cachedCoreJsBundle !== undefined) {
+    return cachedCoreJsBundle;
   }
 
   try {
-    const assetsDir = join(process.cwd(), "dist", "client", "assets");
-    const polyfillFile = readdirSync(assetsDir).find((file) => /^polyfills-.*\.js$/.test(file));
-    cachedModernPolyfillSrc = polyfillFile ? `/assets/${polyfillFile}` : null;
+    cachedCoreJsBundle = readFileSync(
+      /* turbopackIgnore: true */ join(process.cwd(), "node_modules", "core-js-bundle", "minified.js"),
+      "utf8"
+    );
   } catch {
-    cachedModernPolyfillSrc = null;
+    try {
+      cachedCoreJsBundle = readFileSync(require.resolve("core-js-bundle/minified.js"), "utf8");
+    } catch {
+      cachedCoreJsBundle = "";
+    }
   }
 
-  return cachedModernPolyfillSrc;
+  return cachedCoreJsBundle;
 }
 
 export const metadata: Metadata = {
@@ -41,15 +48,15 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  const modernPolyfillSrc = process.env.NODE_ENV === "production" ? resolveModernPolyfillSrc() : null;
+  const coreJsBundle = readCoreJsBundle();
   const earlyDiagnosticsScript = buildEarlyDiagnosticsScript(getAppVersion());
 
   return (
     <html lang="zh-CN">
       <head>
         <script dangerouslySetInnerHTML={{ __html: earlyDiagnosticsScript }} />
+        {coreJsBundle ? <script dangerouslySetInnerHTML={{ __html: coreJsBundle }} /> : null}
         <script dangerouslySetInnerHTML={{ __html: browserCompatGate }} />
-        {modernPolyfillSrc ? <script type="module" src={modernPolyfillSrc} /> : null}
       </head>
       <body>
         <BrowserCompatReady />

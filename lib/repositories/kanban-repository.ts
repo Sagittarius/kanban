@@ -1,3 +1,5 @@
+import "server-only";
+
 import { getDbAdapter, getStorageMode, type DatabaseAdapter, type SqlValue } from "@/db/sql-adapter";
 import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import type {
@@ -2853,8 +2855,8 @@ function parameter(row: Record<string, unknown>) {
     valueType: row.value_type === "number" || row.value_type === "boolean" ? (row.value_type as SystemParameter["valueType"]) : "text",
     group: String(row.parameter_group),
     unit: String(row.unit ?? ""),
-    minValue: row.min_value as number | null,
-    maxValue: row.max_value as number | null,
+    minValue: optionalNumber(row.min_value),
+    maxValue: optionalNumber(row.max_value),
     orderIndex: Number(row.order_index ?? 0),
     updatedAt: String(row.updated_at),
   };
@@ -3069,6 +3071,14 @@ function num(value: unknown, fallback: number, min: number, max: number) {
 function numDecimal(value: unknown, fallback: number, min: number, max: number) {
   const numberValue = typeof value === "number" ? value : Number(value);
   return Number.isFinite(numberValue) ? Math.min(max, Math.max(min, Math.round(numberValue * 2) / 2)) : fallback;
+}
+
+function optionalNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") {
+    return null;
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function workloadDays(value: unknown): number | null {

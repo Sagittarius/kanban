@@ -198,8 +198,8 @@ export const systemParameters = sqliteTable("system_parameters", {
   valueType: text("value_type").notNull().default("text"),
   group: text("parameter_group").notNull().default("基础"),
   unit: text("unit").notNull().default(""),
-  minValue: integer("min_value"),
-  maxValue: integer("max_value"),
+  minValue: real("min_value"),
+  maxValue: real("max_value"),
   orderIndex: integer("order_index").notNull().default(0),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
