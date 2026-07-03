@@ -89,6 +89,8 @@ html[data-input-mode="keyboard"] summary:focus {
   --accent: #5e6ad2;
   --accent-hover: #4f5cc6;
   --accent-soft: rgba(94, 106, 210, 0.18);
+  --search-highlight-bg: var(--accent);
+  --search-highlight-text: #ffffff;
   --tag-bg: #edf0ff;
   --danger: #c43b2f;
   --danger-soft: #fff0ee;
@@ -196,6 +198,7 @@ html[data-input-mode="keyboard"] summary:focus {
   --accent: #4adeff;
   --accent-hover: #2fc9ee;
   --accent-soft: rgba(74, 222, 255, 0.16);
+  --search-highlight-text: #06121f;
   --tag-bg: rgba(31, 55, 96, 0.62);
   --danger: #ff4f7b;
   --danger-soft: rgba(255, 79, 123, 0.24);
@@ -277,6 +280,7 @@ html[data-input-mode="keyboard"] summary:focus {
   --accent: #0acf83;
   --accent-hover: #08ad6e;
   --accent-soft: rgba(10, 207, 131, 0.16);
+  --search-highlight-text: #061f16;
   --tag-bg: #eef7ff;
   --danger: #f24e1e;
   --danger-soft: #fff1eb;
@@ -303,6 +307,7 @@ html[data-input-mode="keyboard"] summary:focus {
   --accent: #00c875;
   --accent-hover: #00a861;
   --accent-soft: rgba(0, 200, 117, 0.16);
+  --search-highlight-text: #061f16;
   --tag-bg: #eaf8ff;
   --danger: #e44258;
   --danger-soft: #fff0f2;

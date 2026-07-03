@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search, X } from "lucide-react";
 import { SEARCHABLE_SELECT_DROPDOWN_ATTR, SEARCHABLE_SELECT_ROOT_ATTR } from "@/lib/select-surface";
+import { selectItemMatchesQuery } from "@/lib/select-search";
 
 export type SearchableSelectOption = {
   value: string;
@@ -11,14 +12,16 @@ export type SearchableSelectOption = {
   meta?: string;
 };
 
+type SearchableSelectDropdownMode = "inline" | "portal";
+
 export default function SearchableSelect({
   value,
   options,
   onChange,
   placeholder,
-  clearable = false,
   disabled = false,
   className = "",
+  dropdownMode = "inline",
 }: {
   value: string;
   options: SearchableSelectOption[];
@@ -27,6 +30,7 @@ export default function SearchableSelect({
   clearable?: boolean;
   disabled?: boolean;
   className?: string;
+  dropdownMode?: SearchableSelectDropdownMode;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -38,13 +42,12 @@ export default function SearchableSelect({
   const triggerRef = useRef<HTMLButtonElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const listboxIdRef = useRef(`searchable-select-listbox-${Math.random().toString(36).slice(2, 10)}`);
+  const usePortal = dropdownMode === "portal";
   const selected = options.find((option) => option.value === value);
-  const normalizedQuery = query.trim().toLowerCase();
-  const filtered = normalizedQuery
-    ? options.filter((option) =>
-        [option.label, option.meta ?? "", option.value].some((item) => item.toLowerCase().includes(normalizedQuery))
-      )
-    : options;
+  const filtered = useMemo(
+    () => options.filter((option) => selectItemMatchesQuery(option, query)),
+    [options, query]
+  );
 
   const selectStyle = {
     "--select-border": "var(--border, var(--dash-line, #d9dee7))",
@@ -72,10 +75,15 @@ export default function SearchableSelect({
     }
   }, [open]);
 
-  function updateDropdownPosition() {
+  const updateDropdownPosition = useCallback(function updateDropdownPosition() {
     const container = containerRef.current;
     const rect = container?.getBoundingClientRect();
     if (!container || !rect) return false;
+    if (!usePortal) {
+      setPortalHost(null);
+      setDropdownStyle({});
+      return false;
+    }
 
     const themedHost = container.closest(".kanban-theme");
     setPortalHost(themedHost);
@@ -86,11 +94,11 @@ export default function SearchableSelect({
 
     const viewportPadding = 12;
     const maxWidth = Math.min(360, window.innerWidth - viewportPadding * 2);
-    const width = Math.min(Math.max(rect.width, 260), maxWidth);
+    const width = Math.min(rect.width, maxWidth);
     const left = Math.min(Math.max(rect.left, viewportPadding), window.innerWidth - width - viewportPadding);
     setDropdownStyle({ left, top: rect.bottom + 4, width });
     return true;
-  }
+  }, [usePortal]);
 
   useEffect(() => {
     if (!open) return;
@@ -103,7 +111,7 @@ export default function SearchableSelect({
       window.removeEventListener("resize", updateDropdownPosition);
       window.removeEventListener("scroll", updateDropdownPosition, true);
     };
-  }, [open]);
+  }, [open, updateDropdownPosition]);
 
   useEffect(() => {
     if (!open) {
@@ -198,16 +206,17 @@ export default function SearchableSelect({
     }
   }
 
+  const renderInPortal = usePortal && Boolean(portalHost);
   const dropdown = open && !disabled ? (
     <div
       ref={dropdownRef}
       {...{ [SEARCHABLE_SELECT_DROPDOWN_ATTR]: "true" }}
       className={`overflow-hidden rounded-md border border-[var(--select-border)] bg-[var(--select-panel)] shadow-lg ${
-        portalHost ? "z-[140]" : "z-[80]"
+        renderInPortal ? "z-[170]" : "z-[80]"
       } ${
-        portalHost ? "fixed" : "absolute right-0 top-full mt-1 w-full min-w-[260px] max-w-[min(92vw,360px)]"
+        renderInPortal ? "fixed" : "absolute right-0 top-full mt-1 w-full min-w-0 max-w-[min(92vw,360px)]"
       }`}
-      style={portalHost ? { ...selectStyle, ...dropdownStyle } : selectStyle}
+      style={renderInPortal ? { ...selectStyle, ...dropdownStyle } : selectStyle}
     >
       <div className="flex gap-2 border-b border-[var(--select-border)] p-2">
         <div className="relative min-w-0 flex-1">
@@ -223,7 +232,7 @@ export default function SearchableSelect({
             aria-controls={listboxIdRef.current}
             aria-activedescendant={activeIndex >= 0 ? `${listboxIdRef.current}-option-${activeIndex}` : undefined}
             aria-autocomplete="list"
-            className="w-full rounded border border-[var(--select-border)] bg-[var(--select-input)] py-1.5 pl-8 pr-8 text-sm text-[var(--select-text)] outline-none placeholder:text-[var(--select-muted)] focus:border-[var(--select-accent)]"
+            className="h-8 w-full rounded border border-[var(--select-border)] bg-[var(--select-input)] py-0 pl-8 pr-8 text-sm leading-8 text-[var(--select-text)] outline-none placeholder:text-[var(--select-muted)] focus:border-[var(--select-accent)]"
             autoFocus
           />
           {query ? (
@@ -239,16 +248,6 @@ export default function SearchableSelect({
             </button>
           ) : null}
         </div>
-        {clearable && value ? (
-          <button
-            type="button"
-            title="重置选择"
-            onClick={() => pick("")}
-            className="grid h-8 w-8 shrink-0 place-items-center rounded border border-[var(--select-border)] text-[var(--select-muted)] transition hover:bg-[var(--select-panel-soft)] hover:text-[var(--select-text)]"
-          >
-            <X size={14} />
-          </button>
-        ) : null}
       </div>
       <div id={listboxIdRef.current} role="listbox" aria-label={placeholder} className="max-h-[220px] overflow-y-auto p-1">
         {filtered.length === 0 ? (
@@ -322,7 +321,7 @@ export default function SearchableSelect({
         </span>
         <ChevronDown size={14} className="shrink-0 text-[var(--select-muted)]" />
       </button>
-      {dropdown && portalHost ? createPortal(dropdown, portalHost) : dropdown}
+      {dropdown && renderInPortal && portalHost ? createPortal(dropdown, portalHost) : dropdown}
     </div>
   );
 }

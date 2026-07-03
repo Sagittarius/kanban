@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Check, Search, X } from "lucide-react";
 import { SEARCH_MULTI_SELECT_DROPDOWN_ATTR, SEARCH_MULTI_SELECT_ROOT_ATTR } from "@/lib/select-surface";
+import { selectItemMatchesQuery } from "@/lib/select-search";
 
 export type MultiSelectOption = {
   value: string;
@@ -48,16 +49,37 @@ export default function SearchMultiSelect({
   }, [open]);
 
   const selected = useMemo(() => options.filter((option) => value.includes(option.value)), [options, value]);
+  const selectedValueSet = useMemo(() => new Set(value), [value]);
   const filtered = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) return options;
-    return options.filter((option) =>
-      [option.label, option.meta ?? "", option.value].some((part) => part.toLowerCase().includes(normalized))
-    );
+    return options.filter((option) => selectItemMatchesQuery(option, query));
   }, [options, query]);
+  const filteredValues = useMemo(() => filtered.map((option) => option.value), [filtered]);
+  const allFilteredSelected = filteredValues.length > 0 && filteredValues.every((item) => selectedValueSet.has(item));
+  const bulkActionLabel = allFilteredSelected ? "反选" : "全选";
 
   function toggle(nextValue: string) {
     onChange(value.includes(nextValue) ? value.filter((item) => item !== nextValue) : [...value, nextValue]);
+  }
+
+  function selectFiltered() {
+    if (filteredValues.length === 0) return;
+    onChange([...value, ...filteredValues.filter((item) => !selectedValueSet.has(item))]);
+  }
+
+  function invertFilteredSelection() {
+    if (filteredValues.length === 0) return;
+    const filteredValueSet = new Set(filteredValues);
+    const keptValues = value.filter((item) => !filteredValueSet.has(item));
+    const addedValues = filteredValues.filter((item) => !selectedValueSet.has(item));
+    onChange([...keptValues, ...addedValues]);
+  }
+
+  function toggleBulkSelection() {
+    if (allFilteredSelected) {
+      invertFilteredSelection();
+      return;
+    }
+    selectFiltered();
   }
 
   const selectStyle = {
@@ -123,7 +145,7 @@ export default function SearchMultiSelect({
       {open ? (
         <div
           {...{ [SEARCH_MULTI_SELECT_DROPDOWN_ATTR]: "true" }}
-          className={`absolute right-0 top-full z-[80] mt-1 w-full min-w-[260px] max-w-[min(92vw,360px)] rounded-md border border-[var(--sms-border)] bg-[var(--sms-panel)] shadow-lg ${panelClassName}`}
+          className={`absolute right-0 top-full z-[80] mt-1 w-full min-w-0 max-w-[min(92vw,360px)] rounded-md border border-[var(--sms-border)] bg-[var(--sms-panel)] shadow-lg ${panelClassName}`}
         >
           <div className="border-b border-[var(--sms-border)] p-2">
             <div className="relative">
@@ -132,7 +154,7 @@ export default function SearchMultiSelect({
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
                 placeholder={searchPlaceholder}
-                className="w-full rounded border border-[var(--sms-border)] bg-[var(--sms-input)] py-1.5 pl-8 pr-8 text-sm text-[var(--sms-text)] outline-none placeholder:text-[var(--sms-muted)]"
+                className="h-8 w-full rounded border border-[var(--sms-border)] bg-[var(--sms-input)] py-0 pl-8 pr-8 text-sm leading-8 text-[var(--sms-text)] outline-none placeholder:text-[var(--sms-muted)]"
               />
               {query ? (
                 <button
@@ -147,12 +169,31 @@ export default function SearchMultiSelect({
             </div>
           </div>
 
+          <div className="border-b border-[var(--sms-border)] bg-[var(--sms-panel-soft)]/55 px-2 py-2">
+            <button
+              type="button"
+              disabled={filteredValues.length === 0}
+              onClick={toggleBulkSelection}
+              className={`inline-flex h-8 w-full items-center justify-center gap-1.5 rounded-md border px-2 text-sm font-semibold shadow-sm transition disabled:cursor-not-allowed disabled:border-[var(--sms-border)] disabled:bg-[var(--sms-panel)] disabled:text-[var(--sms-muted)] disabled:opacity-60 ${
+                allFilteredSelected
+                  ? "border-[var(--sms-border)] bg-[var(--sms-panel)] text-[var(--sms-text)] hover:border-[var(--sms-accent)] hover:text-[var(--sms-accent)]"
+                  : "border-[var(--sms-accent)] bg-[var(--sms-accent)] text-white hover:opacity-90"
+              }`}
+            >
+              {allFilteredSelected ? <span className="h-3 w-3 rounded-sm border border-current" /> : <Check size={13} />}
+              {bulkActionLabel}
+              <span className={`rounded px-1.5 py-0.5 text-[11px] leading-none ${allFilteredSelected ? "bg-[var(--sms-panel-soft)] text-[var(--sms-muted)]" : "bg-white/18 text-white"}`}>
+                {filteredValues.length}
+              </span>
+            </button>
+          </div>
+
           <div className="max-h-[180px] space-y-1 overflow-y-auto p-1.5">
             {filtered.length === 0 ? (
               <p className="px-3 py-2 text-sm text-[var(--sms-muted)]">无匹配项</p>
             ) : (
               filtered.map((option) => {
-                const active = value.includes(option.value);
+                const active = selectedValueSet.has(option.value);
                 return (
                   <button
                     key={option.value}

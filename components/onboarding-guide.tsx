@@ -445,7 +445,7 @@ export default function OnboardingGuide({
   }
 
   return (
-    <div className="pointer-events-none fixed inset-0 z-[140]">
+    <div className="pointer-events-none fixed inset-0 z-[180]">
       <div className="absolute inset-0 bg-slate-950/56" />
       <div
         className="absolute rounded-[28px] border border-cyan-200 shadow-[0_0_0_1px_rgba(103,232,249,0.34),0_0_0_9999px_rgba(2,6,23,0.5),0_0_42px_rgba(34,211,238,0.34)] transition-all"

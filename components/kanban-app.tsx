@@ -90,6 +90,7 @@ import {
 } from "@/lib/board-data";
 import type { ChangelogEntry } from "@/lib/changelog";
 import { clientFetch } from "@/lib/client-observability";
+import { getSelectSearchMatchRanges, textMatchesSelectQuery } from "@/lib/select-search";
 
 type SyncState = "synced" | "syncing" | "local";
 type DrawerMode = "task" | "project" | "activity" | "settings" | null;
@@ -113,6 +114,14 @@ type DragTargetData =
 
 const floatingActionButtonClass =
   "inline-flex h-11 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--text)] px-4 text-[14px] font-semibold leading-none text-[var(--panel)] shadow-lg transition hover:opacity-90";
+const sortableTransition = {
+  duration: 260,
+  easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+};
+const dragOverlayDropAnimation = {
+  duration: 240,
+  easing: "cubic-bezier(0.22, 1, 0.36, 1)",
+};
 const kanbanCollisionDetection: CollisionDetection = (args) => {
   const pointerCollisions = pointerWithin(args);
   if (pointerCollisions.length > 0) {
@@ -606,6 +615,31 @@ function isDeleteDropTarget(target: DndDataEntry) {
   return target?.id === "delete-zone" || dragDataFromEntry(target)?.type === "delete-zone";
 }
 
+function measuredTaskCardWidth(status: BoardStatus) {
+  if (typeof document === "undefined") {
+    return status === "backlog" ? 280 : 272;
+  }
+
+  const lane = document.querySelector<HTMLElement>(`[data-board-drop-status="${status}"]`);
+  const card = lane?.querySelector<HTMLElement>("[data-task-card-frame]");
+  if (card) {
+    return Math.round(card.getBoundingClientRect().width);
+  }
+
+  if (status === "backlog") {
+    return 280;
+  }
+
+  if (!lane) {
+    return 272;
+  }
+
+  const style = window.getComputedStyle(lane);
+  const paddingLeft = Number.parseFloat(style.paddingLeft) || 0;
+  const paddingRight = Number.parseFloat(style.paddingRight) || 0;
+  return Math.max(240, Math.round(lane.clientWidth - paddingLeft - paddingRight));
+}
+
 function activeTaskIdFromEvent(event: DragStartEvent | DragOverEvent | DragEndEvent | DragCancelEvent) {
   return typeof event.active.id === "string" ? event.active.id : null;
 }
@@ -1075,6 +1109,7 @@ export default function KanbanApp({
     initialBoard.projects[0]?.id ?? null
   );
   const [crossDragTarget, setCrossDragTarget] = useState<BoardStatus | null>(null);
+  const [dragOverlayWidth, setDragOverlayWidth] = useState<number | null>(null);
   const [draggingTaskId, setDraggingTaskId] = useState<string | null>(null);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogAction | null>(null);
@@ -1216,7 +1251,7 @@ export default function KanbanApp({
   );
 
   const filteredTasks = useMemo(() => {
-    const query = search.trim().toLowerCase();
+    const query = search.trim();
     const activeProjectIds = new Set(activeProjects.map((project) => project.id));
 
     return board.tasks.filter((task) => {
@@ -1228,11 +1263,13 @@ export default function KanbanApp({
       const matchesTag = tagFilters.length === 0 || tagFilters.some((tag) => task.tags.includes(tag));
       const matchesSearch =
         !query ||
-        task.title.toLowerCase().includes(query) ||
-        task.description.toLowerCase().includes(query) ||
-        task.owner.toLowerCase().includes(query) ||
-        task.tester.toLowerCase().includes(query) ||
-        task.tags.some((tag) => tag.toLowerCase().includes(query));
+        [
+          task.title,
+          task.description,
+          task.owner,
+          task.tester,
+          ...task.tags,
+        ].some((part) => textMatchesSelectQuery(part, query));
       const matchesMetric =
         metricFilter === null ||
         (metricFilter === "blocked"
@@ -1772,6 +1809,7 @@ export default function KanbanApp({
     latestTasksRef.current = board.tasks;
     setDraggingTaskId(sourceId);
     setCrossDragTarget(sourceStatus);
+    setDragOverlayWidth(measuredTaskCardWidth(sourceStatus));
   }
 
   function handleDragOver(event: DragOverEvent) {
@@ -1791,6 +1829,7 @@ export default function KanbanApp({
     }
 
     setCrossDragTarget(targetStatus);
+    setDragOverlayWidth(measuredTaskCardWidth(targetStatus));
 
     if (!shouldMoveTasks(event, targetStatus, sourceStatus)) {
       return;
@@ -1809,6 +1848,7 @@ export default function KanbanApp({
 
   async function handleDragEnd(event: DragEndEvent) {
     setCrossDragTarget(null);
+    setDragOverlayWidth(null);
     setDraggingTaskId(null);
     const targetStatus = targetStatusFromEntity(event.over);
     const deleteDrop = isDeleteDropTarget(event.over);
@@ -1862,6 +1902,7 @@ export default function KanbanApp({
 
   function handleDragCancel(_event: DragCancelEvent) {
     setCrossDragTarget(null);
+    setDragOverlayWidth(null);
     setDraggingTaskId(null);
     const startTasks = dragStartTasksRef.current;
     if (startTasks) {
@@ -2478,6 +2519,7 @@ export default function KanbanApp({
             </div>
             {viewMode === "board" ? (
               <DndContext
+                id="kanban-board-dnd"
                 sensors={dragSensors}
                 collisionDetection={kanbanCollisionDetection}
                 onDragStart={handleDragStart}
@@ -2503,6 +2545,7 @@ export default function KanbanApp({
                         dueSoonDays={dueSoonDays}
                         taskCardStripeEnabled={taskCardStripeEnabled}
                         crossDragTarget={crossDragTarget}
+                        searchQuery={search}
                         onToggleCollapse={() => setBacklogCollapsed((current) => !current)}
                         onOpenTask={openTask}
                       />
@@ -2527,15 +2570,22 @@ export default function KanbanApp({
                         dueSoonDays={dueSoonDays}
                         taskCardStripeEnabled={taskCardStripeEnabled}
                         crossDragTarget={crossDragTarget}
+                        searchQuery={search}
                         onOpenTask={openTask}
                       />
                     );
                   })}
                 </div>
                 <DeleteDropZone visible={draggingTaskId !== null} />
-                <DragOverlay dropAnimation={null} zIndex={160}>
+                <DragOverlay dropAnimation={dragOverlayDropAnimation} zIndex={160}>
                   {draggingTask ? (
-                    <div className="w-[300px] max-w-[min(72vw,320px)]">
+                    <div
+                      className="transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                      style={{
+                        width: dragOverlayWidth ?? measuredTaskCardWidth(draggingTask.status),
+                        maxWidth: "calc(100vw - 32px)",
+                      }}
+                    >
                       <TaskCard
                         task={draggingTask}
                         todayKey={todayKey}
@@ -2545,6 +2595,7 @@ export default function KanbanApp({
                         stripeEnabled={taskCardStripeEnabled}
                         dragging
                         draggable={false}
+                        searchQuery={search}
                         onSelect={() => {}}
                       />
                     </div>
@@ -2556,6 +2607,7 @@ export default function KanbanApp({
                 tasks={visibleListTasks}
                 todayKey={todayKey}
                 dueSoonDays={dueSoonDays}
+                searchQuery={search}
                 onOpenTask={openTask}
               />
             )}
@@ -2760,6 +2812,7 @@ function HorizontalBoardColumn({
   dueSoonDays,
   taskCardStripeEnabled,
   crossDragTarget,
+  searchQuery,
   onToggleCollapse,
   onOpenTask,
 }: {
@@ -2772,6 +2825,7 @@ function HorizontalBoardColumn({
   dueSoonDays: number;
   taskCardStripeEnabled: boolean;
   crossDragTarget: BoardStatus | null;
+  searchQuery: string;
   onToggleCollapse: () => void;
   onOpenTask: (taskId: string) => void;
 }) {
@@ -2839,6 +2893,7 @@ function HorizontalBoardColumn({
                     project={projectById(projects, task.projectId)}
                     selected={task.id === selectedTaskId}
                     stripeEnabled={taskCardStripeEnabled}
+                    searchQuery={searchQuery}
                     className="w-[280px] shrink-0"
                     onSelect={() => onOpenTask(task.id)}
                   />
@@ -2863,6 +2918,7 @@ function BoardColumnView({
   dueSoonDays,
   taskCardStripeEnabled,
   crossDragTarget,
+  searchQuery,
   onOpenTask,
 }: {
   column: BoardData["columns"][number];
@@ -2873,6 +2929,7 @@ function BoardColumnView({
   dueSoonDays: number;
   taskCardStripeEnabled: boolean;
   crossDragTarget: BoardStatus | null;
+  searchQuery: string;
   onOpenTask: (taskId: string) => void;
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -2921,6 +2978,7 @@ function BoardColumnView({
                 project={projectById(projects, task.projectId)}
                 selected={task.id === selectedTaskId}
                 stripeEnabled={taskCardStripeEnabled}
+                searchQuery={searchQuery}
                 className="w-full"
                 onSelect={() => onOpenTask(task.id)}
               />
@@ -2938,11 +2996,13 @@ function KanbanListView({
   tasks,
   todayKey,
   dueSoonDays,
+  searchQuery,
   onOpenTask,
 }: {
   tasks: Array<{ task: BoardTask; project: Project; statusLabel: string }>;
   todayKey: string;
   dueSoonDays: number;
+  searchQuery: string;
   onOpenTask: (taskId: string) => void;
 }) {
   return (
@@ -2976,8 +3036,12 @@ function KanbanListView({
                     <span className="mt-1 inline-flex rounded-full bg-[var(--panel-soft)] px-2 py-1 text-xs text-[var(--muted)]">{statusLabel}</span>
                   </span>
                   <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-[var(--text)]">{task.title}</span>
-                    <span className="mt-1 line-clamp-2 block text-xs text-[var(--muted)]">{task.description || "无描述"}</span>
+                    <span className="block truncate text-sm font-semibold text-[var(--text)]">
+                      <HighlightedSearchText text={task.title} query={searchQuery} />
+                    </span>
+                    <span className="mt-1 line-clamp-2 block text-xs text-[var(--muted)]">
+                      <HighlightedSearchText text={task.description || "无描述"} query={task.description ? searchQuery : ""} />
+                    </span>
                   </span>
                   <span className="truncate text-sm text-[var(--text)]">{task.owner || "-"}</span>
                   <span className="truncate text-sm text-[var(--text)]">{task.tester || "-"}</span>
@@ -3009,6 +3073,7 @@ function HorizontalSortableTaskCard({
   project,
   selected,
   stripeEnabled,
+  searchQuery,
   className,
   onSelect,
 }: {
@@ -3019,6 +3084,7 @@ function HorizontalSortableTaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  searchQuery: string;
   className?: string;
   onSelect: () => void;
 }) {
@@ -3031,6 +3097,7 @@ function HorizontalSortableTaskCard({
       project={project}
       selected={selected}
       stripeEnabled={stripeEnabled}
+      searchQuery={searchQuery}
       className={className}
       onSelect={onSelect}
     />
@@ -3045,6 +3112,7 @@ function HorizontalDraggableTaskCard({
   project,
   selected,
   stripeEnabled,
+  searchQuery,
   className,
   onSelect,
 }: {
@@ -3055,6 +3123,7 @@ function HorizontalDraggableTaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  searchQuery: string;
   className?: string;
   onSelect: () => void;
 }) {
@@ -3068,6 +3137,7 @@ function HorizontalDraggableTaskCard({
   } = useSortable({
     id: task.id,
     data: { type: "task", status: task.status } satisfies DragTargetData,
+    transition: sortableTransition,
   });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -3078,6 +3148,7 @@ function HorizontalDraggableTaskCard({
     <div
       ref={setNodeRef}
       style={style}
+      data-task-card-frame="true"
       {...attributes}
       {...listeners}
       className={`${className ?? ""} touch-none ${isDragging ? "pointer-events-none relative z-30 opacity-0" : ""}`}
@@ -3090,6 +3161,7 @@ function HorizontalDraggableTaskCard({
         project={project}
         selected={selected}
         stripeEnabled={stripeEnabled}
+        searchQuery={searchQuery}
         dragging={isDragging}
         draggable={true}
         onSelect={onSelect}
@@ -3106,6 +3178,7 @@ function VerticalSortableTaskCard({
   project,
   selected,
   stripeEnabled,
+  searchQuery,
   className,
   onSelect,
 }: {
@@ -3116,6 +3189,7 @@ function VerticalSortableTaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  searchQuery: string;
   className?: string;
   onSelect: () => void;
 }) {
@@ -3128,6 +3202,7 @@ function VerticalSortableTaskCard({
       project={project}
       selected={selected}
       stripeEnabled={stripeEnabled}
+      searchQuery={searchQuery}
       className={className}
       onSelect={onSelect}
     />
@@ -3142,6 +3217,7 @@ function VerticalDraggableTaskCard({
   project,
   selected,
   stripeEnabled,
+  searchQuery,
   className,
   onSelect,
 }: {
@@ -3152,6 +3228,7 @@ function VerticalDraggableTaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  searchQuery: string;
   className?: string;
   onSelect: () => void;
 }) {
@@ -3165,6 +3242,7 @@ function VerticalDraggableTaskCard({
   } = useSortable({
     id: task.id,
     data: { type: "task", status: task.status } satisfies DragTargetData,
+    transition: sortableTransition,
   });
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -3175,6 +3253,7 @@ function VerticalDraggableTaskCard({
     <div
       ref={setNodeRef}
       style={style}
+      data-task-card-frame="true"
       {...attributes}
       {...listeners}
       className={`${className ?? ""} touch-none ${isDragging ? "pointer-events-none relative z-30 opacity-0" : ""}`}
@@ -3187,6 +3266,7 @@ function VerticalDraggableTaskCard({
         project={project}
         selected={selected}
         stripeEnabled={stripeEnabled}
+        searchQuery={searchQuery}
         dragging={isDragging}
         draggable={true}
         onSelect={onSelect}
@@ -3242,7 +3322,7 @@ function EmptyLaneCard({
 }) {
   return (
     <div
-      className={`grid rounded-lg border border-dashed px-4 text-center transition ${
+      className={`grid rounded-lg border border-dashed px-4 text-center transition duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
         active
           ? "border-[var(--accent)] bg-[var(--accent-soft)] text-[var(--accent)]"
           : "border-[var(--border)] bg-[var(--panel)]/60 text-[var(--muted)]"
@@ -3426,6 +3506,39 @@ function DeleteDropZone({ visible }: { visible: boolean }) {
   );
 }
 
+function HighlightedSearchText({ text, query }: { text: string; query: string }) {
+  const ranges = getSelectSearchMatchRanges(text, query);
+  if (ranges.length === 0) {
+    return <>{text}</>;
+  }
+
+  const parts: ReactNode[] = [];
+  let cursor = 0;
+  ranges.forEach((range, index) => {
+    const start = Math.max(cursor, range.start);
+    const end = Math.max(start, range.end);
+    if (start > cursor) {
+      parts.push(text.slice(cursor, start));
+    }
+    if (end > start) {
+      parts.push(
+        <mark
+          key={`${start}-${end}-${index}`}
+          className="box-decoration-clone rounded bg-[var(--search-highlight-bg)] px-0.5 font-semibold text-[var(--search-highlight-text)] shadow-[0_0_0_1px_var(--search-highlight-bg)]"
+        >
+          {text.slice(start, end)}
+        </mark>
+      );
+    }
+    cursor = end;
+  });
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+
+  return <>{parts}</>;
+}
+
 function TaskCard({
   task,
   todayKey,
@@ -3433,6 +3546,7 @@ function TaskCard({
   project,
   selected,
   stripeEnabled,
+  searchQuery = "",
   dragging,
   draggable,
   onSelect,
@@ -3443,6 +3557,7 @@ function TaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  searchQuery?: string;
   dragging: boolean;
   draggable: boolean;
   onSelect: () => void;
@@ -3457,7 +3572,7 @@ function TaskCard({
   return (
     <article
       onClick={onSelect}
-      className={`group relative overflow-hidden rounded-lg border bg-[var(--card)] p-3.5 pl-4 transition ${
+      className={`group relative overflow-hidden rounded-lg border bg-[var(--card)] p-3.5 pl-4 transition duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] ${
         selected ? "border-[var(--accent)] ring-2 ring-[var(--accent-soft)]" : "border-[var(--card-border-strong)]"
       } ${hasDateAlert ? "border-[var(--danger)] bg-[var(--danger-soft)]" : ""} ${
         dragging
@@ -3478,7 +3593,7 @@ function TaskCard({
         <div className="flex items-start gap-3">
           <div className="min-w-0 flex-1">
             <h3 className="line-clamp-2 text-sm font-semibold leading-5 text-[var(--text)] 2xl:text-[15px]">
-              {task.title}
+              <HighlightedSearchText text={task.title} query={searchQuery} />
             </h3>
             <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--muted)]">
               <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: project.color }} />
@@ -3495,7 +3610,7 @@ function TaskCard({
           </div>
         </div>
         <p className="mt-2 line-clamp-2 text-xs leading-5 text-[var(--muted)]">
-          {task.description || "暂无描述"}
+          <HighlightedSearchText text={task.description || "暂无描述"} query={task.description ? searchQuery : ""} />
         </p>
       </div>
 
@@ -4889,7 +5004,7 @@ function ChangelogDialog({
 
 function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
   return (
-    <label className="flex flex-col gap-1.5 text-base text-[var(--muted)] [&_input]:w-full [&_input]:rounded-md [&_input]:border [&_input]:border-[var(--border)] [&_input]:bg-[var(--input)] [&_input]:px-2 [&_input]:py-2 [&_input]:text-base [&_input]:text-[var(--text)] [&_input::placeholder]:text-base [&_input::placeholder]:text-[var(--muted)] [&_input::placeholder]:opacity-50 [&_select]:w-full [&_select]:rounded-md [&_select]:border [&_select]:border-[var(--border)] [&_select]:bg-[var(--input)] [&_select]:px-2 [&_select]:py-2 [&_select]:text-base [&_select]:text-[var(--text)] [&_textarea]:w-full [&_textarea]:rounded-md [&_textarea]:border [&_textarea]:border-[var(--border)] [&_textarea]:bg-[var(--input)] [&_textarea]:px-2 [&_textarea]:py-2 [&_textarea]:text-base [&_textarea]:text-[var(--text)] [&_textarea::placeholder]:text-base [&_textarea::placeholder]:text-[var(--muted)] [&_textarea::placeholder]:opacity-50">
+    <label className="flex flex-col gap-1.5 text-base text-[var(--muted)] [&>input]:w-full [&>input]:rounded-md [&>input]:border [&>input]:border-[var(--border)] [&>input]:bg-[var(--input)] [&>input]:px-2 [&>input]:py-2 [&>input]:text-base [&>input]:text-[var(--text)] [&>input::placeholder]:text-base [&>input::placeholder]:text-[var(--muted)] [&>input::placeholder]:opacity-50 [&>select]:w-full [&>select]:rounded-md [&>select]:border [&>select]:border-[var(--border)] [&>select]:bg-[var(--input)] [&>select]:px-2 [&>select]:py-2 [&>select]:text-base [&>select]:text-[var(--text)] [&>textarea]:w-full [&>textarea]:rounded-md [&>textarea]:border [&>textarea]:border-[var(--border)] [&>textarea]:bg-[var(--input)] [&>textarea]:px-2 [&>textarea]:py-2 [&>textarea]:text-base [&>textarea]:text-[var(--text)] [&>textarea::placeholder]:text-base [&>textarea::placeholder]:text-[var(--muted)] [&>textarea::placeholder]:opacity-50">
       <span>{label}{required ? <RequiredMark /> : null}</span>
       {children}
     </label>

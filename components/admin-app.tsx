@@ -8,6 +8,7 @@ import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import { clientFetch } from "@/lib/client-observability";
+import { textMatchesSelectQuery } from "@/lib/select-search";
 import { isThemeId, jobTitleLabel, jobTitleOptions, techStackOptions, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type {
   AdminPermissions,
@@ -490,12 +491,12 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const selectedBoardMembers = useMemo(() => {
     if (!selectedBoard) return [];
     const explicitIds = new Set(selectedBoard.members.map((member) => member.user_id));
-    const query = memberQuery.trim().toLowerCase();
+    const query = memberQuery.trim();
     return userDirectory
       .filter((user) => {
         if (!query) return true;
         const values = [user.username, user.displayName, roleLabels[user.role], jobTitleLabel(user.jobTitle)];
-        return values.some((value) => value.toLowerCase().includes(query));
+        return values.some((value) => textMatchesSelectQuery(value, query));
       })
       .map((user) => ({
         user,
