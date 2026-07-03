@@ -54,8 +54,8 @@
     "typescript": "5.9.3"
   },
   "browserslist": [
-    "Chrome >= 89",
-    "Edge >= 89",
+    "Chrome >= 87",
+    "Edge >= 87",
     "Firefox >= 90",
     "Safari >= 15",
     "not IE 11"

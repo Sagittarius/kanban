@@ -38,7 +38,12 @@ function readCoreJsBundle() {
     }
   }
 
+  cachedCoreJsBundle = stripSourceMapComment(cachedCoreJsBundle);
   return cachedCoreJsBundle;
+}
+
+function stripSourceMapComment(source: string) {
+  return source.replace(/\n?\/\/# sourceMappingURL=.*$/u, "");
 }
 
 export const metadata: Metadata = {

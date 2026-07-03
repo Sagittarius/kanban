@@ -337,7 +337,7 @@
           return match ? decodeURIComponent(match[1].replace(/\+/g, " ")) : "";
         }
 
-        var required = query("required") || "Chrome 87+ / Edge 87+ / Firefox 78+ / Safari 14+";
+        var required = query("required") || "Chrome 87+ / Edge 87+ / Firefox 90+ / Safari 15+";
         var recommended = query("recommended") || "Chrome/Edge 109+ / Firefox 115+ / Safari 16.4+";
         var reason = query("reason") || "unknown";
         var detail = query("detail") || "-";
@@ -356,7 +356,7 @@
         pageSubtitle.style.display = "";
         document.getElementById("stepUpgrade").textContent = isRecommended
           ? "推荐版本：Chrome/Edge 109+、Firefox 115+、Safari 16.4+。"
-          : "最低支持版本：Chrome 87+、Edge 87+、Firefox 78+、Safari 14+。";
+          : "最低支持版本：Chrome 87+、Edge 87+、Firefox 90+、Safari 15+。";
         document.getElementById("stepAction").textContent = isRecommended
           ? "继续访问后，本机不再重复提示。"
           : "继续访问后，本机不再重复提示。";

@@ -6,7 +6,7 @@ import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import OnboardingGuide from "@/components/onboarding-guide";
 import { clientFetch } from "@/lib/client-observability";
-import { avatarOptions, jobTitleOptions, techStackOptions, timezoneOptions } from "@/lib/ui-options";
+import { avatarOptions, isThemeId, jobTitleOptions, techStackOptions, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
 import { X } from "lucide-react";
 
@@ -29,6 +29,7 @@ export default function AuthenticatedShell({
   const [profileOpen, setProfileOpen] = useState(false);
   const [avatarPickerOpen, setAvatarPickerOpen] = useState(false);
   const [savingProfile, setSavingProfile] = useState(false);
+  const [shellThemeId, setShellThemeId] = useState<ThemeId>(isThemeId(initialThemeId) ? initialThemeId : "notion");
   const [flash, setFlash] = useState<{ type: "success" | "error"; message: string } | null>(null);
   const [passwordDraft, setPasswordDraft] = useState({
     currentPassword: "",
@@ -83,6 +84,18 @@ export default function AuthenticatedShell({
     return () => window.removeEventListener("kanban:onboarding-close-menu", handleCloseMenu as EventListener);
   }, []);
 
+  useEffect(() => {
+    function handleThemeChange(event: Event) {
+      const nextTheme = (event as CustomEvent<{ themeId?: unknown }>).detail?.themeId;
+      if (typeof nextTheme === "string" && isThemeId(nextTheme)) {
+        setShellThemeId(nextTheme);
+      }
+    }
+
+    window.addEventListener("kanban:theme-change", handleThemeChange);
+    return () => window.removeEventListener("kanban:theme-change", handleThemeChange);
+  }, []);
+
   async function switchBoard(boardId: string) {
     await clientFetch(`/api/boards/${boardId}/select`, { method: "POST" }, { operation: "boards.select" });
     setMenuOpen(false);
@@ -129,7 +142,7 @@ export default function AuthenticatedShell({
   }
 
   return (
-    <div className="kanban-theme contents" data-theme={initialThemeId}>
+    <div className="kanban-theme contents" data-theme={shellThemeId}>
       <div className="fixed right-5 top-5 z-40">
         <div className="relative" ref={menuRef}>
           <button

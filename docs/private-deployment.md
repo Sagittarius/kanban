@@ -122,14 +122,14 @@ grep '"requestId":"替换为实际 Request ID"' /data/logs/kanban.log
 
 ## 旧浏览器兼容
 
-项目实现基线为 Chrome/Edge 89、Firefox 90、Safari 15。为了获得最佳体验，建议用户升级到 Chrome/Edge 109、Firefox 115、Safari 16.4 以上。
+项目实现基线为 Chrome/Edge 87、Firefox 90、Safari 15。为了获得最佳体验，建议用户升级到 Chrome/Edge 109、Firefox 115、Safari 16.4 以上。
 
 兼容措施：
 
 - Tailwind CSS 3.4 + Autoprefixer + Browserslist
 - 页面启动前内联 diagnostics script
 - 客户端 bundle 前执行 `core-js-bundle/minified.js`
-- 浏览器兼容提示页允许用户继续访问
+- Chrome/Edge 87 以下和低于推荐版本的提示页都允许用户继续访问
 - 特效、拖拽、浮层和滚动容器应避免只在新 Chromium 才稳定的新 CSS/API
 
 ## 脱敏规则

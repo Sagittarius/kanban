@@ -19,13 +19,11 @@ if (!nextServerPath) {
 
 ensureLocalStandaloneAssets(nextServerPath);
 
+const childEnv = buildChildEnv();
+
 const child = spawn(process.execPath, [nextServerPath], {
   cwd: process.cwd(),
-  env: {
-    ...process.env,
-    PORT: String(internalPort),
-    HOSTNAME: nextHost,
-  },
+  env: childEnv,
   stdio: "inherit",
 });
 
@@ -95,6 +93,27 @@ function resolveNextServerPath() {
     path.join(process.cwd(), ".next", "standalone", "server.js"),
   ];
   return candidates.find((candidate) => existsSync(candidate));
+}
+
+function buildChildEnv() {
+  const env = {
+    ...process.env,
+    PORT: String(internalPort),
+    HOSTNAME: nextHost,
+  };
+
+  absolutizeEnvPath(env, "KANBAN_SQLITE_PATH");
+  absolutizeEnvPath(env, "KANBAN_LOG_DIR");
+
+  return env;
+}
+
+function absolutizeEnvPath(env, key) {
+  const value = env[key];
+  if (!value || path.isAbsolute(value)) {
+    return;
+  }
+  env[key] = path.resolve(process.cwd(), value);
 }
 
 function ensureLocalStandaloneAssets(serverPath) {

@@ -1292,6 +1292,7 @@ export default function KanbanApp({
     setThemeId(nextTheme);
     window.localStorage.setItem("kanban-theme", nextTheme);
     document.cookie = `kanban_theme=${nextTheme}; path=/; max-age=31536000; samesite=lax`;
+    window.dispatchEvent(new CustomEvent("kanban:theme-change", { detail: { themeId: nextTheme } }));
   }
 
   function changeViewMode(nextMode: ViewMode) {

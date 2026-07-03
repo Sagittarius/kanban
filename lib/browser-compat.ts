@@ -1,5 +1,5 @@
 export const browserCompatPolicy = {
-  baselineLabel: "Chrome 89+ / Edge 89+ / Firefox 90+ / Safari 15+",
+  baselineLabel: "Chrome 87+ / Edge 87+ / Firefox 90+ / Safari 15+",
   recommendedLabel: "Chrome/Edge 109+ / Firefox 115+ / Safari 16.4+",
   unsupportedPagePath: "/browser-unsupported.html",
   demoQueryKey: "compat_demo",
@@ -102,7 +102,7 @@ export function getBrowserCompatIssue(
   const edge = browserVersion(ua, /Edg\/(\d+)/i);
   if (edge !== null) {
     return (
-      versionIssue("Edge", edge, 89, "edge-version-too-low", "unsupported", "最低支持版本") ??
+      versionIssue("Edge", edge, 87, "edge-version-too-low", "unsupported", "最低支持版本") ??
       (includeRecommended
         ? versionIssue("Edge", edge, 109, "edge-version-recommended", "recommended", "推荐版本")
         : null)
@@ -122,7 +122,7 @@ export function getBrowserCompatIssue(
   const chrome = browserVersion(ua, /(?:Chrome|Chromium)\/(\d+)/i);
   if (chrome !== null && !/(?:OPR|Edg)\//i.test(ua)) {
     return (
-      versionIssue("Chrome", chrome, 89, "chrome-version-too-low", "unsupported", "最低支持版本") ??
+      versionIssue("Chrome", chrome, 87, "chrome-version-too-low", "unsupported", "最低支持版本") ??
       (includeRecommended
         ? versionIssue("Chrome", chrome, 109, "chrome-version-recommended", "recommended", "推荐版本")
         : null)
@@ -259,11 +259,11 @@ export function buildBrowserCompatGateScript() {
       `var legacyEdge=version(ua,/Edge\\/(\\d+)/i);` +
       `if(legacyEdge!==null){return{reason:"legacy-edge",detail:"EdgeHTML "+versionText(legacyEdge)+" 不在支持范围内",mode:"unsupported"};}` +
       `var edge=version(ua,/Edg\\/(\\d+)/i);` +
-      `if(edge!==null){return versionIssue("Edge",edge,89,"edge-version-too-low","unsupported","最低支持版本")||versionIssue("Edge",edge,109,"edge-version-recommended","recommended","推荐版本");}` +
+      `if(edge!==null){return versionIssue("Edge",edge,87,"edge-version-too-low","unsupported","最低支持版本")||versionIssue("Edge",edge,109,"edge-version-recommended","recommended","推荐版本");}` +
       `var firefox=version(ua,/Firefox\\/(\\d+)/i);` +
       `if(firefox!==null){return versionIssue("Firefox",firefox,90,"firefox-version-too-low","unsupported","最低支持版本")||versionIssue("Firefox",firefox,115,"firefox-version-recommended","recommended","推荐版本");}` +
       `var chrome=version(ua,/(?:Chrome|Chromium)\\/(\\d+)/i);` +
-      `if(chrome!==null&&!/(?:OPR|Edg)\\//i.test(ua)){return versionIssue("Chrome",chrome,89,"chrome-version-too-low","unsupported","最低支持版本")||versionIssue("Chrome",chrome,109,"chrome-version-recommended","recommended","推荐版本");}` +
+      `if(chrome!==null&&!/(?:OPR|Edg)\\//i.test(ua)){return versionIssue("Chrome",chrome,87,"chrome-version-too-low","unsupported","最低支持版本")||versionIssue("Chrome",chrome,109,"chrome-version-recommended","recommended","推荐版本");}` +
       `var safari=version(ua,/Version\\/(\\d+)(?:\\.(\\d+))?\\s+Safari\\//i);` +
       `if(safari!==null&&!/(?:Chrome|Chromium|CriOS|FxiOS|Edg|OPR)\\//i.test(ua)){return versionIssue("Safari",safari,15,"safari-version-too-low","unsupported","最低支持版本")||versionIssue("Safari",safari,16,"safari-version-recommended","recommended","推荐版本",4);}` +
       `return null;` +

@@ -513,6 +513,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     setThemeId(nextTheme);
     window.localStorage.setItem("kanban-theme", nextTheme);
     document.cookie = `kanban_theme=${nextTheme}; path=/; max-age=31536000; samesite=lax`;
+    window.dispatchEvent(new CustomEvent("kanban:theme-change", { detail: { themeId: nextTheme } }));
   }
 
   function editUser(user: ManagedUser) {

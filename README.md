@@ -11,7 +11,7 @@
 - 项目负载大屏，支持团队/项目筛选、人员状态、负载排行、任务池和公开访问开关
 - 系统参数、活动记录、审计日志、结构化 JSON 运行日志和客户端错误上报
 - SQLite / PostgreSQL 双数据库驱动，支持 SQLite 安全升级和 SQLite 到 PostgreSQL 一次性迁移
-- 旧版浏览器兼容处理，最低实现基线面向 Edge 89 / 旧 Chromium 环境，推荐 Chrome/Edge 109+、Firefox 115+、Safari 16.4+
+- 旧版浏览器兼容处理，最低实现基线面向 Edge 87 / 旧 Chromium 环境，推荐 Chrome/Edge 109+、Firefox 115+、Safari 16.4+
 
 ## 技术栈
 
@@ -188,8 +188,8 @@ grep '"requestId":"实际 Request ID"' /data/logs/kanban.log
 
 ```json
 [
-  "Chrome >= 89",
-  "Edge >= 89",
+  "Chrome >= 87",
+  "Edge >= 87",
   "Firefox >= 90",
   "Safari >= 15",
   "not IE 11"
@@ -202,7 +202,7 @@ grep '"requestId":"实际 Request ID"' /data/logs/kanban.log
 - `core-js-bundle/minified.js`
 - 浏览器兼容提示脚本
 
-低于推荐版本的浏览器会展示升级建议页，用户可继续访问。开发新功能时，动画、拖拽、浮层、滚动容器和复杂 CSS 必须优先考虑旧 Chromium 可识别的实现和降级表现。
+Chrome/Edge 87 以下会提示当前版本低于最低要求，87 到 108 会建议升级到推荐版本；两种场景都允许用户继续访问。开发新功能时，动画、拖拽、浮层、滚动容器和复杂 CSS 必须优先考虑旧 Chromium 可识别的实现和降级表现。
 
 ## 版本维护
 
