@@ -793,9 +793,14 @@ function tasksFromDragTarget(
 function shouldMoveTasks(
   event: DragOverEvent | DragEndEvent,
   targetStatus: BoardStatus,
-  sourceInitialStatus?: BoardStatus | null
+  sourceInitialStatus?: BoardStatus | null,
+  currentTasks?: BoardTask[]
 ) {
-  const sourceStatus = activeTaskStatusFromEvent(event, sourceInitialStatus);
+  const sourceId = activeTaskIdFromEvent(event);
+  const currentStatus = sourceId && currentTasks
+    ? currentTasks.find((task) => task.id === sourceId)?.status
+    : null;
+  const sourceStatus = currentStatus ?? activeTaskStatusFromEvent(event, sourceInitialStatus);
   if (!sourceStatus) {
     return false;
   }
@@ -1831,7 +1836,7 @@ export default function KanbanApp({
     setCrossDragTarget(targetStatus);
     setDragOverlayWidth(measuredTaskCardWidth(targetStatus));
 
-    if (!shouldMoveTasks(event, targetStatus, sourceStatus)) {
+    if (!shouldMoveTasks(event, targetStatus, sourceStatus, latestTasksRef.current)) {
       return;
     }
 
@@ -1880,7 +1885,7 @@ export default function KanbanApp({
     }
 
     const finalTasks = applyDoneSideEffectsToTasks(sameTaskOrder(startTasks, liveTasks)
-      ? targetStatus && shouldMoveTasks(event, targetStatus, sourceStatus)
+      ? targetStatus && shouldMoveTasks(event, targetStatus, sourceStatus, liveTasks)
         ? tasksFromDragTarget(liveTasks, event, targetStatus, sourceStatus)
         : liveTasks
       : liveTasks);
@@ -2838,8 +2843,10 @@ function HorizontalBoardColumn({
 
   return (
     <div
+      ref={setNodeRef}
       role="region"
       aria-label={`${column.title}列表`}
+      data-board-drop-status={column.id}
       data-tour={column.id === "backlog" ? "column-backlog" : undefined}
       className={`rounded-lg border bg-[var(--column-bg)] transition ${
         activeDropTarget
@@ -2878,8 +2885,6 @@ function HorizontalBoardColumn({
       >
         <div className="min-h-0 overflow-hidden">
             <div
-              ref={setNodeRef}
-              data-board-drop-status={column.id}
               className="flex min-h-[118px] flex-nowrap items-stretch gap-3.5 overflow-x-auto overflow-y-hidden rounded-b-lg bg-[var(--lane-bg)] px-3.5 py-3"
             >
               <SortableContext id={column.id} items={taskIds} strategy={horizontalListSortingStrategy}>
