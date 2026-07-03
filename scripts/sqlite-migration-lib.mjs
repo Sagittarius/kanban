@@ -2,7 +2,9 @@ import fs from "node:fs";
 import path from "node:path";
 
 const SQLITE_MIGRATIONS_TABLE = "kanban_migrations";
-const SQLITE_LEGACY_MIGRATIONS_TABLE = "d1_migrations";
+// Historical compatibility only: older SQLite builds reused the legacy
+// "d1_migrations" table name. This project no longer supports D1.
+const SQLITE_HISTORICAL_MIGRATIONS_TABLE = "d1_migrations";
 const DEFAULT_TIMEZONE = "Asia/Shanghai";
 
 export function resolveDatabasePath() {
@@ -147,7 +149,7 @@ function summarizeStatement(statement) {
 function migrateLegacyMigrationsTable(database) {
   const legacyExists = database
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?")
-    .get(SQLITE_LEGACY_MIGRATIONS_TABLE);
+    .get(SQLITE_HISTORICAL_MIGRATIONS_TABLE);
 
   if (!legacyExists) {
     return;
@@ -155,7 +157,7 @@ function migrateLegacyMigrationsTable(database) {
 
   database.exec(
     `INSERT OR IGNORE INTO ${SQLITE_MIGRATIONS_TABLE} (name, applied_at)
-     SELECT name, applied_at FROM ${SQLITE_LEGACY_MIGRATIONS_TABLE}`
+     SELECT name, applied_at FROM ${SQLITE_HISTORICAL_MIGRATIONS_TABLE}`
   );
 }
 

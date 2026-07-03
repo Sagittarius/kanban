@@ -41,7 +41,13 @@ KANBAN_DB_DRIVER=sqlite KANBAN_SQLITE_PATH=.data/kanban.sqlite node scripts/migr
 KANBAN_AUTH_SECRET=change-this-secret pnpm run start
 ```
 
-`pnpm run start` 使用 `next start`，仅用于本地或非 standalone 场景。Docker 镜像使用项目根目录的 `server.js` 包装入口，内部代理 Next standalone 服务。
+启动方式说明：
+
+- `pnpm run start`：标准 Next.js 生产启动，使用 `next start`
+- `pnpm run start:standalone`：模拟 Docker，直接运行项目根目录的 `server.js`
+- Docker：由 `scripts/docker-entrypoint.sh` 先执行迁移/升级，再运行 `node server.js`
+
+`server.js` 是 standalone 包装入口，内部代理 Next standalone 服务。
 
 ## 生产安全配置
 

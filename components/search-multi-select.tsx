@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { Check, Search, X } from "lucide-react";
+import { SEARCH_MULTI_SELECT_DROPDOWN_ATTR, SEARCH_MULTI_SELECT_ROOT_ATTR } from "@/lib/select-surface";
 
 export type MultiSelectOption = {
   value: string;
@@ -72,7 +73,12 @@ export default function SearchMultiSelect({
   } as CSSProperties;
 
   return (
-    <div ref={rootRef} style={selectStyle} className={`relative ${className}`}>
+    <div
+      ref={rootRef}
+      {...{ [SEARCH_MULTI_SELECT_ROOT_ATTR]: "true" }}
+      style={selectStyle}
+      className={`relative ${className}`}
+    >
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
@@ -115,7 +121,10 @@ export default function SearchMultiSelect({
       </button>
 
       {open ? (
-        <div className={`absolute right-0 top-full z-[80] mt-1 w-full min-w-[260px] max-w-[min(92vw,360px)] rounded-md border border-[var(--sms-border)] bg-[var(--sms-panel)] shadow-lg ${panelClassName}`}>
+        <div
+          {...{ [SEARCH_MULTI_SELECT_DROPDOWN_ATTR]: "true" }}
+          className={`absolute right-0 top-full z-[80] mt-1 w-full min-w-[260px] max-w-[min(92vw,360px)] rounded-md border border-[var(--sms-border)] bg-[var(--sms-panel)] shadow-lg ${panelClassName}`}
+        >
           <div className="border-b border-[var(--sms-border)] p-2">
             <div className="relative">
               <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--sms-muted)]" size={14} />

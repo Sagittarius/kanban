@@ -6,6 +6,7 @@ import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import OnboardingGuide from "@/components/onboarding-guide";
 import { clientFetch } from "@/lib/client-observability";
+import { isWithinSelectSurface } from "@/lib/select-surface";
 import { avatarOptions, isThemeId, jobTitleOptions, techStackOptions, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
 import { X } from "lucide-react";
@@ -67,7 +68,9 @@ export default function AuthenticatedShell({
     if (!menuOpen) return;
 
     function handlePointerDown(event: MouseEvent) {
-      if (!menuRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node | null;
+      const insideMenu = Boolean(target && menuRef.current?.contains(target));
+      if (!insideMenu && !isWithinSelectSurface(target)) {
         setMenuOpen(false);
       }
     }

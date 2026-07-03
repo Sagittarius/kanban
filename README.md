@@ -40,6 +40,7 @@ pnpm run dev:auth         # 开启鉴权开发
 pnpm run dev:noauth       # 关闭鉴权开发
 pnpm run build            # next build
 pnpm run start            # next start
+pnpm run start:standalone # node server.js，模拟 Docker standalone 入口
 pnpm run local:dev        # SQLite 迁移后监听 0.0.0.0 启动开发服务
 pnpm run local:start      # SQLite 迁移后监听 0.0.0.0 启动生产服务
 pnpm run lint
@@ -108,6 +109,12 @@ Dockerfile 使用 Next standalone 输出：
 - 容器入口先执行数据库迁移/升级，再 `exec node server.js`
 - `server.js` 会内部启动 Next standalone，并在 HTML 响应中确保 early diagnostics、core-js 和浏览器兼容检测早于客户端 bundle 执行
 - 不依赖 `dist` 目录
+
+本地生产启动区分：
+
+- `pnpm run start`：标准 Next.js 生产启动，直接运行 `next start`
+- `pnpm run start:standalone`：运行 `node server.js`，模拟 Docker 中的 standalone 包装入口
+- Docker：通过 `scripts/docker-entrypoint.sh` 先执行迁移，再运行 `node server.js`
 
 导出 arm64 离线包：
 

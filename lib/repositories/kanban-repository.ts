@@ -1942,17 +1942,23 @@ export class KanbanRepository {
     if (Number((await this.q("SELECT COUNT(*) AS count FROM users"))[0]?.count) > 0) return;
     const now = iso();
     const username = process.env.KANBAN_SUPER_ADMIN_USERNAME ?? "admin";
-    await this.x(
-      "INSERT INTO users (id,username,password_hash,role,display_name,avatar_key,timezone,is_active,created_at,updated_at) VALUES (?,?,?,'super_admin','','',?,1,?,?)",
-      [
-        "super-admin",
-        username,
-        await hashPassword(process.env.KANBAN_SUPER_ADMIN_PASSWORD ?? "admin@123"),
-        normalizeTimeZone(process.env.KANBAN_DEFAULT_TIMEZONE),
-        now,
-        now,
-      ]
-    );
+    try {
+      await this.x(
+        "INSERT INTO users (id,username,password_hash,role,display_name,avatar_key,timezone,is_active,created_at,updated_at) VALUES (?,?,?,'super_admin','','',?,1,?,?)",
+        [
+          "super-admin",
+          username,
+          await hashPassword(process.env.KANBAN_SUPER_ADMIN_PASSWORD ?? "admin@123"),
+          normalizeTimeZone(process.env.KANBAN_DEFAULT_TIMEZONE),
+          now,
+          now,
+        ]
+      );
+    } catch (error) {
+      if (!isUniqueConstraintError(error)) {
+        throw error;
+      }
+    }
   }
 
   async ensureRoleCompatibility() {
@@ -1967,14 +1973,20 @@ export class KanbanRepository {
     const firstBoard = await this.firstBoardRow();
     const boardId = firstBoard ? String(firstBoard.id) : DEFAULT_BOARD_ID;
     if (!firstBoard) {
-      await this.x("INSERT INTO boards (id,name,description,owner_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", [
-        DEFAULT_BOARD_ID,
-        await this.defaultBoardTitle(),
-        "系统初始化生成的默认看板",
-        adminId,
-        now,
-        now,
-      ]);
+      try {
+        await this.x("INSERT INTO boards (id,name,description,owner_user_id,created_at,updated_at) VALUES (?,?,?,?,?,?)", [
+          DEFAULT_BOARD_ID,
+          await this.defaultBoardTitle(),
+          "系统初始化生成的默认看板",
+          adminId,
+          now,
+          now,
+        ]);
+      } catch (error) {
+        if (!isUniqueConstraintError(error)) {
+          throw error;
+        }
+      }
     }
     try {
       await this.x(
@@ -2016,21 +2028,27 @@ export class KanbanRepository {
           ]
         );
       } else {
-        await this.x(
-          "INSERT INTO system_parameters (key,value,label,value_type,parameter_group,unit,min_value,max_value,order_index,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-          [
-            parameter.key,
-            parameter.value,
-            parameter.label,
-            parameter.valueType,
-            parameter.group,
-            parameter.unit,
-            parameter.minValue,
-            parameter.maxValue,
-            parameter.orderIndex,
-            now,
-          ]
-        );
+        try {
+          await this.x(
+            "INSERT INTO system_parameters (key,value,label,value_type,parameter_group,unit,min_value,max_value,order_index,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [
+              parameter.key,
+              parameter.value,
+              parameter.label,
+              parameter.valueType,
+              parameter.group,
+              parameter.unit,
+              parameter.minValue,
+              parameter.maxValue,
+              parameter.orderIndex,
+              now,
+            ]
+          );
+        } catch (error) {
+          if (!isUniqueConstraintError(error)) {
+            throw error;
+          }
+        }
       }
     }
   }
@@ -3202,6 +3220,15 @@ function isMissingTableError(error: unknown, tableName: string) {
     message.includes(`no such table: ${tableName}`) ||
     message.includes(`relation "${tableName}" does not exist`) ||
     message.includes(`relation '${tableName}' does not exist`)
+  );
+}
+
+function isUniqueConstraintError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("UNIQUE constraint failed") ||
+    message.includes("duplicate key value violates unique constraint") ||
+    message.includes("duplicate key")
   );
 }
 

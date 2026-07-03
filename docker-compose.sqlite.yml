@@ -10,6 +10,7 @@ services:
       KANBAN_DB_DRIVER: sqlite
       KANBAN_SQLITE_PATH: /data/kanban.sqlite
       KANBAN_SQLITE_BACKUP_DIR: /data/backups
+      KANBAN_LOG_DIR: /data/logs
       KANBAN_AUTO_UPGRADE: "true"
       KANBAN_IMAGE_TAG: kanban:sqlite-{version}
       KANBAN_LOG_CONSOLE: ${KANBAN_LOG_CONSOLE:-true}

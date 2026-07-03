@@ -32,7 +32,7 @@ type PgPool = {
 
 type MigrationTableConfig = {
   primary: string;
-  legacy?: string;
+  historicalCompat?: string;
 };
 
 let cachedAdapter: DatabaseAdapter | null = null;
@@ -79,7 +79,10 @@ async function createSQLiteAdapter(): Promise<DatabaseAdapter> {
   const adapter = createSQLiteAdapterFromDatabase(cachedLocalDatabase);
   await applyFileMigrations(adapter, ["drizzle"], {
     primary: "kanban_migrations",
-    legacy: "d1_migrations",
+    // Historical compatibility only:
+    // earlier SQLite builds reused the legacy "d1_migrations" table name.
+    // This does not mean the app still supports D1. Current drivers are SQLite and PostgreSQL only.
+    historicalCompat: "d1_migrations",
   });
   return adapter;
 }
@@ -158,10 +161,10 @@ async function applyFileMigrations(
     `CREATE TABLE IF NOT EXISTS ${tableConfig.primary} (name TEXT PRIMARY KEY NOT NULL, applied_at ${timestampType} NOT NULL)`
   );
 
-  if (tableConfig.legacy && tableConfig.legacy !== tableConfig.primary) {
-    const legacyExists = await tableExists(adapter, tableConfig.legacy);
+  if (tableConfig.historicalCompat && tableConfig.historicalCompat !== tableConfig.primary) {
+    const legacyExists = await tableExists(adapter, tableConfig.historicalCompat);
     if (legacyExists) {
-      await copyLegacyMigrations(adapter, tableConfig.primary, tableConfig.legacy);
+      await copyLegacyMigrations(adapter, tableConfig.primary, tableConfig.historicalCompat);
     }
   }
 

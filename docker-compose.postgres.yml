@@ -28,6 +28,7 @@ services:
     environment:
       KANBAN_DB_DRIVER: postgres
       POSTGRES_URL: postgres://${POSTGRES_USER:-kanban}:${POSTGRES_PASSWORD:-change-this-password}@postgres:5432/${POSTGRES_DB:-kanban}
+      KANBAN_LOG_DIR: /data/logs
       KANBAN_IMAGE_TAG: kanban:postgres-{version}
       KANBAN_LOG_CONSOLE: ${KANBAN_LOG_CONSOLE:-true}
       KANBAN_LOG_FILE_ENABLED: ${KANBAN_LOG_FILE_ENABLED:-true}

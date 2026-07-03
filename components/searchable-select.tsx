@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Check, ChevronDown, Search, X } from "lucide-react";
+import { SEARCHABLE_SELECT_DROPDOWN_ATTR, SEARCHABLE_SELECT_ROOT_ATTR } from "@/lib/select-surface";
 
 export type SearchableSelectOption = {
   value: string;
@@ -200,6 +201,7 @@ export default function SearchableSelect({
   const dropdown = open && !disabled ? (
     <div
       ref={dropdownRef}
+      {...{ [SEARCHABLE_SELECT_DROPDOWN_ATTR]: "true" }}
       className={`overflow-hidden rounded-md border border-[var(--select-border)] bg-[var(--select-panel)] shadow-lg ${
         portalHost ? "z-[140]" : "z-[80]"
       } ${
@@ -291,7 +293,12 @@ export default function SearchableSelect({
   ) : null;
 
   return (
-    <div ref={containerRef} style={selectStyle} className={`relative ${className}`}>
+    <div
+      ref={containerRef}
+      {...{ [SEARCHABLE_SELECT_ROOT_ATTR]: "true" }}
+      style={selectStyle}
+      className={`relative ${className}`}
+    >
       <button
         ref={triggerRef}
         type="button"
