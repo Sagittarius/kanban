@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Sparkles, X } from "lucide-react";
 import type { UserRole } from "@/lib/auth-models";
+import { canAccessAdmin } from "@/lib/role-permissions";
 
 type GuideScope = "dashboard" | "shell" | "kanban" | "admin";
 type GuideAction =
@@ -264,16 +265,12 @@ const memberSteps: GuideStep[] = [
   },
 ];
 
-function isManagerRole(role: UserRole) {
-  return role === "super_admin" || role === "project_manager" || role === "development_manager";
-}
-
 function storageKey(username: string) {
   return `kanban:onboarding:v1:${username}`;
 }
 
 function stepsForRole(role: UserRole) {
-  return isManagerRole(role) ? managerSteps : memberSteps;
+  return canAccessAdmin(role) ? managerSteps : memberSteps;
 }
 
 function readGuideState(username: string): GuideState | null {

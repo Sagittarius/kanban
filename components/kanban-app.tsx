@@ -90,6 +90,7 @@ import {
 } from "@/lib/board-data";
 import type { ChangelogEntry } from "@/lib/changelog";
 import { clientFetch } from "@/lib/client-observability";
+import { canManageKanbanProjects, isSuperAdminRole } from "@/lib/role-permissions";
 import { getSelectSearchMatchRanges, textMatchesSelectQuery } from "@/lib/select-search";
 
 type SyncState = "synced" | "syncing" | "local";
@@ -1035,6 +1036,9 @@ function installPointerCaptureGuard() {
     return () => {};
   }
 
+  // Older Chromium builds can throw when dnd-kit releases a pointer that has
+  // already been dropped by the browser. Keep the guard narrow so unrelated
+  // pointer-capture errors still surface.
   const prototype = Element.prototype;
   const originalSetPointerCapture = prototype.setPointerCapture;
   const originalReleasePointerCapture = prototype.releasePointerCapture;
@@ -1207,7 +1211,8 @@ export default function KanbanApp({
   const boardTeams = useMemo(() => board.teams ?? [], [board.teams]);
   const currentUser = board.currentUser ?? initialBoard.currentUser ?? null;
   const currentUserRole = currentUser?.role ?? "super_admin";
-  const canManageProjects = currentUserRole !== "team_member";
+  const canManageProjects = canManageKanbanProjects(currentUserRole);
+  const canManageSettings = isSuperAdminRole(currentUserRole);
   const sortedProjects = useMemo(() => sortProjects(board.projects), [board.projects]);
   const activeProjects = useMemo(
     () => sortedProjects.filter((project) => project.status === "active"),
@@ -1236,7 +1241,7 @@ export default function KanbanApp({
     ? board.projects.find((project) => project.id === selectedProjectId) ?? null
     : null;
   function canEditTask(task: BoardTask) {
-    if (currentUserRole !== "team_member") {
+    if (canManageProjects) {
       return true;
     }
     return currentUser ? isTaskRelatedToUser(task, currentUser.id) : false;
@@ -2290,14 +2295,16 @@ export default function KanbanApp({
                 placeholder="选择配色"
                 className="min-w-0 flex-1 2xl:w-[180px]"
               />
-              <button
-                type="button"
-                title="系统参数"
-                onClick={() => setDrawerMode("settings")}
-                className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-2 text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
-              >
-                <SlidersHorizontal size={18} />
-              </button>
+              {canManageSettings ? (
+                <button
+                  type="button"
+                  title="系统参数"
+                  onClick={() => setDrawerMode("settings")}
+                  className="rounded-md border border-[var(--border)] bg-[var(--panel)] p-2 text-[var(--text)] transition hover:bg-[var(--panel-soft)]"
+                >
+                  <SlidersHorizontal size={18} />
+                </button>
+              ) : null}
             </div>
           </div>
         </header>

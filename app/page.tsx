@@ -39,84 +39,84 @@ function isExpectedBoardAccessError(error: unknown) {
 
 export default async function Home() {
   return withPageLogging("/", async (pageLogContext) => {
-  const maintenanceState = await readMaintenanceState();
-  const appVersion = getAppVersion();
-  const imageTag = getImageTag();
-  const changelogEntries = readChangelogEntries();
-  const themeCookie = (await cookies()).get("kanban_theme")?.value;
-  const initialThemeId = isThemeId(themeCookie) ? themeCookie : "notion";
+    const maintenanceState = await readMaintenanceState();
+    const appVersion = getAppVersion();
+    const imageTag = getImageTag();
+    const changelogEntries = readChangelogEntries();
+    const themeCookie = (await cookies()).get("kanban_theme")?.value;
+    const initialThemeId = isThemeId(themeCookie) ? themeCookie : "notion";
 
-  if (maintenanceState) {
-    return (
-      <MaintenancePage
-        initialState={maintenanceState}
-        appVersion={appVersion}
-        imageTag={imageTag}
-      />
-    );
-  }
-
-  const optionalUser = await getOptionalSessionUser();
-  if (isAuthFeatureEnabled() && !optionalUser) {
-    return <LoginPage />;
-  }
-
-  const user = optionalUser ?? (await requireSessionUser());
-  pageLogContext.setContext({ userId: user.id });
-  const repo = await getKanbanRepository();
-
-  try {
-    const activeBoard = await resolveActiveBoard(user);
-    pageLogContext.setContext({ boardId: activeBoard.id });
-    const board = await repo.getBoard(user, activeBoard.id);
-
-    const runtime = (
-      <KanbanRuntimeGuard
-        initialBoard={board}
-        todayKey={board.todayKey ?? todayKeyInChina()}
-        appVersion={appVersion}
-        changelogEntries={changelogEntries}
-        initialThemeId={initialThemeId}
-        activeBoardId={activeBoard.id}
-      />
-    );
-
-    if (!isAuthFeatureEnabled()) {
-      return runtime;
+    if (maintenanceState) {
+      return (
+        <MaintenancePage
+          initialState={maintenanceState}
+          appVersion={appVersion}
+          imageTag={imageTag}
+        />
+      );
     }
 
-    return (
-      <AuthenticatedShell
-        user={user}
-        boards={board.boards ?? []}
-        activeBoardId={board.activeBoardId ?? activeBoard.id}
-        initialThemeId={initialThemeId}
-      >
-        {runtime}
-      </AuthenticatedShell>
-    );
-  } catch (error) {
-    const logFields = {
-      ...errorFields(error),
-      userId: user.id,
-      username: user.username,
-      role: user.role,
-      authEnabled: isAuthFeatureEnabled(),
-    };
-
-    if (isExpectedBoardAccessError(error)) {
-      homePageLogger.warn("home page access fallback", logFields);
-    } else {
-      homePageLogger.error("home page render failed", logFields);
+    const optionalUser = await getOptionalSessionUser();
+    if (isAuthFeatureEnabled() && !optionalUser) {
+      return <LoginPage />;
     }
 
-    return (
-      <AppErrorPage
-        title="当前账号没有可访问的看板"
-        detail={error instanceof Error ? error.message : "加载看板失败"}
-        requestId={pageLogContext.requestId}
-      />
-    );
-  }
+    const user = optionalUser ?? (await requireSessionUser());
+    pageLogContext.setContext({ userId: user.id });
+    const repo = await getKanbanRepository();
+
+    try {
+      const activeBoard = await resolveActiveBoard(user);
+      pageLogContext.setContext({ boardId: activeBoard.id });
+      const board = await repo.getBoard(user, activeBoard.id);
+
+      const runtime = (
+        <KanbanRuntimeGuard
+          initialBoard={board}
+          todayKey={board.todayKey ?? todayKeyInChina()}
+          appVersion={appVersion}
+          changelogEntries={changelogEntries}
+          initialThemeId={initialThemeId}
+          activeBoardId={activeBoard.id}
+        />
+      );
+
+      if (!isAuthFeatureEnabled()) {
+        return runtime;
+      }
+
+      return (
+        <AuthenticatedShell
+          user={user}
+          boards={board.boards ?? []}
+          activeBoardId={board.activeBoardId ?? activeBoard.id}
+          initialThemeId={initialThemeId}
+        >
+          {runtime}
+        </AuthenticatedShell>
+      );
+    } catch (error) {
+      const logFields = {
+        ...errorFields(error),
+        userId: user.id,
+        username: user.username,
+        role: user.role,
+        authEnabled: isAuthFeatureEnabled(),
+      };
+
+      if (isExpectedBoardAccessError(error)) {
+        homePageLogger.warn("home page access fallback", logFields);
+      } else {
+        homePageLogger.error("home page render failed", logFields);
+      }
+
+      return (
+        <AppErrorPage
+          title="当前账号没有可访问的看板"
+          detail={error instanceof Error ? error.message : "加载看板失败"}
+          requestId={pageLogContext.requestId}
+        />
+      );
+    }
   });
 }

@@ -6,6 +6,7 @@ import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import OnboardingGuide from "@/components/onboarding-guide";
 import { clientFetch } from "@/lib/client-observability";
+import { canAccessAdmin } from "@/lib/role-permissions";
 import { isWithinSelectSurface } from "@/lib/select-surface";
 import { avatarOptions, isThemeId, jobTitleOptions, techStackOptions, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
@@ -39,7 +40,7 @@ export default function AuthenticatedShell({
   });
   const menuRef = useRef<HTMLDivElement | null>(null);
   const activeBoard = boardList.find((board) => board.id === activeBoardId);
-  const canUseAdmin = currentUser.role === "super_admin" || currentUser.role === "project_manager" || currentUser.role === "development_manager";
+  const canUseAdmin = canAccessAdmin(currentUser.role);
   const readOnly = activeBoard?.role === "viewer" && !canUseAdmin;
   const [profileDraft, setProfileDraft] = useState({
     displayName: user.displayName || "",
@@ -204,7 +205,6 @@ export default function AuthenticatedShell({
         </div>
       </div>
 
-      {currentUser.role !== "super_admin" ? <style>{'button[title="系统参数"]{display:none!important}'}</style> : null}
       {readOnly ? (
         <style>{'button[title="新建项目"],button[title="编辑项目"],button[title="归档项目"]{display:none!important}'}</style>
       ) : null}
@@ -240,23 +240,23 @@ export default function AuthenticatedShell({
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="shrink-0 border-b border-[var(--border)] pb-4">
               <div className="flex justify-center pb-3">
-              <button
-                type="button"
-                onClick={() => setAvatarPickerOpen(true)}
-                className="group relative cursor-pointer rounded-full"
-                title="更换头像"
-              >
-                <Image
-                  src={avatarOptions.find((item) => item.key === profileDraft.avatarKey)?.src ?? avatarOptions[0].src}
-                  alt="当前头像"
-                  width={88}
-                  height={88}
-                  className="h-[88px] w-[88px] rounded-full border border-[var(--border)] object-cover shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition duration-200 group-hover:scale-[1.03] group-hover:shadow-[0_18px_42px_rgba(15,118,110,0.18)]"
-                />
-                <span className="pointer-events-none absolute inset-0 grid place-items-center rounded-full bg-slate-950/0 text-xs font-semibold tracking-[0.18em] text-white opacity-0 transition group-hover:bg-slate-950/28 group-hover:opacity-100">
-                  更换
-                </span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setAvatarPickerOpen(true)}
+                  className="group relative cursor-pointer rounded-full"
+                  title="更换头像"
+                >
+                  <Image
+                    src={avatarOptions.find((item) => item.key === profileDraft.avatarKey)?.src ?? avatarOptions[0].src}
+                    alt="当前头像"
+                    width={88}
+                    height={88}
+                    className="h-[88px] w-[88px] rounded-full border border-[var(--border)] object-cover shadow-[0_12px_30px_rgba(15,23,42,0.12)] transition duration-200 group-hover:scale-[1.03] group-hover:shadow-[0_18px_42px_rgba(15,118,110,0.18)]"
+                  />
+                  <span className="pointer-events-none absolute inset-0 grid place-items-center rounded-full bg-slate-950/0 text-xs font-semibold tracking-[0.18em] text-white opacity-0 transition group-hover:bg-slate-950/28 group-hover:opacity-100">
+                    更换
+                  </span>
+                </button>
               </div>
               <label className="block space-y-2 text-sm">
                 <span className="font-medium text-[var(--muted)]">用户名</span>
@@ -272,84 +272,84 @@ export default function AuthenticatedShell({
               </label>
             </div>
             <div className="min-h-0 flex-1 space-y-4 overflow-y-auto pr-1 pt-4">
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-[var(--muted)]">手机</span>
-              <input
-                value={profileDraft.phone}
-                onChange={(event) => setProfileDraft((current) => ({ ...current, phone: event.target.value }))}
-                className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
-                placeholder="输入手机号"
-              />
-            </label>
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-[var(--muted)]">职位</span>
-              <SearchableSelect
-                value={profileDraft.jobTitle}
-                options={jobTitleOptions.map((option) => ({ value: option.value, label: option.label }))}
-                onChange={(value) => setProfileDraft((current) => ({ ...current, jobTitle: value }))}
-                placeholder="选择职位"
-              />
-            </label>
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-[var(--muted)]">时区</span>
-              <SearchableSelect
-                value={profileDraft.timezone}
-                options={timezoneSelectOptions}
-                onChange={(value) => setProfileDraft((current) => ({ ...current, timezone: value }))}
-                placeholder="选择时区"
-              />
-            </label>
-            <div className="space-y-2 text-sm">
-              <span className="font-medium text-[var(--muted)]">技术栈</span>
-              <SearchMultiSelect
-                value={profileDraft.techStacks}
-                options={techStackOptions.map((item) => ({ value: item, label: item }))}
-                onChange={(techStacks) => setProfileDraft((current) => ({ ...current, techStacks }))}
-                placeholder="选择或搜索技术栈"
-                summaryLabel="技术栈"
-                searchPlaceholder="搜索技术栈"
-              />
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
               <label className="block space-y-2 text-sm">
-                <span className="font-medium text-[var(--muted)]">当前密码</span>
+                <span className="font-medium text-[var(--muted)]">手机</span>
                 <input
-                  type="password"
-                  value={passwordDraft.currentPassword}
-                  onChange={(event) => setPasswordDraft((current) => ({ ...current, currentPassword: event.target.value }))}
+                  value={profileDraft.phone}
+                  onChange={(event) => setProfileDraft((current) => ({ ...current, phone: event.target.value }))}
                   className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
-                  placeholder="留空则不修改"
+                  placeholder="输入手机号"
                 />
               </label>
               <label className="block space-y-2 text-sm">
-                <span className="font-medium text-[var(--muted)]">新密码</span>
-                <input
-                  type="password"
-                  value={passwordDraft.newPassword}
-                  onChange={(event) => setPasswordDraft((current) => ({ ...current, newPassword: event.target.value }))}
-                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
-                  placeholder="至少 6 位"
+                <span className="font-medium text-[var(--muted)]">职位</span>
+                <SearchableSelect
+                  value={profileDraft.jobTitle}
+                  options={jobTitleOptions.map((option) => ({ value: option.value, label: option.label }))}
+                  onChange={(value) => setProfileDraft((current) => ({ ...current, jobTitle: value }))}
+                  placeholder="选择职位"
                 />
               </label>
-            </div>
-            <label className="block space-y-2 text-sm">
-              <span className="font-medium text-[var(--muted)]">确认新密码</span>
-              <input
-                type="password"
-                value={passwordDraft.confirmPassword}
-                onChange={(event) => setPasswordDraft((current) => ({ ...current, confirmPassword: event.target.value }))}
-                className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
-                placeholder="再次输入新密码"
-              />
-            </label>
-            <div className="flex justify-end gap-3 pt-2">
-              <button type="button" onClick={() => setProfileOpen(false)} className="h-10 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--panel-soft)]">
-                取消
-              </button>
-              <button type="button" onClick={() => void saveProfile()} disabled={savingProfile} className="h-10 rounded-xl bg-[var(--accent)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60">
-                {savingProfile ? "保存中..." : "保存"}
-              </button>
-            </div>
+              <label className="block space-y-2 text-sm">
+                <span className="font-medium text-[var(--muted)]">时区</span>
+                <SearchableSelect
+                  value={profileDraft.timezone}
+                  options={timezoneSelectOptions}
+                  onChange={(value) => setProfileDraft((current) => ({ ...current, timezone: value }))}
+                  placeholder="选择时区"
+                />
+              </label>
+              <div className="space-y-2 text-sm">
+                <span className="font-medium text-[var(--muted)]">技术栈</span>
+                <SearchMultiSelect
+                  value={profileDraft.techStacks}
+                  options={techStackOptions.map((item) => ({ value: item, label: item }))}
+                  onChange={(techStacks) => setProfileDraft((current) => ({ ...current, techStacks }))}
+                  placeholder="选择或搜索技术栈"
+                  summaryLabel="技术栈"
+                  searchPlaceholder="搜索技术栈"
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <label className="block space-y-2 text-sm">
+                  <span className="font-medium text-[var(--muted)]">当前密码</span>
+                  <input
+                    type="password"
+                    value={passwordDraft.currentPassword}
+                    onChange={(event) => setPasswordDraft((current) => ({ ...current, currentPassword: event.target.value }))}
+                    className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+                    placeholder="留空则不修改"
+                  />
+                </label>
+                <label className="block space-y-2 text-sm">
+                  <span className="font-medium text-[var(--muted)]">新密码</span>
+                  <input
+                    type="password"
+                    value={passwordDraft.newPassword}
+                    onChange={(event) => setPasswordDraft((current) => ({ ...current, newPassword: event.target.value }))}
+                    className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+                    placeholder="至少 6 位"
+                  />
+                </label>
+              </div>
+              <label className="block space-y-2 text-sm">
+                <span className="font-medium text-[var(--muted)]">确认新密码</span>
+                <input
+                  type="password"
+                  value={passwordDraft.confirmPassword}
+                  onChange={(event) => setPasswordDraft((current) => ({ ...current, confirmPassword: event.target.value }))}
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+                  placeholder="再次输入新密码"
+                />
+              </label>
+              <div className="flex justify-end gap-3 pt-2">
+                <button type="button" onClick={() => setProfileOpen(false)} className="h-10 rounded-xl border border-[var(--border)] bg-[var(--panel)] px-4 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--panel-soft)]">
+                  取消
+                </button>
+                <button type="button" onClick={() => void saveProfile()} disabled={savingProfile} className="h-10 rounded-xl bg-[var(--accent)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60">
+                  {savingProfile ? "保存中..." : "保存"}
+                </button>
+              </div>
             </div>
           </div>
         </ShellModal>

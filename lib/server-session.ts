@@ -4,6 +4,7 @@ import { cookies } from "next/headers";
 import { ACTIVE_BOARD_COOKIE, SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
 import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
+import { canAccessAdmin, isSuperAdminRole } from "@/lib/role-permissions";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 
 export async function getOptionalSessionUser(): Promise<CurrentUser | null> {
@@ -32,7 +33,7 @@ export async function requireSessionUser(): Promise<CurrentUser> {
 
 export async function requireSuperAdminUser(): Promise<CurrentUser> {
   const user = await requireSessionUser();
-  if (user.role !== "super_admin") {
+  if (!isSuperAdminRole(user.role)) {
     throw new Error("Forbidden");
   }
   return user;
@@ -40,7 +41,7 @@ export async function requireSuperAdminUser(): Promise<CurrentUser> {
 
 export async function requireAdminUser(): Promise<CurrentUser> {
   const user = await requireSessionUser();
-  if (user.role !== "super_admin" && user.role !== "project_manager" && user.role !== "development_manager") {
+  if (!canAccessAdmin(user.role)) {
     throw new Error("Forbidden");
   }
   return user;

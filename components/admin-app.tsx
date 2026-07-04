@@ -9,6 +9,7 @@ import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import { clientFetch } from "@/lib/client-observability";
+import { canManageKanbanProjects, isSuperAdminRole } from "@/lib/role-permissions";
 import { textMatchesSelectQuery } from "@/lib/select-search";
 import { isThemeId, jobTitleLabel, jobTitleOptions, techStackOptions, themePresets, timezoneLabel, timezoneOptions, type ThemeId } from "@/lib/ui-options";
 import type {
@@ -447,7 +448,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const boardOwnerOptions = useMemo<SearchableSelectOption[]>(
     () =>
       userDirectory
-        .filter((user) => user.isActive && user.role !== "team_member")
+        .filter((user) => user.isActive && canManageKanbanProjects(user.role))
         .map((user) => ({
           value: user.id,
           label: user.displayName || user.username,
@@ -748,6 +749,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               options={themePresets.map((theme) => ({ value: theme.id, label: theme.label }))}
               onChange={(value) => changeTheme(value as ThemeId)}
               placeholder="配色方案"
+              className="min-w-0 flex-1 2xl:w-[180px]"
             />
             {currentUser.role === "super_admin" ? (
               <Link href="/admin/diagnostics" prefetch={false} className="rounded-xl border border-[var(--border)] bg-[var(--panel-muted)] px-4 py-2 text-sm font-semibold text-[var(--text)] transition hover:bg-[var(--hover)]">
@@ -911,7 +913,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   <UserCard
                     key={user.id}
                     user={user}
-                    canManage={permissions.canManageUsers && (currentUser.role === "super_admin" || user.role !== "super_admin")}
+                    canManage={permissions.canManageUsers && (isSuperAdminRole(currentUser.role) || !isSuperAdminRole(user.role))}
                     onEdit={() => editUser(user)}
                     onReset={() =>
                       setConfirmState({

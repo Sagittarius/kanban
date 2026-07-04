@@ -11,50 +11,52 @@ import type { CurrentUser } from "@/lib/auth-models";
 
 export const dynamic = "force-dynamic";
 const dashboardPageLogger = getLogger("dashboard-page");
+const PUBLIC_DASHBOARD_USER: CurrentUser = {
+  id: "public-dashboard",
+  username: "public",
+  role: "super_admin",
+  timezone: DEFAULT_TIMEZONE,
+  displayName: "公共视图",
+  phone: "",
+  avatarKey: "",
+  jobTitle: "",
+  techStacks: [],
+};
 
 export default async function DashboardPage() {
   return withPageLogging("/dashboard", async (pageLogContext) => {
-  try {
-    const repo = await getKanbanRepository();
-    const themeCookie = (await cookies()).get("kanban_dashboard_theme")?.value;
-    const initialTheme = themeCookie === "light" || themeCookie === "dark" ? themeCookie : "dark";
-    const user = await requireSessionUser().catch((error: unknown) => {
-      if (error instanceof Error && error.message === "Unauthorized") {
-        return null;
+    try {
+      const repo = await getKanbanRepository();
+      const themeCookie = (await cookies()).get("kanban_dashboard_theme")?.value;
+      const initialTheme = themeCookie === "light" || themeCookie === "dark" ? themeCookie : "dark";
+      const user = await requireSessionUser().catch((error: unknown) => {
+        if (error instanceof Error && error.message === "Unauthorized") {
+          return null;
+        }
+        throw error;
+      });
+      const publicEnabled = await repo.workloadDashboardPublicEnabled();
+      if (!user && !publicEnabled) {
+        return <LoginPage />;
       }
+      if (user) {
+        pageLogContext.setContext({ userId: user.id });
+      }
+
+      // The dashboard service still expects a CurrentUser shape. Public mode uses
+      // this synthetic user only as UI context; data visibility is controlled by
+      // the public-dashboard repository path above.
+      const currentUser = user ? serializableCurrentUser(user) : PUBLIC_DASHBOARD_USER;
+
+      return <WorkloadDashboard currentUser={currentUser} publicView={!user} initialTheme={initialTheme} appVersion={getAppVersion()} />;
+    } catch (error) {
+      dashboardPageLogger.error("dashboard page render failed", {
+        requestId: pageLogContext.requestId,
+        path: "/dashboard",
+        ...errorFields(error),
+      });
       throw error;
-    });
-    const publicEnabled = await repo.workloadDashboardPublicEnabled();
-    if (!user && !publicEnabled) {
-      return <LoginPage />;
     }
-    if (user) {
-      pageLogContext.setContext({ userId: user.id });
-    }
-
-    const currentUser: CurrentUser = user
-      ? serializableCurrentUser(user)
-      : {
-          id: "public-dashboard",
-          username: "public",
-          role: "super_admin",
-          timezone: DEFAULT_TIMEZONE,
-          displayName: "公共视图",
-          phone: "",
-          avatarKey: "",
-          jobTitle: "",
-          techStacks: [],
-        };
-
-    return <WorkloadDashboard currentUser={currentUser} publicView={!user} initialTheme={initialTheme} appVersion={getAppVersion()} />;
-  } catch (error) {
-    dashboardPageLogger.error("dashboard page render failed", {
-      requestId: pageLogContext.requestId,
-      path: "/dashboard",
-      ...errorFields(error),
-    });
-    throw error;
-  }
   });
 }
 
