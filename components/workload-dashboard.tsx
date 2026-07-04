@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import Image from "next/image";
-import { AlertTriangle, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Copyright, Edit3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
+import MatrixRain from "react-matrix-rain";
+import { AlertTriangle, Binary, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Copyright, Edit3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
 import { LoadingSkeleton, LoadingStateBadge } from "@/components/loading-hint";
 import DashboardParticles from "@/components/dashboard-particles";
 import MemberProfileCard from "@/components/member-profile-card";
@@ -106,10 +107,13 @@ const emptyDashboard: DashboardData = {
 
 const dashboardRefreshEventKey = "kanban:dashboard-refresh";
 const dashboardThemeStorageKey = "kanban:dashboard-theme";
+const dashboardMatrixStorageKey = "kanban:dashboard-matrix-enabled";
 const dashboardProgressSegmentCount = 48;
 const dashboardMemberProgressSegmentCount = dashboardProgressSegmentCount * 2;
 const dashboardMemberTaskProgressSegmentCount = dashboardMemberProgressSegmentCount * 2;
 const dashboardProjectTaskProgressSegmentCount = dashboardProgressSegmentCount * 2;
+const matrixAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$+-*/=%\"'#&_(),.;:?!\\|{}<>[]^~アカサタナハマヤラワイキシチニヒミリウクスツヌフムユルエケセテネヘメレオコソトノホモヨロヲン";
+const matrixMaxPixels = { width: 2200, height: 1400 };
 
 export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean; initialTheme?: DashboardTheme; appVersion?: string }) {
   const { publicView = false, initialTheme = "dark" } = props;
@@ -123,6 +127,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   const [selectedMember, setSelectedMember] = useState<DashboardMember | null>(null);
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [dashboardLoaded, setDashboardLoaded] = useState(false);
+  const [matrixEnabled, setMatrixEnabled] = useState(false);
 
   const meteors = useMemo(
     () =>
@@ -189,12 +194,17 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
     if (saved === "light" || saved === "dark") {
       setTheme(saved);
     }
+    setMatrixEnabled(window.localStorage.getItem(dashboardMatrixStorageKey) === "true");
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem(dashboardThemeStorageKey, theme);
     document.cookie = `kanban_dashboard_theme=${theme}; path=/; max-age=31536000; samesite=lax`;
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem(dashboardMatrixStorageKey, matrixEnabled ? "true" : "false");
+  }, [matrixEnabled]);
 
   useEffect(() => {
     const handleRefresh = () => {
@@ -295,9 +305,9 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
         <div className="absolute bottom-[-14%] left-[28%] h-[300px] w-[380px] rounded-full bg-[radial-gradient(circle,var(--dash-rim),transparent_72%)] blur-2xl opacity-70" />
         <div className="absolute inset-x-0 top-[6%] h-[1px] bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
         <div className="absolute inset-x-0 top-[36%] h-[1px] bg-[linear-gradient(90deg,transparent,var(--dash-line),transparent)] opacity-50" />
-        <DashboardParticles theme={theme} className="absolute inset-0 z-[1]" />
+        {matrixEnabled ? <DashboardMatrixRain theme={theme} /> : <DashboardParticles theme={theme} className="absolute inset-0 z-[1]" />}
         {/* 流星 */}
-        {meteors.map((meteor) => (
+        {!matrixEnabled ? meteors.map((meteor) => (
           <span
             key={meteor.id}
             className="absolute z-[3] h-3"
@@ -311,7 +321,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
               <span className="absolute right-0 top-1/2 h-[4px] w-[10px] -translate-y-1/2 rounded-full dashboard-meteor-head" />
             </span>
           </span>
-        ))}
+        )) : null}
         <div className="absolute inset-0 opacity-40 [background-image:linear-gradient(rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.04)_1px,transparent_1px)] [background-size:32px_32px]" />
         <div className="absolute inset-0 opacity-[0.14] [background-image:radial-gradient(circle_at_center,rgba(255,255,255,0.22)_0,transparent_54%)]" />
       </div>
@@ -369,6 +379,20 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
               className="grid h-11 w-11 place-items-center rounded-2xl border border-[var(--dash-line)] bg-[var(--dash-panel)] transition hover:bg-[var(--dash-hover)] hover:shadow-[0_0_0_1px_var(--dash-rim)]"
             >
               {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
+            </button>
+            <button
+              type="button"
+              onClick={() => setMatrixEnabled((current) => !current)}
+              title={matrixEnabled ? "关闭矩阵动效" : "开启矩阵动效"}
+              aria-pressed={matrixEnabled}
+              className={`inline-flex h-11 items-center gap-2 rounded-2xl border px-3 text-sm font-semibold transition ${
+                matrixEnabled
+                  ? "border-[var(--dash-matrix-strong)] bg-[var(--dash-matrix-soft)] text-[var(--dash-matrix-text)] shadow-[0_0_0_1px_var(--dash-matrix-strong),0_12px_32px_var(--dash-matrix-glow)]"
+                  : "border-[var(--dash-line)] bg-[var(--dash-panel)] text-[var(--dash-text)] hover:bg-[var(--dash-hover)] hover:shadow-[0_0_0_1px_var(--dash-rim)]"
+              }`}
+            >
+              <Binary size={17} />
+              <span>Matrix</span>
             </button>
             {!publicView ? (
               <button
@@ -645,6 +669,89 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
       ) : null}
     </main>
   );
+}
+
+function DashboardMatrixRain({ theme }: { theme: DashboardTheme }) {
+  const isLight = theme === "light";
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const [resolution, setResolution] = useState(() => computeMatrixResolution(1280, 720));
+  const uniformGradient = useMemo(
+    () => (isLight ? ["#115e59", "#0f766e", "#14b8a6"] : ["#14532d", "#22c55e", "#bbf7d0"]),
+    [isLight]
+  );
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateResolution = (width: number, height: number) => {
+      const nextResolution = computeMatrixResolution(width, height);
+      setResolution((current) => (
+        current.width === nextResolution.width && current.height === nextResolution.height
+          ? current
+          : nextResolution
+      ));
+    };
+
+    const initialRect = container.getBoundingClientRect();
+    updateResolution(initialRect.width, initialRect.height);
+
+    if (typeof ResizeObserver === "undefined") {
+      const handleResize = () => {
+        const rect = container.getBoundingClientRect();
+        updateResolution(rect.width, rect.height);
+      };
+      window.addEventListener("resize", handleResize);
+      return () => window.removeEventListener("resize", handleResize);
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      const size = entries[0]?.contentRect;
+      if (size) {
+        updateResolution(size.width, size.height);
+      }
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={containerRef} className="dashboard-matrix-rain pointer-events-none absolute inset-0 z-[2] overflow-hidden" aria-hidden="true">
+      <MatrixRain
+        alphabet={matrixAlphabet}
+        backgroundColor={isLight ? "rgba(238,244,251,0.42)" : "rgba(7,11,20,0.46)"}
+        color={isLight ? "rgba(15,118,110,0.9)" : "rgba(74,222,128,0.92)"}
+        delay={isLight ? 42 : 36}
+        density={isLight ? 0.048 : 0.058}
+        dryRate={0.52}
+        fadeRate={isLight ? 0.16 : 0.12}
+        font="16px monospace"
+        resolutionX={resolution.width}
+        resolutionY={resolution.height}
+        spaceX={0.9}
+        spaceY={0.98}
+        uniformGradient={uniformGradient}
+        gradientOrientation="vertical"
+        zIndex={0}
+      />
+    </div>
+  );
+}
+
+function computeMatrixResolution(width: number, height: number) {
+  const safeWidth = Math.max(1, width);
+  const safeHeight = Math.max(1, height);
+  const deviceScale = typeof window === "undefined" ? 1 : Math.min(window.devicePixelRatio || 1, 1.35);
+  const capScale = Math.min(
+    deviceScale,
+    matrixMaxPixels.width / safeWidth,
+    matrixMaxPixels.height / safeHeight
+  );
+  const scale = Math.max(0.1, capScale);
+  return {
+    width: Math.max(1, Math.round(safeWidth * scale)),
+    height: Math.max(1, Math.round(safeHeight * scale)),
+  };
 }
 
 function Metric({
@@ -1322,6 +1429,10 @@ const dashboardThemeCss = `
     --dash-meteor-head: rgba(255, 255, 255, 0.96);
     --dash-meteor-shadow-soft: rgba(191, 219, 254, 0.18);
     --dash-meteor-shadow-strong: rgba(255, 255, 255, 0.24);
+    --dash-matrix-text: rgba(74, 222, 128, 0.88);
+    --dash-matrix-soft: rgba(22, 163, 74, 0.14);
+    --dash-matrix-strong: rgba(74, 222, 128, 0.46);
+    --dash-matrix-glow: rgba(34, 197, 94, 0.18);
   }
   [data-dashboard-theme="light"] {
     --dash-bg: #eef4fb;
@@ -1376,6 +1487,10 @@ const dashboardThemeCss = `
     --dash-meteor-head: rgba(255, 255, 255, 0.98);
     --dash-meteor-shadow-soft: rgba(37, 99, 235, 0.24);
     --dash-meteor-shadow-strong: rgba(125, 211, 252, 0.34);
+    --dash-matrix-text: rgba(15, 118, 110, 0.82);
+    --dash-matrix-soft: rgba(15, 118, 110, 0.12);
+    --dash-matrix-strong: rgba(15, 118, 110, 0.36);
+    --dash-matrix-glow: rgba(15, 118, 110, 0.12);
   }
   .dashboard-filter-panel {
     background: var(--dash-popover);
@@ -1391,6 +1506,9 @@ const dashboardThemeCss = `
 	  .dashboard-pulse {
 	    animation: dashboard-pulse 2.8s ease-in-out infinite;
 	  }
+  .dashboard-matrix-rain {
+    opacity: 0.74;
+  }
   .dashboard-progress-track {
     align-items: stretch;
   }
