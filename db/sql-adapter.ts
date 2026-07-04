@@ -119,6 +119,9 @@ async function createPostgresAdapter(): Promise<DatabaseAdapter> {
     cachedPgPool = new Pool({
       connectionString,
       ssl: sslConfig,
+      max: resolvePositiveIntegerEnv("KANBAN_PG_POOL_MAX", 10),
+      idleTimeoutMillis: resolvePositiveIntegerEnv("KANBAN_PG_IDLE_TIMEOUT_MS", 30_000),
+      connectionTimeoutMillis: resolvePositiveIntegerEnv("KANBAN_PG_CONNECTION_TIMEOUT_MS", 5_000),
     }) as PgPool;
   }
 
@@ -250,6 +253,11 @@ function normalizeParams(params: SqlValue[]) {
     }
     return value;
   });
+}
+
+function resolvePositiveIntegerEnv(key: string, fallback: number) {
+  const value = Number.parseInt(process.env[key] ?? "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function toPostgresSql(sql: string) {

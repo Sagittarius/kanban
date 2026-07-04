@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type CSSProperties, type FormEvent } from "react";
+import LoginOrb from "@/components/login-orb";
 import { clientFetch } from "@/lib/client-observability";
 
 const particles = [
@@ -65,6 +66,8 @@ function particleStyle(particle: (typeof particles)[number]): CSSProperties {
   };
 }
 
+const visibleParticles = particles;
+
 export default function LoginPage() {
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
@@ -97,6 +100,7 @@ export default function LoginPage() {
     <main className="relative min-h-screen overflow-hidden bg-[#020817] text-[#e6f6ff]">
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_18%,rgba(37,99,235,0.42),transparent_28%),radial-gradient(circle_at_76%_12%,rgba(34,211,238,0.24),transparent_26%),radial-gradient(circle_at_72%_82%,rgba(14,165,233,0.2),transparent_30%),linear-gradient(135deg,#020817_0%,#061323_44%,#030712_100%)]" />
       <div className="absolute inset-0 opacity-35 [background-image:linear-gradient(rgba(125,211,252,0.055)_1px,transparent_1px),linear-gradient(90deg,rgba(125,211,252,0.045)_1px,transparent_1px)] [background-size:64px_64px]" />
+      <LoginOrb className="absolute left-[8%] top-[14%] h-[min(82vw,34rem)] w-[min(82vw,34rem)] opacity-90 lg:h-[34rem] lg:w-[34rem]" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(2,8,23,0.24)_52%,rgba(2,8,23,0.86)_100%)]" />
       <div className="pointer-events-none absolute inset-0">
         <div className="login-orbit absolute left-[8%] top-[14%] h-[34rem] w-[34rem] rounded-full border border-cyan-300/[0.06]" />
@@ -125,14 +129,14 @@ export default function LoginPage() {
             <span className="login-comet-head absolute right-0 top-1/2 h-1.5 w-3 -translate-y-1/2 rounded-full" />
           </span>
         </span>
-        {particles.map((particle, index) => (
+        {visibleParticles.map((particle, index) => (
           <span key={index} className="login-particle absolute rounded-full bg-cyan-100 shadow-[0_0_18px_rgba(125,211,252,0.9)]" style={particleStyle(particle)} />
         ))}
       </div>
 
       <div className="relative mx-auto grid min-h-screen max-w-6xl items-center gap-10 px-6 py-12 lg:grid-cols-[1.05fr_0.95fr]">
         <section className="space-y-8">
-          <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-white/8 px-4 py-2 text-sm font-semibold text-cyan-50 shadow-[0_0_40px_rgba(34,211,238,0.12)] backdrop-blur-xl">
+          <div className="inline-flex items-center gap-2 rounded-full border border-cyan-200/20 bg-slate-900/70 px-4 py-2 text-sm font-semibold text-cyan-50 shadow-[0_0_40px_rgba(34,211,238,0.12)]">
             <span className="grid h-7 w-7 place-items-center rounded-full bg-cyan-300 text-[#03111f]">K</span>
             Kanban
           </div>
@@ -146,7 +150,7 @@ export default function LoginPage() {
           </div>
           <div className="grid max-w-2xl gap-3 sm:grid-cols-3">
             {["容器部署", "多数据库方案", "看板隔离"].map((item) => (
-              <div key={item} className="rounded-2xl border border-cyan-100/15 bg-white/8 p-4 text-sm font-semibold text-cyan-50 shadow-[0_16px_48px_rgba(2,8,23,0.28)] backdrop-blur-xl">
+              <div key={item} className="rounded-2xl border border-cyan-100/15 bg-slate-900/58 p-4 text-sm font-semibold text-cyan-50 shadow-[0_16px_48px_rgba(2,8,23,0.28)]">
                 {item}
               </div>
             ))}
@@ -195,25 +199,32 @@ export default function LoginPage() {
       </div>
       <style>{`
         @keyframes login-pulse {
-          0%, 100% { transform: scale(0.74); opacity: 0.16; filter: blur(0); }
-          18% { transform: scale(1.28); opacity: 0.72; filter: blur(0.1px); }
-          27% { transform: scale(0.86); opacity: 0.22; filter: blur(0); }
-          53% { transform: scale(1.82); opacity: 1; filter: blur(0.2px); }
-          69% { transform: scale(1.04); opacity: 0.42; filter: blur(0); }
-          84% { transform: scale(1.42); opacity: 0.78; filter: blur(0.15px); }
-        }
-        @keyframes login-orbit {
-          from { transform: rotate(0deg) scale(1); }
-          to { transform: rotate(360deg) scale(1.03); }
+          0%, 100% { transform: scale(0.82); opacity: 0.14; }
+          28% { transform: scale(1.22); opacity: 0.48; }
+          62% { transform: scale(1.42); opacity: 0.68; }
         }
         @keyframes login-comet {
           0% { transform: translate3d(0, 0, 0); opacity: 0; }
           18% { opacity: 0.85; }
           100% { transform: translate3d(150vw, 0, 0); opacity: 0; }
         }
+        @keyframes login-orbit {
+          from { transform: rotate(0deg) scale(1); }
+          to { transform: rotate(360deg) scale(1.03); }
+        }
         .login-particle { animation: login-pulse ease-in-out infinite; }
-        .login-orbit { animation: login-orbit 24s linear infinite; }
-        .login-orbit-slow { animation-duration: 36s; animation-direction: reverse; }
+        .login-orb-container {
+          pointer-events: none;
+          z-index: 0;
+          contain: layout paint style;
+          mix-blend-mode: screen;
+          filter: drop-shadow(0 0 48px rgba(34,211,238,0.18));
+        }
+        .login-orb-canvas {
+          display: block;
+          height: 100%;
+          width: 100%;
+        }
         .login-comet-path {
           transform: rotate(var(--comet-angle));
           transform-origin: left center;
@@ -222,6 +233,8 @@ export default function LoginPage() {
         .login-comet-two { animation-delay: 2.6s; animation-duration: 12.8s; }
         .login-comet-three { animation-delay: 5.4s; animation-duration: 17.8s; }
         .login-comet-four { animation-delay: 8.2s; animation-duration: 22.8s; }
+        .login-orbit { animation: login-orbit 24s linear infinite; }
+        .login-orbit-slow { animation-duration: 36s; animation-direction: reverse; }
         .login-comet-tail {
           background: linear-gradient(90deg, transparent 0%, rgba(224,242,254,0.18) 28%, rgba(224,242,254,0.72) 68%, rgba(255,255,255,0.94) 100%);
           box-shadow: 0 0 14px rgba(186,230,253,0.26), 0 0 30px rgba(125,211,252,0.18);

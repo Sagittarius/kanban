@@ -9,7 +9,9 @@ type ClientErrorSource =
   | "resource-error"
   | "api-response"
   | "api-network"
-  | "dashboard-refresh";
+  | "dashboard-refresh"
+  | "dashboard-particles"
+  | "login-orb";
 
 type ClientErrorPayload = {
   source: ClientErrorSource;

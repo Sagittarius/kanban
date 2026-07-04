@@ -1,6 +1,6 @@
 {
   "name": "project-kanban-board",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "private": true,
   "engines": {
     "node": ">=22.13.0"
@@ -14,7 +14,8 @@
     "start:standalone": "node server.js",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern .remember",
     "db:generate": "drizzle-kit generate",
-    "db:migrate:local": "node scripts/migrate-local-sqlite.mjs",
+    "db:migrate:sqlite:local": "node scripts/migrate-local-sqlite.mjs",
+    "db:migrate:local": "pnpm run db:migrate:sqlite:local",
     "db:migrate:sqlite-to-postgres:check": "node scripts/migrate-sqlite-to-postgres.mjs --check",
     "db:migrate:sqlite-to-postgres": "node scripts/migrate-sqlite-to-postgres.mjs",
     "db:maintenance:preflight": "node scripts/preflight-maintenance.mjs",
@@ -22,18 +23,24 @@
     "db:upgrade:safe": "node scripts/upgrade-local-sqlite.mjs",
     "db:restore:sqlite": "node scripts/restore-local-sqlite-backup.mjs",
     "seed:feature-demo": "node scripts/seed-feature-demo.mjs",
-    "local:dev": "pnpm run db:migrate:local && next dev --hostname 0.0.0.0",
-    "local:start": "pnpm run db:migrate:local && next start -H 0.0.0.0"
+    "local:dev": "next dev --hostname 0.0.0.0",
+    "local:dev:sqlite": "pnpm run db:migrate:sqlite:local && next dev --hostname 0.0.0.0",
+    "local:start": "next start -H 0.0.0.0",
+    "local:start:sqlite": "pnpm run db:migrate:sqlite:local && next start -H 0.0.0.0"
   },
   "dependencies": {
     "@dnd-kit/core": "6.3.1",
     "@dnd-kit/sortable": "10.0.0",
     "@dnd-kit/utilities": "3.2.2",
+    "@tsparticles/engine": "3.9.1",
+    "@tsparticles/react": "3.0.0",
+    "@tsparticles/slim": "3.9.1",
     "core-js-bundle": "^3.47.0",
     "drizzle-orm": "0.45.2",
     "ipaddr.js": "2.4.0",
     "lucide-react": "^1.17.0",
     "next": "16.2.6",
+    "ogl": "^1.0.11",
     "pg": "^8.16.3",
     "pinyin-pro": "^3.28.1",
     "react": "19.2.6",

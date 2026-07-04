@@ -954,15 +954,21 @@ export class KanbanRepository {
     await this.requireBoardRead(actor, boardId);
     await this.ensureBoardDefaults(boardId, actor.username);
     await this.ensureSystemParameters();
-    const projects = (await this.q("SELECT * FROM projects WHERE board_id=? ORDER BY status ASC,order_index ASC", [boardId])).map(project);
-    const tasks = await this.q(
-      "SELECT t.* FROM tasks t JOIN projects p ON p.id=t.project_id WHERE p.board_id=? AND t.deleted_at IS NULL ORDER BY t.status ASC,t.order_index ASC,t.updated_at DESC",
-      [boardId]
-    );
-    const steps = await this.q(
-      "SELECT s.* FROM subtasks s JOIN tasks t ON t.id=s.task_id JOIN projects p ON p.id=t.project_id WHERE p.board_id=? ORDER BY s.order_index ASC",
-      [boardId]
-    );
+    const [projectRows, tasks, steps, settingsRows, boards, teams] = await Promise.all([
+      this.q("SELECT * FROM projects WHERE board_id=? ORDER BY status ASC,order_index ASC", [boardId]),
+      this.q(
+        "SELECT t.* FROM tasks t JOIN projects p ON p.id=t.project_id WHERE p.board_id=? AND t.deleted_at IS NULL ORDER BY t.status ASC,t.order_index ASC,t.updated_at DESC",
+        [boardId]
+      ),
+      this.q(
+        "SELECT s.* FROM subtasks s JOIN tasks t ON t.id=s.task_id JOIN projects p ON p.id=t.project_id WHERE p.board_id=? ORDER BY s.order_index ASC",
+        [boardId]
+      ),
+      this.q("SELECT * FROM system_parameters ORDER BY order_index ASC,key ASC"),
+      this.listBoardsForUser(actor),
+      this.listBoardTeamOptions(boardId),
+    ]);
+    const projects = projectRows.map(project);
     const byTask = new Map<string, Subtask[]>();
     for (const step of steps) {
       const taskId = String(step.task_id);
@@ -970,12 +976,10 @@ export class KanbanRepository {
       list.push(subtask(step));
       byTask.set(taskId, list);
     }
-    const settings = settingsFromRows(await this.q("SELECT * FROM system_parameters ORDER BY order_index ASC,key ASC"));
+    const settings = settingsFromRows(settingsRows);
     await this.cleanupExpiredActivity(boardId, settings);
     const activity = (await this.q("SELECT * FROM task_activity WHERE board_id=? ORDER BY created_at DESC LIMIT 80", [boardId])).map(activityRow);
-    const boards = await this.listBoardsForUser(actor);
     const activeBoard = boards.find((item) => item.id === boardId);
-    const teams = await this.listBoardTeamOptions(boardId);
     const users = uniqueUsers(teams.flatMap((teamItem) => teamItem.members));
     const configuredBoardTitle = parameterText(settings, "board_title");
     return {
@@ -2256,12 +2260,23 @@ export class KanbanRepository {
       "SELECT t.*,u.username AS owner_username FROM board_teams bt JOIN teams t ON t.id=bt.team_id LEFT JOIN users u ON u.id=t.owner_user_id WHERE bt.board_id=? ORDER BY t.name ASC",
       [boardId]
     );
+    const teamIds = rows.map((row) => String(row.id));
+    const membersByTeam = new Map<string, BoardUserOption[]>();
     const options: BoardTeamOption[] = [];
+    if (teamIds.length > 0) {
+      const memberRows = await this.q(
+        `SELECT tm.team_id,u.* FROM team_members tm JOIN users u ON u.id=tm.user_id WHERE tm.team_id IN (${teamIds.map(() => "?").join(",")}) AND u.is_active=1 ORDER BY tm.team_id ASC,u.role ASC,u.username ASC`,
+        teamIds
+      );
+      for (const memberRow of memberRows) {
+        const teamId = String(memberRow.team_id);
+        const members = membersByTeam.get(teamId) ?? [];
+        members.push(boardUser(memberRow));
+        membersByTeam.set(teamId, members);
+      }
+    }
     for (const row of rows) {
-      const members = (await this.q(
-        "SELECT u.* FROM team_members tm JOIN users u ON u.id=tm.user_id WHERE tm.team_id=? AND u.is_active=1 ORDER BY u.role ASC,u.username ASC",
-        [String(row.id)]
-      )).map(boardUser);
+      const members = membersByTeam.get(String(row.id)) ?? [];
       options.push({
         id: String(row.id),
         name: String(row.name),

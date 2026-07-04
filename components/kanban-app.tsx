@@ -1905,7 +1905,7 @@ export default function KanbanApp({
     dragStartStatusRef.current = null;
   }
 
-  function handleDragCancel(_event: DragCancelEvent) {
+  function handleDragCancel() {
     setCrossDragTarget(null);
     setDragOverlayWidth(null);
     setDraggingTaskId(null);
@@ -2888,11 +2888,10 @@ function HorizontalBoardColumn({
               className="flex min-h-[118px] flex-nowrap items-stretch gap-3.5 overflow-x-auto overflow-y-hidden rounded-b-lg bg-[var(--lane-bg)] px-3.5 py-3"
             >
               <SortableContext id={column.id} items={taskIds} strategy={horizontalListSortingStrategy}>
-                {tasks.map((task, index) => (
+                {tasks.map((task) => (
                   <HorizontalSortableTaskCard
                     key={task.id}
                     task={task}
-                    index={index}
                     todayKey={todayKey}
                     dueSoonDays={dueSoonDays}
                     project={projectById(projects, task.projectId)}
@@ -2973,11 +2972,10 @@ function BoardColumnView({
       </div>
       <div ref={setNodeRef} data-board-drop-status={column.id} className="flex min-h-[220px] flex-1 flex-col gap-3.5 overflow-y-auto bg-[var(--lane-bg)] p-3.5">
           <SortableContext id={column.id} items={taskIds} strategy={verticalListSortingStrategy}>
-            {tasks.map((task, index) => (
+            {tasks.map((task) => (
               <VerticalSortableTaskCard
                 key={task.id}
                 task={task}
-                index={index}
                 todayKey={todayKey}
                 dueSoonDays={dueSoonDays}
                 project={projectById(projects, task.projectId)}
@@ -3072,7 +3070,6 @@ function KanbanListView({
 
 function HorizontalSortableTaskCard({
   task,
-  index,
   todayKey,
   dueSoonDays,
   project,
@@ -3083,7 +3080,6 @@ function HorizontalSortableTaskCard({
   onSelect,
 }: {
   task: BoardTask;
-  index: number;
   todayKey: string;
   dueSoonDays: number;
   project: Project;
@@ -3096,7 +3092,6 @@ function HorizontalSortableTaskCard({
   return (
     <HorizontalDraggableTaskCard
       task={task}
-      index={index}
       todayKey={todayKey}
       dueSoonDays={dueSoonDays}
       project={project}
@@ -3111,7 +3106,6 @@ function HorizontalSortableTaskCard({
 
 function HorizontalDraggableTaskCard({
   task,
-  index,
   todayKey,
   dueSoonDays,
   project,
@@ -3122,7 +3116,6 @@ function HorizontalDraggableTaskCard({
   onSelect,
 }: {
   task: BoardTask;
-  index: number;
   todayKey: string;
   dueSoonDays: number;
   project: Project;
@@ -3177,7 +3170,6 @@ function HorizontalDraggableTaskCard({
 
 function VerticalSortableTaskCard({
   task,
-  index,
   todayKey,
   dueSoonDays,
   project,
@@ -3188,7 +3180,6 @@ function VerticalSortableTaskCard({
   onSelect,
 }: {
   task: BoardTask;
-  index: number;
   todayKey: string;
   dueSoonDays: number;
   project: Project;
@@ -3201,7 +3192,6 @@ function VerticalSortableTaskCard({
   return (
     <VerticalDraggableTaskCard
       task={task}
-      index={index}
       todayKey={todayKey}
       dueSoonDays={dueSoonDays}
       project={project}
@@ -3216,7 +3206,6 @@ function VerticalSortableTaskCard({
 
 function VerticalDraggableTaskCard({
   task,
-  index,
   todayKey,
   dueSoonDays,
   project,
@@ -3227,7 +3216,6 @@ function VerticalDraggableTaskCard({
   onSelect,
 }: {
   task: BoardTask;
-  index: number;
   todayKey: string;
   dueSoonDays: number;
   project: Project;
@@ -3807,6 +3795,48 @@ function TaskDrawer({
   const [reworking, setReworking] = useState(false);
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [editingSubtaskTitle, setEditingSubtaskTitle] = useState("");
+  const taskSubtasksRef = useRef(task.subtasks);
+  const taskTagsText = task.tags.join(" ");
+  const taskDraftSnapshot = useMemo<TaskDraft>(
+    () => ({
+      title: task.title,
+      description: task.description,
+      projectId: task.projectId,
+      status: task.status,
+      priority: task.priority,
+      testDueDate: task.testDueDate,
+      designDueDate: task.designDueDate,
+      dueDate: task.dueDate,
+      ownerUserId: task.ownerUserId,
+      owner: task.owner,
+      testerUserId: task.testerUserId,
+      tester: task.tester,
+      workloadDays: task.workloadDays === null || task.workloadDays === undefined ? "" : String(task.workloadDays),
+      progress: task.progress,
+      blockers: String(task.blockers ?? 0),
+      blockedReason: task.blockedReason,
+      tagsText: taskTagsText,
+    }),
+    [
+      task.blockedReason,
+      task.blockers,
+      task.description,
+      task.designDueDate,
+      task.dueDate,
+      task.owner,
+      task.ownerUserId,
+      task.priority,
+      task.progress,
+      task.projectId,
+      task.status,
+      task.testDueDate,
+      task.tester,
+      task.testerUserId,
+      task.title,
+      task.workloadDays,
+      taskTagsText,
+    ]
+  );
 
   const taskMembers = membersForProject(projects, teams, draft.projectId);
   const taskProjectOptions = projects.map((project) => ({
@@ -3834,12 +3864,16 @@ function TaskDrawer({
     .join("|");
 
   useEffect(() => {
-    setDraft(taskDraftFromTask(task));
-    setSubtaskDrafts(task.subtasks);
+    taskSubtasksRef.current = task.subtasks;
+  }, [task.subtasks]);
+
+  useEffect(() => {
+    setDraft(taskDraftSnapshot);
+    setSubtaskDrafts(taskSubtasksRef.current);
     setNewSubtaskTitle("");
     setEditingSubtaskId(null);
     setEditingSubtaskTitle("");
-  }, [task.id, task.updatedAt, task.progress, task.blockers, subtaskResetKey]);
+  }, [subtaskResetKey, task.id, task.updatedAt, taskDraftSnapshot]);
 
   function commitSubtaskTitle(subtaskId: string, title: string) {
     if (!title.trim()) {
@@ -4860,6 +4894,7 @@ function ImportTaskDialog({
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const importBusy = importing || busy;
 
   async function handleFile(file: File | undefined) {
     if (!file) return;
@@ -4895,8 +4930,8 @@ function ImportTaskDialog({
             }`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { e.preventDefault(); setDragOver(false); handleFile(e.dataTransfer.files?.[0]); }}
-            onClick={() => fileRef.current?.click()}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); if (!importBusy) handleFile(e.dataTransfer.files?.[0]); }}
+            onClick={() => { if (!importBusy) fileRef.current?.click(); }}
           >
             <Upload size={32} className="mx-auto text-[var(--muted)]" />
             <p className="mt-3 text-sm text-[var(--muted)]">
@@ -4908,7 +4943,7 @@ function ImportTaskDialog({
               type="file"
               accept=".xlsx,.xls"
               className="hidden"
-              disabled={importing}
+              disabled={importBusy}
               onChange={(e) => handleFile(e.target.files?.[0])}
             />
           </div>
@@ -4926,6 +4961,7 @@ function ImportTaskDialog({
             <button
               type="button"
               onClick={onDownloadTemplate}
+              disabled={importBusy}
               className="shrink-0 rounded-lg bg-[var(--accent)] px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-[var(--accent-hover)]"
             >
               下载模板

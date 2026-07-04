@@ -50,6 +50,35 @@ body {
   background: transparent;
 }
 
+.loading-skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  background: var(--loading-skeleton-bg, var(--panel-soft, var(--dash-track, rgba(148, 163, 184, 0.18))));
+}
+
+.loading-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(90deg, transparent, var(--loading-skeleton-sheen, rgba(255, 255, 255, 0.48)), transparent);
+  animation: loading-skeleton-shimmer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes loading-skeleton-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  55% {
+    transform: translateX(120%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
 html[data-input-mode="pointer"] button:focus,
 html[data-input-mode="pointer"] [role="button"]:focus,
 html[data-input-mode="pointer"] a[href]:focus,
@@ -86,6 +115,9 @@ html[data-input-mode="keyboard"] summary:focus {
   --scrollbar-track: rgba(217, 222, 231, 0.42);
   --scrollbar-thumb: rgba(104, 112, 131, 0.54);
   --scrollbar-thumb-hover: rgba(94, 106, 210, 0.74);
+  --loading-skeleton-bg: var(--panel-soft);
+  --loading-skeleton-sheen: rgba(255, 255, 255, 0.58);
+  --loading-overlay-bg: rgba(246, 247, 249, 0.78);
   --accent: #5e6ad2;
   --accent-hover: #4f5cc6;
   --accent-soft: rgba(94, 106, 210, 0.18);

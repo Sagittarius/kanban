@@ -203,3 +203,17 @@ export const systemParameters = sqliteTable("system_parameters", {
   orderIndex: integer("order_index").notNull().default(0),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const schemaComments = sqliteTable(
+  "schema_comments",
+  {
+    tableName: text("table_name").notNull(),
+    columnName: text("column_name").notNull().default(""),
+    commentType: text("comment_type").notNull().default("column"),
+    comment: text("comment").notNull(),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("schema_comments_table_column_unique").on(table.tableName, table.columnName),
+  })
+);

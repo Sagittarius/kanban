@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import Link from "next/link";
 import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
+import { LoadingSkeleton, LoadingStateBadge } from "@/components/loading-hint";
 import MemberProfileCard, { MemberProfileAvatar, toMemberProfile } from "@/components/member-profile-card";
 import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
@@ -218,6 +219,10 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const [boardTeamDraft, setBoardTeamDraft] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+  const [loadingUsers, setLoadingUsers] = useState(true);
+  const [loadingTeams, setLoadingTeams] = useState(true);
+  const [loadingBoards, setLoadingBoards] = useState(true);
+  const [loadingAuditLogs, setLoadingAuditLogs] = useState(true);
   const [themeId, setThemeId] = useState<ThemeId>(isThemeId(initialThemeId) ? initialThemeId : "notion");
   const initialized = useRef(false);
   const debouncedUserQuery = useDebouncedValue(userQuery, 220);
@@ -225,156 +230,173 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   const debouncedBoardQuery = useDebouncedValue(boardQuery, 220);
   const debouncedAuditQuery = useDebouncedValue(auditQuery, 220);
 
-  function showMessage(text: string, tone: NonNullable<MessageState>["tone"]) {
+  const showMessage = useCallback((text: string, tone: NonNullable<MessageState>["tone"]) => {
     setMessage({ text, tone });
-  }
+  }, []);
 
   function clearMessage() {
     setMessage(null);
   }
 
-  async function refreshUsers() {
+  const refreshUsers = useCallback(async () => {
+    setLoadingUsers(true);
     const errors: string[] = [];
-    const emptyUsers: UsersResponse = {
-      users: [],
-      total: 0,
-      page: 1,
-      pageSize: userPageSize,
-      stats: { users: 0, activeUsers: 0, projectManagers: 0 },
-      assignableUsers: [],
-      directoryUsers: [],
-      permissions: defaultPermissions,
-    };
-    const params = new URLSearchParams({
-      page: String(userPage),
-      pageSize: String(userPageSize),
-      ...(debouncedUserQuery.trim() ? { query: debouncedUserQuery.trim() } : {}),
-    });
-    const userPayload = await fetchAdminJson(`/api/admin/users?${params.toString()}`, emptyUsers, errors, "加载用户失败");
-    setUsers(Array.isArray(userPayload.users) ? userPayload.users : []);
-    setAssignableUsers(Array.isArray(userPayload.assignableUsers) ? userPayload.assignableUsers : []);
-    setUserDirectory(Array.isArray(userPayload.directoryUsers) ? userPayload.directoryUsers : []);
-    setPermissions(userPayload.permissions ?? defaultPermissions);
-    setUserTotal(Number(userPayload.total ?? 0));
-    setStats((current) => ({
-      ...current,
-      users: Number(userPayload.stats?.users ?? 0),
-      activeUsers: Number(userPayload.stats?.activeUsers ?? 0),
-      projectManagers: Number(userPayload.stats?.projectManagers ?? 0),
-    }));
-    if (errors.length > 0) showMessage([...new Set(errors)].join("；"), "error");
-  }
-
-  async function refreshTeams() {
-    const errors: string[] = [];
-    const emptyTeams: TeamsResponse = {
-      teams: [],
-      total: 0,
-      page: 1,
-      pageSize: teamPageSize,
-      stats: { teams: 0 },
-      teamOptions: [],
-      assignableUsers: [],
-      permissions: defaultPermissions,
-    };
-    const params = new URLSearchParams({
-      page: String(teamPage),
-      pageSize: String(teamPageSize),
-      ...(debouncedTeamQuery.trim() ? { query: debouncedTeamQuery.trim() } : {}),
-    });
-    const teamPayload = await fetchAdminJson(`/api/admin/teams?${params.toString()}`, emptyTeams, errors, "加载团队失败");
-    const teamRows = Array.isArray(teamPayload.teams) ? teamPayload.teams : [];
-    setTeams(teamRows);
-    setTeamOptionsData(Array.isArray(teamPayload.teamOptions) ? teamPayload.teamOptions : []);
-    if ((teamPayload.assignableUsers?.length ?? 0) > 0) {
-      setAssignableUsers(teamPayload.assignableUsers);
+    try {
+      const emptyUsers: UsersResponse = {
+        users: [],
+        total: 0,
+        page: 1,
+        pageSize: userPageSize,
+        stats: { users: 0, activeUsers: 0, projectManagers: 0 },
+        assignableUsers: [],
+        directoryUsers: [],
+        permissions: defaultPermissions,
+      };
+      const params = new URLSearchParams({
+        page: String(userPage),
+        pageSize: String(userPageSize),
+        ...(debouncedUserQuery.trim() ? { query: debouncedUserQuery.trim() } : {}),
+      });
+      const userPayload = await fetchAdminJson(`/api/admin/users?${params.toString()}`, emptyUsers, errors, "加载用户失败");
+      setUsers(Array.isArray(userPayload.users) ? userPayload.users : []);
+      setAssignableUsers(Array.isArray(userPayload.assignableUsers) ? userPayload.assignableUsers : []);
+      setUserDirectory(Array.isArray(userPayload.directoryUsers) ? userPayload.directoryUsers : []);
+      setPermissions(userPayload.permissions ?? defaultPermissions);
+      setUserTotal(Number(userPayload.total ?? 0));
+      setStats((current) => ({
+        ...current,
+        users: Number(userPayload.stats?.users ?? 0),
+        activeUsers: Number(userPayload.stats?.activeUsers ?? 0),
+        projectManagers: Number(userPayload.stats?.projectManagers ?? 0),
+      }));
+      if (errors.length > 0) showMessage([...new Set(errors)].join("；"), "error");
+    } finally {
+      setLoadingUsers(false);
     }
-    setPermissions(teamPayload.permissions ?? defaultPermissions);
-    setTeamTotal(Number(teamPayload.total ?? 0));
-    setStats((current) => ({
-      ...current,
-      teams: Number(teamPayload.stats?.teams ?? 0),
-    }));
-    if (selectedTeam) {
-      const nextSelectedTeam = teamRows.find((team) => team.id === selectedTeam.id) ?? null;
-      setSelectedTeam(nextSelectedTeam);
+  }, [debouncedUserQuery, showMessage, userPage, userPageSize]);
+
+  const refreshTeams = useCallback(async () => {
+    setLoadingTeams(true);
+    const errors: string[] = [];
+    try {
+      const emptyTeams: TeamsResponse = {
+        teams: [],
+        total: 0,
+        page: 1,
+        pageSize: teamPageSize,
+        stats: { teams: 0 },
+        teamOptions: [],
+        assignableUsers: [],
+        permissions: defaultPermissions,
+      };
+      const params = new URLSearchParams({
+        page: String(teamPage),
+        pageSize: String(teamPageSize),
+        ...(debouncedTeamQuery.trim() ? { query: debouncedTeamQuery.trim() } : {}),
+      });
+      const teamPayload = await fetchAdminJson(`/api/admin/teams?${params.toString()}`, emptyTeams, errors, "加载团队失败");
+      const teamRows = Array.isArray(teamPayload.teams) ? teamPayload.teams : [];
+      setTeams(teamRows);
+      setTeamOptionsData(Array.isArray(teamPayload.teamOptions) ? teamPayload.teamOptions : []);
+      if ((teamPayload.assignableUsers?.length ?? 0) > 0) {
+        setAssignableUsers(teamPayload.assignableUsers);
+      }
+      setPermissions(teamPayload.permissions ?? defaultPermissions);
+      setTeamTotal(Number(teamPayload.total ?? 0));
+      setStats((current) => ({
+        ...current,
+        teams: Number(teamPayload.stats?.teams ?? 0),
+      }));
+      setSelectedTeam((current) => (current ? teamRows.find((team) => team.id === current.id) ?? null : null));
+      if (errors.length > 0) showMessage([...new Set(errors)].join("；"), "error");
+    } finally {
+      setLoadingTeams(false);
     }
-    if (errors.length > 0) showMessage([...new Set(errors)].join("；"), "error");
-  }
+  }, [debouncedTeamQuery, showMessage, teamPage, teamPageSize]);
 
-  async function refreshBoards() {
+  const refreshBoards = useCallback(async () => {
+    setLoadingBoards(true);
     const errors: string[] = [];
-    const emptyBoards: BoardsResponse = {
-      boards: [],
-      total: 0,
-      page: 1,
-      pageSize: boardPageSize,
-      stats: { boards: 0, boardsWithTeams: 0, explicitUsers: 0 },
-    };
-    const params = new URLSearchParams({
-      page: String(boardPage),
-      pageSize: String(boardPageSize),
-      ...(debouncedBoardQuery.trim() ? { query: debouncedBoardQuery.trim() } : {}),
-    });
-    const boardPayload = await fetchAdminJson(`/api/admin/boards?${params.toString()}`, emptyBoards, errors, "加载看板失败");
-    const boardRows = Array.isArray(boardPayload.boards) ? boardPayload.boards : [];
-    setBoards(boardRows);
-    setBoardTotal(Number(boardPayload.total ?? 0));
-    setStats((current) => ({
-      ...current,
-      boards: Number(boardPayload.stats?.boards ?? 0),
-      boardsWithTeams: Number(boardPayload.stats?.boardsWithTeams ?? 0),
-      explicitUsers: Number(boardPayload.stats?.explicitUsers ?? 0),
-    }));
-    const nextBoard = boardRows.find((board) => board.id === selectedBoardId) ?? boardRows[0];
-    setSelectedBoardId(nextBoard?.id ?? "");
-    setBoardTeamDraft(nextBoard?.teamIds ?? []);
-    if (errors.length > 0) showMessage([...new Set(errors)].join("；"), "error");
-  }
+    try {
+      const emptyBoards: BoardsResponse = {
+        boards: [],
+        total: 0,
+        page: 1,
+        pageSize: boardPageSize,
+        stats: { boards: 0, boardsWithTeams: 0, explicitUsers: 0 },
+      };
+      const params = new URLSearchParams({
+        page: String(boardPage),
+        pageSize: String(boardPageSize),
+        ...(debouncedBoardQuery.trim() ? { query: debouncedBoardQuery.trim() } : {}),
+      });
+      const boardPayload = await fetchAdminJson(`/api/admin/boards?${params.toString()}`, emptyBoards, errors, "加载看板失败");
+      const boardRows = Array.isArray(boardPayload.boards) ? boardPayload.boards : [];
+      setBoards(boardRows);
+      setBoardTotal(Number(boardPayload.total ?? 0));
+      setStats((current) => ({
+        ...current,
+        boards: Number(boardPayload.stats?.boards ?? 0),
+        boardsWithTeams: Number(boardPayload.stats?.boardsWithTeams ?? 0),
+        explicitUsers: Number(boardPayload.stats?.explicitUsers ?? 0),
+      }));
+      const nextBoard = boardRows.find((board) => board.id === selectedBoardId) ?? boardRows[0];
+      setSelectedBoardId(nextBoard?.id ?? "");
+      setBoardTeamDraft(nextBoard?.teamIds ?? []);
+      if (errors.length > 0) showMessage([...new Set(errors)].join("；"), "error");
+    } finally {
+      setLoadingBoards(false);
+    }
+  }, [boardPage, boardPageSize, debouncedBoardQuery, selectedBoardId, showMessage]);
 
-  async function refreshAuditLogs() {
+  const refreshAuditLogs = useCallback(async () => {
+    setLoadingAuditLogs(true);
     const errors: string[] = [];
-    const emptyAuditLogs: AuditLogsResponse = { auditLogs: [], total: 0, page: 1, pageSize: auditPageSize };
-    const params = new URLSearchParams({
-      page: String(auditPage),
-      pageSize: String(auditPageSize),
-      ...(debouncedAuditQuery.trim() ? { query: debouncedAuditQuery.trim() } : {}),
-    });
-    const auditPayload = await fetchAdminJson(`/api/admin/audit-logs?${params.toString()}`, emptyAuditLogs, errors, "加载审计日志失败");
-    setAuditLogs(Array.isArray(auditPayload.auditLogs) ? auditPayload.auditLogs : []);
-    setAuditTotal(Number(auditPayload.total ?? 0));
-    if (errors.length > 0) showMessage([...new Set(errors)].join("；"), "error");
-  }
+    try {
+      const emptyAuditLogs: AuditLogsResponse = { auditLogs: [], total: 0, page: 1, pageSize: auditPageSize };
+      const params = new URLSearchParams({
+        page: String(auditPage),
+        pageSize: String(auditPageSize),
+        ...(debouncedAuditQuery.trim() ? { query: debouncedAuditQuery.trim() } : {}),
+      });
+      const auditPayload = await fetchAdminJson(`/api/admin/audit-logs?${params.toString()}`, emptyAuditLogs, errors, "加载审计日志失败");
+      setAuditLogs(Array.isArray(auditPayload.auditLogs) ? auditPayload.auditLogs : []);
+      setAuditTotal(Number(auditPayload.total ?? 0));
+      if (errors.length > 0) showMessage([...new Set(errors)].join("；"), "error");
+    } finally {
+      setLoadingAuditLogs(false);
+    }
+  }, [auditPage, auditPageSize, debouncedAuditQuery, showMessage]);
 
-  async function refreshAll() {
+  const refreshAll = useCallback(async () => {
     await Promise.all([refreshUsers(), refreshTeams(), refreshBoards(), refreshAuditLogs()]);
-  }
+  }, [refreshAuditLogs, refreshBoards, refreshTeams, refreshUsers]);
 
   useEffect(() => {
     if (initialized.current) return;
     initialized.current = true;
     void refreshAll();
-  });
+  }, [refreshAll]);
 
   useEffect(() => {
     if (!initialized.current) return;
     void refreshUsers();
-  }, [userPage, userPageSize, debouncedUserQuery]);
+  }, [refreshUsers]);
 
   useEffect(() => {
     if (!initialized.current) return;
     void refreshTeams();
-  }, [teamPage, teamPageSize, debouncedTeamQuery]);
+  }, [refreshTeams]);
 
   useEffect(() => {
     if (!initialized.current) return;
     void refreshBoards();
-  }, [boardPage, boardPageSize, debouncedBoardQuery]);
+  }, [refreshBoards]);
 
   useEffect(() => {
     if (!initialized.current) return;
     void refreshAuditLogs();
-  }, [auditPage, auditPageSize, debouncedAuditQuery]);
+  }, [refreshAuditLogs]);
 
   const visibleTabs = useMemo<Array<[TabId, string]>>(
     () => [
@@ -387,6 +409,12 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   );
 
   const currentTab = activeTab === "users" && !permissions.canManageUsers ? "teams" : activeTab;
+  const loadingAdmin = loadingUsers || loadingTeams || loadingBoards || loadingAuditLogs;
+  const loadingStats = loadingAdmin && stats.users === 0 && stats.teams === 0 && stats.boards === 0 && stats.explicitUsers === 0;
+  const loadingUserList = loadingUsers && users.length === 0;
+  const loadingTeamList = loadingTeams && teams.length === 0;
+  const loadingBoardList = loadingBoards && boards.length === 0;
+  const loadingAuditList = loadingAuditLogs && auditLogs.length === 0;
 
   const roleOptions = useMemo<SearchableSelectOption[]>(() => {
     const roles: UserRole[] =
@@ -713,6 +741,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
             <h1 className="text-2xl font-semibold">后台管理</h1>
             <p className="mt-1 text-sm text-[var(--muted)]">{currentUser.displayName || currentUser.username}</p>
           </div>
+          <LoadingStateBadge active={loadingAdmin} className="ml-2" />
           <div className="ml-auto flex items-center gap-3">
             <SearchableSelect
               value={themeId}
@@ -774,12 +803,12 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
 
         <div className="sticky top-4 z-10 mt-5 rounded-2xl border border-[var(--border)] bg-[var(--panel)] p-4 shadow-lg backdrop-blur">
           <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-            <SummaryCard label="用户" value={stats.users} />
-            <SummaryCard label="启用" value={stats.activeUsers} />
-            <SummaryCard label="项目经理" value={stats.projectManagers} />
-            <SummaryCard label="团队" value={stats.teams} />
-            <SummaryCard label="看板" value={stats.boards} />
-            <SummaryCard label="授权" value={stats.explicitUsers} />
+            <SummaryCard label="用户" value={stats.users} loading={loadingStats} />
+            <SummaryCard label="启用" value={stats.activeUsers} loading={loadingStats} />
+            <SummaryCard label="项目经理" value={stats.projectManagers} loading={loadingStats} />
+            <SummaryCard label="团队" value={stats.teams} loading={loadingStats} />
+            <SummaryCard label="看板" value={stats.boards} loading={loadingStats} />
+            <SummaryCard label="授权" value={stats.explicitUsers} loading={loadingStats} />
           </div>
         </div>
 
@@ -873,10 +902,12 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               )}
             </Panel>
 
-            <Panel title="用户列表" count={userTotal}>
+            <Panel title="用户列表" count={userTotal} loading={loadingUsers}>
               <SearchInput value={userQuery} onChange={(value) => { setUserQuery(value); setUserPage(1); }} placeholder="搜索用户、姓名、手机、角色、时区" />
               <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-                {users.map((user) => (
+                {loadingUserList ? (
+                  <AdminCardSkeletonList count={6} />
+                ) : users.map((user) => (
                   <UserCard
                     key={user.id}
                     user={user}
@@ -907,6 +938,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     }
                   />
                 ))}
+                {!loadingUserList && users.length === 0 ? <EmptyState text="暂无用户" /> : null}
               </div>
               <PaginationBar
                 page={userPage}
@@ -983,10 +1015,12 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               </form>
             </Panel>
 
-            <Panel title="团队列表" count={teamTotal}>
+            <Panel title="团队列表" count={teamTotal} loading={loadingTeams}>
               <SearchInput value={teamQuery} onChange={(value) => { setTeamQuery(value); setTeamPage(1); }} placeholder="搜索团队、说明、拥有者" />
               <div className="mt-4 grid gap-3 md:grid-cols-2 2xl:grid-cols-3">
-                {teams.map((team) => (
+                {loadingTeamList ? (
+                  <AdminCardSkeletonList count={6} />
+                ) : teams.map((team) => (
                   <div
                     key={team.id}
                     role="button"
@@ -1039,6 +1073,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     ) : null}
                   </div>
                 ))}
+                {!loadingTeamList && teams.length === 0 ? <EmptyState text="暂无团队" /> : null}
               </div>
               <PaginationBar
                 page={teamPage}
@@ -1127,10 +1162,12 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
               </div>
             </section>
 
-            <Panel title="看板列表" count={boardTotal}>
+            <Panel title="看板列表" count={boardTotal} loading={loadingBoards}>
               <SearchInput value={boardQuery} onChange={(value) => { setBoardQuery(value); setBoardPage(1); }} placeholder="搜索看板、说明、拥有者" />
               <div className="mt-4 max-h-[780px] space-y-3 overflow-y-auto pr-1">
-                {boards.map((board) => {
+                {loadingBoardList ? (
+                  <AdminCardSkeletonList count={5} />
+                ) : boards.map((board) => {
                   const active = selectedBoard?.id === board.id;
                   const teamCount = board.teamIds?.length ?? 0;
                   return (
@@ -1164,7 +1201,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     </button>
                   );
                 })}
-                {boards.length === 0 ? <EmptyState text="暂无看板" /> : null}
+                {!loadingBoardList && boards.length === 0 ? <EmptyState text="暂无看板" /> : null}
               </div>
               <PaginationBar
                 page={boardPage}
@@ -1325,7 +1362,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
 
         {currentTab === "audit" ? (
           <div className="mt-5">
-            <Panel title="审计日志" count={auditTotal}>
+            <Panel title="审计日志" count={auditTotal} loading={loadingAuditLogs}>
               <SearchInput value={auditQuery} onChange={(value) => { setAuditQuery(value); setAuditPage(1); }} placeholder="搜索用户、动作、对象、IP、Request ID" />
               <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)]">
                 <div className="grid grid-cols-[150px_160px_180px_minmax(0,1fr)_120px] gap-3 border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-semibold text-[var(--muted)]">
@@ -1336,7 +1373,9 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                   <span>结果</span>
                 </div>
                 <div className="divide-y divide-[var(--border)]">
-                  {auditLogs.map((item) => (
+                  {loadingAuditList ? (
+                    <AuditLogSkeletonRows />
+                  ) : auditLogs.map((item) => (
                     <div key={item.id} className="grid grid-cols-[150px_160px_180px_minmax(0,1fr)_120px] gap-3 px-4 py-3 text-sm">
                       <span className="text-[var(--muted)]">{formatAuditTime(item.createdAt)}</span>
                       <span className="min-w-0">
@@ -1363,7 +1402,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                       </span>
                     </div>
                   ))}
-                  {auditLogs.length === 0 ? <EmptyState text="暂无审计记录" /> : null}
+                  {!loadingAuditList && auditLogs.length === 0 ? <EmptyState text="暂无审计记录" /> : null}
                 </div>
               </div>
               <PaginationBar
@@ -1459,11 +1498,11 @@ function formatAuditTime(value: string) {
   });
 }
 
-function SummaryCard({ label, value }: { label: string; value: number }) {
+function SummaryCard({ label, value, loading = false }: { label: string; value: number; loading?: boolean }) {
   return (
     <div className="rounded-xl border border-[var(--border)] bg-[var(--panel)] px-5 py-4 shadow-sm">
       <p className="text-sm text-[var(--muted)]">{label}</p>
-      <p className="mt-2 text-3xl font-semibold">{value}</p>
+      {loading ? <LoadingSkeleton className="mt-3 h-9 w-20 rounded-lg" /> : <p className="mt-2 text-3xl font-semibold">{value}</p>}
     </div>
   );
 }
@@ -1477,17 +1516,78 @@ function BoardMetric({ label, value, compact = false }: { label: string; value: 
   );
 }
 
-function Panel({ title, count, children, dataTour }: { title: string; count?: number; children: ReactNode; dataTour?: string }) {
+function Panel({
+  title,
+  count,
+  children,
+  dataTour,
+  loading = false,
+}: {
+  title: string;
+  count?: number;
+  children: ReactNode;
+  dataTour?: string;
+  loading?: boolean;
+}) {
   return (
     <section data-tour={dataTour} className="rounded-xl border border-[var(--border)] bg-[var(--panel)] p-5 shadow-sm">
       <div className="mb-4 flex items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold">{title}</h2>
-        {typeof count === "number" ? (
-          <span className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-xs font-semibold text-[var(--text)]">{count}</span>
-        ) : null}
+        <div className="flex items-center gap-2">
+          <h2 className="text-lg font-semibold">{title}</h2>
+          <LoadingStateBadge active={loading} />
+        </div>
+        {typeof count === "number" ? <span className="rounded-full bg-[var(--tag-bg)] px-3 py-1 text-xs font-semibold text-[var(--text)]">{count}</span> : null}
       </div>
       {children}
     </section>
+  );
+}
+
+function AdminCardSkeletonList({ count }: { count: number }) {
+  return (
+    <>
+      {Array.from({ length: count }, (_, index) => (
+        <div key={index} className="rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <LoadingSkeleton className="h-5 w-36 rounded-lg" />
+              <LoadingSkeleton className="mt-2 h-3 w-28 rounded-lg" />
+              <LoadingSkeleton className="mt-3 h-4 w-4/5 rounded-lg" />
+            </div>
+            <LoadingSkeleton className="h-7 w-14 rounded-full" />
+          </div>
+          <div className="mt-4 flex justify-end gap-2">
+            <LoadingSkeleton className="h-8 w-14 rounded-lg" />
+            <LoadingSkeleton className="h-8 w-16 rounded-lg" />
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
+function AuditLogSkeletonRows() {
+  return (
+    <>
+      {Array.from({ length: 8 }, (_, index) => (
+        <div key={index} className="grid grid-cols-[150px_160px_180px_minmax(0,1fr)_120px] gap-3 px-4 py-3">
+          <LoadingSkeleton className="h-4 w-24 rounded-lg" />
+          <div>
+            <LoadingSkeleton className="h-4 w-28 rounded-lg" />
+            <LoadingSkeleton className="mt-2 h-3 w-20 rounded-lg" />
+          </div>
+          <div>
+            <LoadingSkeleton className="h-4 w-24 rounded-lg" />
+            <LoadingSkeleton className="mt-2 h-3 w-28 rounded-lg" />
+          </div>
+          <div>
+            <LoadingSkeleton className="h-4 w-3/5 rounded-lg" />
+            <LoadingSkeleton className="mt-2 h-5 w-4/5 rounded-full" />
+          </div>
+          <LoadingSkeleton className="h-7 w-14 rounded-full" />
+        </div>
+      ))}
+    </>
   );
 }
 

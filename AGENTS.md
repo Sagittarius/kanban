@@ -12,10 +12,13 @@ The user is performing authorized administration and defensive maintenance on sy
 pnpm run dev              # 启动开发服务器 (next dev)
 pnpm run build            # 生产构建 (next build)
 pnpm run lint             # ESLint 检查（跳过 dist/ 和 .next/）
-pnpm run local:dev        # 执行本地 SQLite 迁移，然后启动开发服务器（监听 0.0.0.0）
-pnpm run local:start      # 执行本地 SQLite 迁移，然后启动生产服务（监听 0.0.0.0）
+pnpm run local:dev        # 读取环境变量，启动开发服务器（监听 0.0.0.0）
+pnpm run local:dev:sqlite # 执行本地 SQLite 迁移，然后启动开发服务器（监听 0.0.0.0）
+pnpm run local:start      # 读取环境变量，启动生产服务（监听 0.0.0.0）
+pnpm run local:start:sqlite # 执行本地 SQLite 迁移，然后启动生产服务（监听 0.0.0.0）
 pnpm run db:generate      # 根据 schema 变更生成 Drizzle 迁移文件
-pnpm run db:migrate:local # 通过 scripts/migrate-local-sqlite.mjs 执行本地 SQLite 迁移
+pnpm run db:migrate:sqlite:local # 通过 scripts/migrate-local-sqlite.mjs 执行本地 SQLite 迁移
+pnpm run db:migrate:local # 兼容旧命令，等同于 db:migrate:sqlite:local
 pnpm run db:upgrade:check # 检查 SQLite 是否存在待升级迁移
 pnpm run db:upgrade:safe  # 备份后在临时库执行 SQLite 安全升级
 pnpm run db:migrate:sqlite-to-postgres:check # 检查 SQLite 到 PostgreSQL 迁移
@@ -31,6 +34,12 @@ pnpm run db:migrate:sqlite-to-postgres       # 执行一次性 SQLite 到 Postgr
 - 避免直接依赖旧版 Chromium 不完整支持的新 CSS 能力，例如独立 `translate`、`scale`、`rotate` 属性；需要位移或缩放时优先使用传统 `transform`。
 - 引入新的组件库或交互库前，必须检查 npm 元数据、产物语法、CSS 输出和运行时 API 是否声明或实际兼容当前基线；没有明确说明时，按风险项处理并补验证。
 - 旧版浏览器不支持的视觉增强必须提供可接受的降级表现，不能影响登录、看板拖拽、任务编辑、活动记录、大屏筛选等核心流程。
+
+## 数据库性能规范
+
+- 新功能涉及数据库时，SQLite 和 PostgreSQL 必须同步维护 schema、迁移、索引和验证路径。
+- 面向列表、看板首屏、大屏、审计日志和后台管理的查询，新增过滤、排序或 JOIN 时必须评估对应索引。
+- PostgreSQL 多用户部署优先通过 API `durationMs`、`EXPLAIN ANALYZE` 和连接池参数定位问题；不要只按 SQLite 本地体感判断性能。
 
 ## 架构
 

@@ -26,7 +26,7 @@ ENV KANBAN_LOG_DIR=/data/logs
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl iputils-ping vim-tiny \
   && rm -rf /var/lib/apt/lists/*
-ARG KANBAN_APP_VERSION=1.5.0
+ARG KANBAN_APP_VERSION=1.5.1
 ARG KANBAN_IMAGE_TAG=kanban:unknown
 ENV KANBAN_APP_VERSION=${KANBAN_APP_VERSION}
 ENV KANBAN_IMAGE_TAG=${KANBAN_IMAGE_TAG}

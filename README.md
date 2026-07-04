@@ -28,8 +28,8 @@
 
 ```bash
 pnpm install
-pnpm run db:migrate:local
-pnpm run dev
+cp .env.development.example .env.development.local
+pnpm run local:dev
 ```
 
 常用命令：
@@ -41,12 +41,14 @@ pnpm run dev:noauth       # 关闭鉴权开发
 pnpm run build            # next build
 pnpm run start            # next start
 pnpm run start:standalone # node server.js，模拟 Docker standalone 入口
-pnpm run local:dev        # SQLite 迁移后监听 0.0.0.0 启动开发服务
-pnpm run local:start      # SQLite 迁移后监听 0.0.0.0 启动生产服务
+pnpm run local:dev        # 读取环境变量，监听 0.0.0.0 启动开发服务
+pnpm run local:dev:sqlite # 执行本地 SQLite 迁移后启动开发服务
+pnpm run local:start      # 读取环境变量，监听 0.0.0.0 启动生产服务
+pnpm run local:start:sqlite # 执行本地 SQLite 迁移后启动生产服务
 pnpm run lint
 ```
 
-本地默认 SQLite 路径为 `.data/kanban.sqlite`。推荐复制 `.env.development.example` 到 `.env.development.local` 后调整：
+本地开发默认读取 `.env.development.local`。推荐复制 `.env.development.example` 后按实际数据库调整：
 
 ```bash
 cp .env.development.example .env.development.local
@@ -55,8 +57,11 @@ cp .env.development.example .env.development.local
 常用环境变量：
 
 - `KANBAN_DB_DRIVER=sqlite|postgres`
-- `KANBAN_SQLITE_PATH=.data/kanban.sqlite`
 - `POSTGRES_URL=postgres://user:password@host:5432/kanban`
+- `KANBAN_PG_POOL_MAX=10`
+- `KANBAN_PG_IDLE_TIMEOUT_MS=30000`
+- `KANBAN_PG_CONNECTION_TIMEOUT_MS=5000`
+- `KANBAN_SQLITE_PATH=.data/kanban.sqlite`
 - `KANBAN_AUTH_ENABLED=true`
 - `KANBAN_AUTH_SECRET=change-this-secret`
 - `KANBAN_COOKIE_SECURE=true`
@@ -94,11 +99,11 @@ PostgreSQL compose 使用 `postgres:16-alpine`，应用服务等待数据库 hea
 ### 镜像构建
 
 ```bash
-docker build -t halfroom/kanban:beta-1.5.0 .
+docker build -t halfroom/kanban:beta-1.5.1 .
 
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t halfroom/kanban:beta-1.5.0 \
+  -t halfroom/kanban:beta-1.5.1 \
   --push .
 ```
 
@@ -121,16 +126,16 @@ Dockerfile 使用 Next standalone 输出：
 ```bash
 docker buildx build \
   --platform linux/arm64 \
-  -t halfroom/kanban:beta-1.5.0-arm64 \
+  -t halfroom/kanban:beta-1.5.1-arm64 \
   --load .
 
-docker save halfroom/kanban:beta-1.5.0-arm64 | gzip > halfroom-kanban-beta-1.5.0-linux-arm64.tar.gz
+docker save halfroom/kanban:beta-1.5.1-arm64 | gzip > halfroom-kanban-beta-1.5.1-linux-arm64.tar.gz
 ```
 
 导入：
 
 ```bash
-gunzip -c halfroom-kanban-beta-1.5.0-linux-arm64.tar.gz | docker load
+gunzip -c halfroom-kanban-beta-1.5.1-linux-arm64.tar.gz | docker load
 ```
 
 ## 数据库维护
@@ -138,6 +143,7 @@ gunzip -c halfroom-kanban-beta-1.5.0-linux-arm64.tar.gz | docker load
 SQLite 本地迁移：
 
 ```bash
+pnpm run db:migrate:sqlite:local
 KANBAN_DB_DRIVER=sqlite KANBAN_SQLITE_PATH=.data/kanban.sqlite node scripts/migrate-local-sqlite.mjs
 ```
 
@@ -153,6 +159,13 @@ PostgreSQL 迁移：
 ```bash
 KANBAN_DB_DRIVER=postgres POSTGRES_URL=postgres://kanban:password@localhost:5432/kanban node scripts/migrate-postgres.mjs
 ```
+
+PostgreSQL 性能建议：
+
+- 生产和多人使用场景优先使用 PostgreSQL
+- 根据容器实例数和 PostgreSQL `max_connections` 调整 `KANBAN_PG_POOL_MAX`
+- 大屏、看板首屏、审计日志等高频查询已有双驱动索引迁移
+- 排查慢查询时优先查看 API 日志 `durationMs` 和 PostgreSQL `EXPLAIN ANALYZE`
 
 SQLite 到 PostgreSQL 一次性迁移：
 

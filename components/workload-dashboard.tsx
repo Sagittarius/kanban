@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import Image from "next/image";
 import { AlertTriangle, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Copyright, Edit3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
+import { LoadingSkeleton, LoadingStateBadge } from "@/components/loading-hint";
+import DashboardParticles from "@/components/dashboard-particles";
 import MemberProfileCard from "@/components/member-profile-card";
 import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
@@ -104,6 +106,10 @@ const emptyDashboard: DashboardData = {
 
 const dashboardRefreshEventKey = "kanban:dashboard-refresh";
 const dashboardThemeStorageKey = "kanban:dashboard-theme";
+const dashboardProgressSegmentCount = 48;
+const dashboardMemberProgressSegmentCount = dashboardProgressSegmentCount * 2;
+const dashboardMemberTaskProgressSegmentCount = dashboardMemberProgressSegmentCount * 2;
+const dashboardProjectTaskProgressSegmentCount = dashboardProgressSegmentCount * 2;
 
 export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean; initialTheme?: DashboardTheme; appVersion?: string }) {
   const { publicView = false, initialTheme = "dark" } = props;
@@ -115,42 +121,18 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   const [selectedTask, setSelectedTask] = useState<DashboardTask | null>(null);
   const [selectedProject, setSelectedProject] = useState<DashboardProject | null>(null);
   const [selectedMember, setSelectedMember] = useState<DashboardMember | null>(null);
-  const particles = useMemo(
-    () =>
-      Array.from({ length: 80 }, (_, index) => {
-        const shape = particleShape(index);
-        return {
-          id: index,
-          left: `${(index * 23 + 11) % 100}%`,
-          top: `${(index * 17 + 5) % 100}%`,
-          size: 2 + (index % 7) * 1.2,
-          delay: `${(index % 12) * 0.55}s`,
-          duration: `${6 + (index % 8) * 1.4}s`,
-          opacity: 0.28 + (index % 6) * 0.09,
-          tone: particleTone(index),
-          shape,
-        };
-      }),
-    []
-  );
-  const beams = useMemo(
-    () =>
-      Array.from({ length: 4 }, (_, index) => ({
-        id: index,
-        left: `${10 + index * 24}%`,
-        delay: `${index * 1.6}s`,
-        duration: `${10 + index * 2}s`,
-        rotate: `${-18 + index * 10}deg`,
-      })),
-    []
-  );
+  const [loadingDashboard, setLoadingDashboard] = useState(true);
+  const [dashboardLoaded, setDashboardLoaded] = useState(false);
 
   const meteors = useMemo(
     () =>
       [
-        { left: "-28%", top: "10%", angle: "18deg", delay: "0s", duration: "9.8s", width: "18rem" },
-        { left: "-22%", top: "42%", angle: "22deg", delay: "4.8s", duration: "15.4s", width: "20rem" },
-        { left: "-18%", top: "26%", angle: "16deg", delay: "9.4s", duration: "20.6s", width: "17rem" },
+        { left: "-30%", top: "6%", angle: "18deg", delay: "0s", duration: "9.8s", width: "18rem" },
+        { left: "-24%", top: "22%", angle: "21deg", delay: "2.6s", duration: "15.4s", width: "19rem" },
+        { left: "-28%", top: "38%", angle: "16deg", delay: "5.4s", duration: "20.6s", width: "17rem" },
+        { left: "-26%", top: "13%", angle: "24deg", delay: "7.8s", duration: "9.8s", width: "18rem" },
+        { left: "-20%", top: "48%", angle: "19deg", delay: "10.4s", duration: "15.4s", width: "20rem" },
+        { left: "-32%", top: "30%", angle: "15deg", delay: "13s", duration: "20.6s", width: "17rem" },
       ].map((meteor, index) => ({
         id: index,
         ...meteor,
@@ -176,6 +158,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    setLoadingDashboard(true);
     loadDashboard(controller.signal)
       .then((payload) => {
         if (active) setData(payload);
@@ -188,6 +171,12 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
           stack: error instanceof Error ? error.stack : undefined,
           operation: "dashboard.load",
         });
+      })
+      .finally(() => {
+        if (active) {
+          setLoadingDashboard(false);
+          setDashboardLoaded(true);
+        }
       });
     return () => {
       active = false;
@@ -209,6 +198,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
 
   useEffect(() => {
     const handleRefresh = () => {
+      setLoadingDashboard(true);
       void loadDashboard()
         .then((payload) => {
           setData(payload);
@@ -220,6 +210,10 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
             stack: error instanceof Error ? error.stack : undefined,
             operation: "dashboard.refresh",
           });
+        })
+        .finally(() => {
+          setLoadingDashboard(false);
+          setDashboardLoaded(true);
         });
     };
 
@@ -276,6 +270,11 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   const busiest = data.members[0];
   const idleCount = data.members.filter((member) => member.taskCount === 0).length;
   const rankedMembers = data.members.slice(0, 5);
+  const progressSortedMembers = useMemo(
+    () => [...data.members].sort((left, right) => right.progress - left.progress || right.taskCount - left.taskCount || left.displayName.localeCompare(right.displayName, "zh-Hans-CN")),
+    [data.members]
+  );
+  const initialDashboardLoading = loadingDashboard && !dashboardLoaded;
 
   return (
     <main data-dashboard-theme={theme} className="relative min-h-screen overflow-hidden bg-[var(--dash-bg)] text-[var(--dash-text)]">
@@ -289,44 +288,23 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
           }}
         />
       ) : null}
-      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden">
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(103,232,249,0.08),transparent_36%),radial-gradient(circle_at_78%_18%,rgba(167,139,250,0.14),transparent_28%),radial-gradient(circle_at_50%_100%,rgba(59,130,246,0.12),transparent_38%)]" />
-        <div className="absolute left-[-8%] top-[-12%] h-[420px] w-[420px] rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_68%)] blur-3xl" />
-        <div className="absolute right-[-10%] top-[18%] h-[460px] w-[460px] rounded-full bg-[radial-gradient(circle,var(--dash-hot-glow),transparent_72%)] blur-3xl" />
-        <div className="absolute bottom-[-18%] left-[26%] h-[420px] w-[520px] rounded-full bg-[radial-gradient(circle,var(--dash-rim),transparent_72%)] blur-3xl" />
+        <div className="absolute left-[-6%] top-[-10%] h-[300px] w-[300px] rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_68%)] blur-2xl opacity-80" />
+        <div className="absolute right-[-8%] top-[18%] h-[320px] w-[320px] rounded-full bg-[radial-gradient(circle,var(--dash-hot-glow),transparent_72%)] blur-2xl opacity-75" />
+        <div className="absolute bottom-[-14%] left-[28%] h-[300px] w-[380px] rounded-full bg-[radial-gradient(circle,var(--dash-rim),transparent_72%)] blur-2xl opacity-70" />
         <div className="absolute inset-x-0 top-[6%] h-[1px] bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
         <div className="absolute inset-x-0 top-[36%] h-[1px] bg-[linear-gradient(90deg,transparent,var(--dash-line),transparent)] opacity-50" />
-        {beams.map((beam) => (
-          <span
-            key={beam.id}
-            className="absolute top-[-10%] h-[140%] w-px bg-[linear-gradient(180deg,transparent,var(--dash-rim),transparent)] opacity-30 blur-[0.5px] dashboard-beam"
-            style={{ left: beam.left, animationDelay: beam.delay, animationDuration: beam.duration, transform: `rotate(${beam.rotate})` }}
-          />
-        ))}
-        {particles.map((particle) => (
-          <span
-            key={particle.id}
-            className={`absolute dashboard-particle ${particle.tone} ${particle.shape}`}
-            style={{
-              left: particle.left,
-              top: particle.top,
-              width: `${particle.size}px`,
-              height: `${particle.size}px`,
-              opacity: particle.opacity,
-              animationDelay: particle.delay,
-              animationDuration: particle.duration,
-            }}
-          />
-        ))}
+        <DashboardParticles theme={theme} className="absolute inset-0 z-[1]" />
         {/* 流星 */}
         {meteors.map((meteor) => (
           <span
             key={meteor.id}
-            className="absolute h-3"
+            className="absolute z-[3] h-3"
             style={{ left: meteor.left, top: meteor.top, width: meteor.width, transform: `rotate(${meteor.angle})`, transformOrigin: "left center" }}
           >
             <span
-              className="absolute left-0 top-0 h-full w-full opacity-0 dashboard-meteor"
+              className="absolute left-0 top-0 h-full w-full dashboard-meteor"
               style={{ animationDelay: meteor.delay, animationDuration: meteor.duration }}
             >
               <span className="absolute left-0 top-1/2 h-px w-full -translate-y-1/2 rounded-full dashboard-meteor-tail" />
@@ -338,10 +316,10 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
         <div className="absolute inset-0 opacity-[0.14] [background-image:radial-gradient(circle_at_center,rgba(255,255,255,0.22)_0,transparent_54%)]" />
       </div>
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-[2160px] flex-col gap-5 px-5 py-5 2xl:px-8">
-        <header className="relative z-30 flex flex-wrap items-center gap-4 rounded-[28px] border border-[var(--dash-line)] bg-[var(--dash-panel-strong)] px-5 py-5 shadow-[0_24px_80px_var(--dash-shadow-soft)] backdrop-blur-xl">
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-[2160px] flex-col gap-5 px-5 py-5 2xl:px-8">
+        <header className="relative z-30 flex flex-wrap items-center gap-4 rounded-[28px] border border-[var(--dash-line)] bg-[var(--dash-panel-strong)] px-5 py-5 shadow-[0_18px_48px_var(--dash-shadow-soft)]">
           <div className="pointer-events-none absolute inset-x-10 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-70" />
-          <div className="pointer-events-none absolute right-[-8%] top-[-28%] h-40 w-40 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_70%)] blur-2xl" />
+          <div className="pointer-events-none absolute right-[-8%] top-[-28%] h-32 w-32 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_70%)] blur-xl opacity-70" />
           <div className="flex items-center gap-3">
             <div className="grid h-11 w-11 place-items-center rounded-2xl border border-[var(--dash-line)] bg-[var(--dash-panel)] shadow-[0_0_0_1px_rgba(255,255,255,0.04)]">
               <ChartNoAxesCombined size={20} />
@@ -353,6 +331,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                   <span className="h-1.5 w-1.5 rounded-full bg-[var(--dash-accent)] shadow-[0_0_12px_var(--dash-accent-glow)] dashboard-pulse" />
                   实时观察
                 </div>
+                <LoadingStateBadge active={loadingDashboard} />
               </div>
             </div>
           </div>
@@ -405,34 +384,42 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
         </header>
 
         <section className="grid gap-3 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
-          <Metric label="团队" value={data.totals.teams} />
-          <Metric label="项目" value={data.totals.projects} />
-          <Metric label="人员" value={data.totals.members} />
-          <Metric label="任务" value={data.totals.tasks} />
-          <Metric label="人日" value={data.totals.workloadDays} />
-          <Metric label="平均进度" value={`${data.totals.progress}%`} />
-          <Metric label="临期" value={data.totals.dueSoon} accent="info" />
-          <Metric label="超期" value={data.totals.overdue} accent="danger" />
-          <Metric label="阻塞" value={data.totals.blocked} accent="warning" />
+          {initialDashboardLoading ? (
+            Array.from({ length: 9 }, (_, index) => <MetricSkeleton key={index} />)
+          ) : (
+            <>
+              <Metric label="团队" value={data.totals.teams} />
+              <Metric label="项目" value={data.totals.projects} />
+              <Metric label="人员" value={data.totals.members} />
+              <Metric label="任务" value={data.totals.tasks} />
+              <Metric label="人日" value={data.totals.workloadDays} />
+              <Metric label="平均进度" value={`${data.totals.progress}%`} />
+              <Metric label="临期" value={data.totals.dueSoon} accent="info" />
+              <Metric label="超期" value={data.totals.overdue} accent="danger" />
+              <Metric label="阻塞" value={data.totals.blocked} accent="warning" />
+            </>
+          )}
         </section>
 
         <section className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_400px] 2xl:grid-cols-[minmax(0,1fr)_460px]">
-          <div className="relative overflow-hidden rounded-3xl border border-[var(--dash-line)] bg-[var(--dash-panel)] p-4 shadow-[0_24px_70px_var(--dash-shadow-soft)] backdrop-blur-xl">
+          <div className="relative overflow-hidden rounded-3xl border border-[var(--dash-line)] bg-[var(--dash-panel)] p-4 shadow-[0_18px_48px_var(--dash-shadow-soft)]">
             <div className="pointer-events-none absolute inset-x-8 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
-            <div className="pointer-events-none absolute right-[-16%] top-[-18%] h-52 w-52 rounded-full bg-[radial-gradient(circle,var(--dash-hot-glow),transparent_70%)] blur-3xl opacity-50" />
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <h2 className="flex items-center gap-2 text-lg font-semibold">
-                <span className="grid h-7 w-7 place-items-center rounded-xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
-                  <UsersRound size={17} />
+            <div className="pointer-events-none absolute right-[-14%] top-[-16%] h-40 w-40 rounded-full bg-[radial-gradient(circle,var(--dash-hot-glow),transparent_70%)] blur-2xl opacity-40" />
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="flex items-center gap-2 text-base font-semibold">
+                <span className="grid h-6 w-6 place-items-center rounded-lg bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
+                  <UsersRound size={15} />
                 </span>
                 人员状态
               </h2>
-              <div className="rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-3 py-1 text-xs text-[var(--dash-muted)]">
+              <div className="rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2.5 py-0.5 text-[11px] text-[var(--dash-muted)]">
                 提测临期阈值 {data.dueSoonDays} 天
               </div>
             </div>
-            <div className="space-y-3">
-              {data.members.map((member) => {
+            <div className="space-y-2.5">
+              {initialDashboardLoading ? (
+                <DashboardMemberSkeletonList />
+              ) : progressSortedMembers.map((member) => {
                 const expanded = expandedMemberId === member.id;
                 const width = Math.min(100, Math.max(0, member.progress));
                 const previewTechStacks = member.techStacks.slice(0, 2);
@@ -440,47 +427,47 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                 return (
                   <article
                     key={member.id}
-                    className="relative overflow-hidden rounded-2xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-card),var(--dash-card-bottom))] p-4 shadow-[0_18px_38px_var(--dash-shadow)] transition duration-300 hover:-translate-y-0.5 hover:border-[var(--dash-rim)] hover:shadow-[0_22px_48px_var(--dash-shadow-soft)]"
+                    className="relative overflow-hidden rounded-2xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-card),var(--dash-card-bottom))] p-3 shadow-[0_14px_30px_var(--dash-shadow)] transition duration-300 hover:-translate-y-0.5 hover:border-[var(--dash-rim)] hover:shadow-[0_18px_38px_var(--dash-shadow-soft)]"
                   >
                     <div className="pointer-events-none absolute inset-x-6 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-50" />
-                    <div className="pointer-events-none absolute right-[-12%] top-[-16%] h-24 w-24 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_68%)] blur-2xl opacity-55" />
-                    <div className="flex items-stretch gap-4">
+                    <div className="pointer-events-none absolute right-[-10%] top-[-14%] h-20 w-20 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_68%)] blur-xl opacity-40" />
+                    <div className="flex items-stretch gap-3">
                       <button type="button" onClick={() => setSelectedMember(member)} className="shrink-0 cursor-pointer">
                         <DashboardAvatar member={member} size="member" />
                       </button>
                       <button
                         type="button"
                         onClick={() => setExpandedMemberId((current) => (current === member.id ? null : member.id))}
-                        className="flex min-w-0 flex-1 items-stretch gap-3 text-left"
+                        className="flex min-w-0 flex-1 items-stretch gap-2.5 text-left"
                       >
-                        <span className="grid min-w-0 flex-1 content-between py-0.5">
-                          <span className="flex min-w-0 items-start justify-between gap-3">
-                            <span className="truncate font-semibold text-[var(--dash-name)]">{member.displayName || member.username}</span>
-                            <span className="shrink-0 text-right text-xs text-[var(--dash-muted)]">
+                        <span className="grid min-w-0 flex-1 content-between">
+                          <span className="flex min-w-0 items-start justify-between gap-2.5">
+                            <span className="truncate text-sm font-semibold leading-5 text-[var(--dash-name)]">{member.displayName || member.username}</span>
+                            <span className="shrink-0 text-right text-xs leading-5 text-[var(--dash-muted)]">
                               {member.taskCount} 项 · {member.workloadDays} 人日 · {member.progress}%
                             </span>
                           </span>
                           <span className="flex">
-                            <span className="inline-flex rounded-full border border-[var(--dash-rim)] bg-[var(--dash-accent-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--dash-accent)]">
+                            <span className="inline-flex rounded-full border border-[var(--dash-rim)] bg-[var(--dash-accent-soft)] px-1.5 py-0.5 text-[11px] font-semibold leading-4 text-[var(--dash-accent)]">
                               {jobTitleLabel(member.jobTitle)}
                             </span>
                           </span>
-                          <span className="flex min-w-0 items-center justify-between gap-3">
-                            <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px]">
+                          <span className="flex min-w-0 items-center justify-between gap-2">
+                            <span className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] leading-4">
                               {previewTechStacks.map((item) => (
-                                <span key={item} className="rounded-full border border-[var(--dash-hot)] bg-[var(--dash-hot-glow)] px-2 py-0.5 font-semibold text-[var(--dash-hot)]">{item}</span>
+                                <span key={item} className="rounded-full border border-[var(--dash-hot)] bg-[var(--dash-hot-glow)] px-1.5 py-0.5 font-semibold text-[var(--dash-hot)]">{item}</span>
                               ))}
                               {hiddenTechStackCount > 0 ? (
-                                <span className="rounded-full border border-[var(--dash-line)] bg-[var(--dash-track)] px-2 py-0.5 font-semibold text-[var(--dash-muted)]">
+                                <span className="rounded-full border border-[var(--dash-line)] bg-[var(--dash-track)] px-1.5 py-0.5 font-semibold text-[var(--dash-muted)]">
                                   +{hiddenTechStackCount}
                                 </span>
                               ) : null}
                               {member.techStacks.length === 0 ? (
-                                <span className="rounded-full bg-[var(--dash-track)] px-2 py-0.5 text-[var(--dash-muted)]">未设置技术栈</span>
+                                <span className="rounded-full bg-[var(--dash-track)] px-1.5 py-0.5 text-[var(--dash-muted)]">未设置技术栈</span>
                               ) : null}
                             </span>
                             {member.dueSoonCount > 0 || member.overdueCount > 0 || member.blockedCount > 0 ? (
-                              <span className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5">
+                              <span className="ml-auto flex shrink-0 flex-wrap justify-end gap-1">
                                 {member.dueSoonCount > 0 ? <WarningChip active tone="info">临期 {member.dueSoonCount}</WarningChip> : null}
                                 {member.overdueCount > 0 ? <WarningChip active tone="danger">超期 {member.overdueCount}</WarningChip> : null}
                                 {member.blockedCount > 0 ? <WarningChip active tone="warning">阻塞 {member.blockedCount}</WarningChip> : null}
@@ -488,20 +475,22 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                             ) : null}
                           </span>
                         </span>
-                        {expanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                        {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       </button>
                     </div>
-                    <div className="mt-3 h-3 w-full overflow-hidden rounded-full bg-[var(--dash-track)] shadow-inner">
-                      <div
-                        className="h-full rounded-full bg-[linear-gradient(90deg,var(--dash-accent),var(--dash-hot),var(--dash-accent))] shadow-[0_0_20px_var(--dash-accent-glow)] transition-all duration-700 ease-out dashboard-energy"
-                        style={{ width: `${width}%` }}
-                      />
-                    </div>
+                    <DashboardProgressBar value={width} size="sm" segments={dashboardMemberProgressSegmentCount} className="mt-2.5" />
                     {expanded ? (
-                      <div className="mt-4 grid gap-2 border-t border-[var(--dash-line)] pt-4">
+                      <div className="mt-3 grid gap-1.5 border-t border-[var(--dash-line)] pt-3">
                         {member.tasks.length > 0 ? (
                           member.tasks.map((task) => (
-                            <DashboardCompactTaskRow key={task.id} task={task} onSelect={setSelectedTask} />
+                            <DashboardCompactTaskRow
+                              key={task.id}
+                              task={task}
+                              onSelect={setSelectedTask}
+                              progressSegments={dashboardMemberTaskProgressSegmentCount}
+                              progressTone="member-task"
+                              density="compact"
+                            />
                           ))
                         ) : (
                           <div className="rounded-xl border border-dashed border-[var(--dash-line)] px-3 py-5 text-center text-sm text-[var(--dash-muted)]">
@@ -513,7 +502,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                   </article>
                 );
               })}
-              {data.members.length === 0 ? (
+              {!initialDashboardLoading && data.members.length === 0 ? (
                 <div className="grid min-h-[280px] place-items-center rounded-2xl border border-dashed border-[var(--dash-line)] text-sm text-[var(--dash-muted)]">
                   暂无成员
                 </div>
@@ -523,16 +512,22 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
 
           <aside className="space-y-4">
             <SidePanel title="分布" icon={<ChartPie size={17} />}>
-              <div className="grid grid-cols-2 gap-3">
-                <MiniStat label="空闲" value={idleCount} />
-                <MiniStat label="最高负载" value={busiest ? busiest.taskCount : 0} />
-                <MiniStat label="临期" value={data.totals.dueSoon} tone="info" />
-                <MiniStat label="超期" value={data.totals.overdue} tone="danger" />
-              </div>
+              {initialDashboardLoading ? (
+                <DashboardSideSkeleton variant="stats" />
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <MiniStat label="空闲" value={idleCount} />
+                  <MiniStat label="最高负载" value={busiest ? busiest.taskCount : 0} />
+                  <MiniStat label="临期" value={data.totals.dueSoon} tone="info" />
+                  <MiniStat label="超期" value={data.totals.overdue} tone="danger" />
+                </div>
+              )}
             </SidePanel>
             <SidePanel title="负载排行" icon={<Trophy size={17} />}>
               <div className="space-y-3">
-                {rankedMembers.length > 0 ? (
+                {initialDashboardLoading ? (
+                  <DashboardSideSkeleton variant="rank" />
+                ) : rankedMembers.length > 0 ? (
                   rankedMembers.map((member, index) => (
                     <button
                       key={member.id}
@@ -540,24 +535,31 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                       onClick={() => setSelectedMember(member)}
                       className="w-full rounded-2xl bg-[var(--dash-card)] px-3 py-3 text-left shadow-[0_12px_28px_var(--dash-shadow)] transition hover:border-[var(--dash-rim)] hover:shadow-[0_20px_38px_var(--dash-shadow-soft)]"
                     >
-                      <div className="flex items-center gap-3">
-                        <div className="grid h-8 w-8 place-items-center rounded-xl bg-[var(--dash-accent-soft)] text-xs font-semibold text-[var(--dash-accent)]">
-                          {index + 1}
-                        </div>
-                        <DashboardAvatar member={member} size="sm" />
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center justify-between gap-3">
-                            <span className="truncate text-sm font-semibold">{member.displayName || member.username}</span>
-                            <span className="text-xs text-[var(--dash-muted)]">{member.workloadDays} 人日</span>
-                          </div>
-                          <div className="mt-1 text-[11px] text-[var(--dash-muted)]">{jobTitleLabel(member.jobTitle)}</div>
-                          <div className="mt-2 h-2 overflow-hidden rounded-full bg-[var(--dash-track)]">
-                            <div
-                              className="h-full rounded-full bg-[linear-gradient(90deg,var(--dash-hot),var(--dash-accent))] transition-all duration-700 ease-out"
-                              style={{ width: `${Math.min(100, Math.max(14, member.progress))}%` }}
-                            />
-                          </div>
-                        </div>
+	                      <div className="flex items-stretch gap-3">
+	                        <span className="grid min-h-11 w-11 shrink-0 place-items-center rounded-2xl border border-[var(--dash-rim)] bg-[var(--dash-accent-soft)] text-xl font-semibold tabular-nums text-[var(--dash-accent)] shadow-[0_8px_20px_var(--dash-shadow)]">
+	                          {index + 1}
+	                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex min-w-0 items-start gap-3">
+                            <DashboardAvatar member={member} />
+                            <span className="grid h-11 min-w-0 flex-1 content-between">
+                              <span className="flex min-w-0 items-start justify-between gap-3">
+                                <span className="truncate text-xs font-semibold text-[var(--dash-name)]">{member.displayName || member.username}</span>
+                                <span className="shrink-0 text-right text-xs text-[var(--dash-muted)]">
+                                  {member.taskCount} 项 · {member.workloadDays} 人日 · {member.progress}%
+                                </span>
+                              </span>
+                              <span className="flex">
+                                <span className="inline-flex rounded-full border border-[var(--dash-rim)] bg-[var(--dash-accent-soft)] px-2 py-0.5 text-[11px] font-semibold text-[var(--dash-accent)]">
+                                  {jobTitleLabel(member.jobTitle)}
+                                </span>
+                              </span>
+                            </span>
+                          </span>
+                          <span className="mt-2 block">
+                            <DashboardProgressBar value={member.progress} size="sm" />
+                          </span>
+                        </span>
                       </div>
                     </button>
                   ))
@@ -568,7 +570,9 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
             </SidePanel>
             <SidePanel title="任务池" icon={<ClipboardList size={17} />}>
               <div className="space-y-3">
-                {data.projects.slice(0, 10).map((project) => (
+                {initialDashboardLoading ? (
+                  <DashboardSideSkeleton variant="project" />
+                ) : data.projects.slice(0, 10).map((project) => (
                   <button
                     key={project.id}
                     type="button"
@@ -589,7 +593,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                     </span>
                   </button>
                 ))}
-                {data.projects.length === 0 ? <div className="py-8 text-center text-sm text-[var(--dash-muted)]">暂无项目</div> : null}
+                {!initialDashboardLoading && data.projects.length === 0 ? <div className="py-8 text-center text-sm text-[var(--dash-muted)]">暂无项目</div> : null}
               </div>
             </SidePanel>
           </aside>
@@ -654,21 +658,131 @@ function Metric({
 }) {
   return (
     <div
-      className={`relative overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] px-3 py-3 shadow-[0_14px_30px_var(--dash-shadow)] backdrop-blur-xl transition duration-300 hover:-translate-y-0.5 ${metricToneClass(accent)}`}
+      className={`relative overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] px-3 py-3 shadow-[0_10px_22px_var(--dash-shadow)] transition duration-300 hover:-translate-y-0.5 ${metricToneClass(accent)}`}
     >
       <span className="pointer-events-none absolute inset-x-5 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
-      <span className="pointer-events-none absolute right-[-18%] top-[-20%] h-20 w-20 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_72%)] blur-2xl opacity-45" />
+      <span className="pointer-events-none absolute right-[-16%] top-[-18%] h-16 w-16 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_72%)] blur-xl opacity-35" />
       <p className="text-xs text-[var(--dash-muted)]">{label}</p>
       <p className="mt-1 text-xl font-semibold 2xl:text-2xl">{value}</p>
     </div>
   );
 }
 
+function DashboardProgressBar({
+  value,
+  size = "md",
+  segments = dashboardProgressSegmentCount,
+  tone = "default",
+  className = "",
+}: {
+  value: number;
+  size?: "xs" | "sm" | "md";
+  segments?: number;
+  tone?: "default" | "member-task";
+  className?: string;
+}) {
+  const normalized = Math.min(100, Math.max(0, value));
+  const segmentCount = Math.max(1, Math.round(segments));
+  const filledSegments = normalized > 0
+    ? Math.max(1, Math.round((normalized / 100) * segmentCount))
+    : 0;
+  const sizeClass = size === "xs" ? "h-1.5 gap-px" : size === "sm" ? "h-2 gap-px" : "h-3 gap-[2px]";
+
+  return (
+    <div
+      className={`dashboard-progress-track is-${tone} flex w-full ${sizeClass} ${className}`}
+      role="progressbar"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(normalized)}
+    >
+      {Array.from({ length: segmentCount }, (_, index) => (
+        <span
+          key={index}
+          className={`dashboard-progress-segment ${index < filledSegments ? "is-filled" : ""}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+function MetricSkeleton() {
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel-strong),var(--dash-panel))] px-3 py-3 shadow-[0_10px_22px_var(--dash-shadow)]">
+      <span className="pointer-events-none absolute inset-x-5 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
+      <LoadingSkeleton className="h-3 w-14 rounded-full" />
+      <LoadingSkeleton className="mt-3 h-7 w-20 rounded-lg" />
+    </div>
+  );
+}
+
+function DashboardMemberSkeletonList() {
+  return (
+    <>
+      {Array.from({ length: 5 }, (_, index) => (
+        <article
+          key={index}
+          className="relative overflow-hidden rounded-2xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-card),var(--dash-card-bottom))] p-4 shadow-[0_18px_38px_var(--dash-shadow)]"
+        >
+          <div className="flex items-stretch gap-4">
+            <LoadingSkeleton className="h-[72px] w-[72px] shrink-0 rounded-2xl" />
+            <div className="grid min-w-0 flex-1 content-between py-0.5">
+              <div className="flex items-start justify-between gap-3">
+                <LoadingSkeleton className="h-5 w-36 rounded-lg" />
+                <LoadingSkeleton className="h-4 w-28 rounded-lg" />
+              </div>
+              <LoadingSkeleton className="h-5 w-20 rounded-full" />
+              <div className="flex items-center gap-2">
+                <LoadingSkeleton className="h-5 w-16 rounded-full" />
+                <LoadingSkeleton className="h-5 w-16 rounded-full" />
+                <LoadingSkeleton className="h-5 w-24 rounded-full" />
+              </div>
+            </div>
+          </div>
+          <LoadingSkeleton className="mt-3 h-3 w-full rounded-full" />
+        </article>
+      ))}
+    </>
+  );
+}
+
+function DashboardSideSkeleton({ variant }: { variant: "stats" | "rank" | "project" }) {
+  if (variant === "stats") {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={index} className="rounded-2xl bg-[var(--dash-card)] px-4 py-3 shadow-[0_14px_30px_var(--dash-shadow)]">
+            <LoadingSkeleton className="h-3 w-12 rounded-full" />
+            <LoadingSkeleton className="mt-3 h-7 w-14 rounded-lg" />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {Array.from({ length: variant === "rank" ? 5 : 6 }, (_, index) => (
+        <div key={index} className="rounded-2xl bg-[var(--dash-card)] px-3 py-3 shadow-[0_12px_28px_var(--dash-shadow)]">
+          <div className="flex items-center gap-3">
+            <LoadingSkeleton className="h-8 w-8 shrink-0 rounded-xl" />
+            <div className="min-w-0 flex-1">
+              <LoadingSkeleton className="h-4 w-3/5 rounded-lg" />
+              <LoadingSkeleton className="mt-2 h-3 w-4/5 rounded-lg" />
+              {variant === "rank" ? <LoadingSkeleton className="mt-3 h-2 w-full rounded-full" /> : null}
+            </div>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 function SidePanel({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
   return (
-    <section className="relative overflow-hidden rounded-3xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] p-4 shadow-[0_18px_48px_var(--dash-shadow)] backdrop-blur-xl">
+    <section className="relative overflow-hidden rounded-3xl border border-[var(--dash-line)] bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] p-4 shadow-[0_14px_34px_var(--dash-shadow)]">
       <span className="pointer-events-none absolute inset-x-8 top-0 h-px bg-[linear-gradient(90deg,transparent,var(--dash-rim),transparent)] opacity-60" />
-      <span className="pointer-events-none absolute left-[-16%] top-[-10%] h-24 w-24 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_70%)] blur-2xl opacity-35" />
+      <span className="pointer-events-none absolute left-[-14%] top-[-8%] h-20 w-20 rounded-full bg-[radial-gradient(circle,var(--dash-accent-glow),transparent_70%)] blur-xl opacity-30" />
       <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold">
         <span className="grid h-7 w-7 place-items-center rounded-xl bg-[var(--dash-accent-soft)] text-[var(--dash-accent)]">
           {icon}
@@ -703,11 +817,11 @@ function DashboardAvatar({
       : size === "lg"
         ? "h-[66px] w-[66px] rounded-2xl"
         : size === "member"
-          ? "h-[84px] w-[84px] rounded-2xl"
+          ? "h-[72px] w-[72px] rounded-2xl"
           : size === "xl"
             ? "h-[88px] w-[88px] rounded-2xl"
             : "h-11 w-11 rounded-2xl";
-  const imageSize = size === "sm" ? 32 : size === "lg" ? 66 : size === "member" ? 84 : size === "xl" ? 88 : 44;
+  const imageSize = size === "sm" ? 32 : size === "lg" ? 66 : size === "member" ? 72 : size === "xl" ? 88 : 44;
   if (avatar) {
     return (
       <Image
@@ -715,13 +829,51 @@ function DashboardAvatar({
         alt={member.displayName || member.username}
         width={imageSize}
         height={imageSize}
+        preload={size === "member"}
+        loading={size === "member" ? "eager" : "lazy"}
+        fetchPriority={size === "member" ? "high" : undefined}
         className={`${sizeClass} shrink-0 border border-[var(--dash-line)] object-cover shadow-[0_8px_20px_var(--dash-shadow)]`}
       />
     );
   }
   return (
-    <span className={`grid shrink-0 place-items-center bg-[var(--dash-accent-soft)] font-semibold text-[var(--dash-accent)] ${size === "sm" ? "h-8 w-8 rounded-xl text-xs" : size === "lg" ? "h-[66px] w-[66px] rounded-2xl text-lg" : size === "member" ? "h-[84px] w-[84px] rounded-2xl text-xl" : size === "xl" ? "h-[88px] w-[88px] rounded-2xl text-lg" : "h-11 w-11 rounded-2xl text-sm"}`}>
+    <span className={`grid shrink-0 place-items-center bg-[var(--dash-accent-soft)] font-semibold text-[var(--dash-accent)] ${size === "sm" ? "h-8 w-8 rounded-xl text-xs" : size === "lg" ? "h-[66px] w-[66px] rounded-2xl text-lg" : size === "member" ? "h-[72px] w-[72px] rounded-2xl text-lg" : size === "xl" ? "h-[88px] w-[88px] rounded-2xl text-lg" : "h-11 w-11 rounded-2xl text-sm"}`}>
       {(member.displayName || member.username).slice(0, 1).toUpperCase()}
+    </span>
+  );
+}
+
+function DashboardMemberIdentity({
+  member,
+  displayName,
+  meta,
+  size = "md",
+}: {
+  member: DashboardMember | null;
+  displayName: string;
+  meta: string;
+  size?: "sm" | "md";
+}) {
+  const avatarSize = size === "sm" ? "sm" : "md";
+  const gapClass = size === "sm" ? "gap-2" : "gap-3";
+  const heightClass = size === "sm" ? "h-8" : "h-11";
+  const placeholderClass = size === "sm"
+    ? "h-8 w-8 rounded-xl text-xs"
+    : "h-11 w-11 rounded-2xl text-sm";
+  const nameClass = size === "sm" ? "text-xs" : "text-sm";
+  const metaClass = size === "sm" ? "text-[10px]" : "text-[11px]";
+
+  return (
+    <span className={`flex min-w-0 items-center ${gapClass}`}>
+      {member ? (
+        <DashboardAvatar member={member} size={avatarSize} />
+      ) : (
+        <span className={`grid shrink-0 place-items-center bg-[var(--dash-track)] text-[var(--dash-muted)] ${placeholderClass}`}>-</span>
+      )}
+      <span className={`grid min-w-0 content-center ${heightClass}`}>
+        <span className={`block truncate font-semibold text-[var(--dash-text)] ${nameClass}`}>{displayName}</span>
+        <span className={`block truncate text-[var(--dash-muted)] ${metaClass}`}>{meta}</span>
+      </span>
     </span>
   );
 }
@@ -749,13 +901,13 @@ function MemberInline({
           }
         }}
         disabled={!member}
-        className="mt-2 flex w-full items-center gap-2 rounded-xl text-left transition enabled:hover:bg-[var(--dash-hover)]"
+        className="mt-2 flex w-full items-center gap-3 rounded-xl text-left transition enabled:hover:bg-[var(--dash-hover)]"
       >
-        {member ? <DashboardAvatar member={member} size="sm" /> : <span className="grid h-8 w-8 place-items-center rounded-xl bg-[var(--dash-track)] text-xs text-[var(--dash-muted)]">-</span>}
-        <span className="min-w-0">
-          <span className="block truncate text-sm font-semibold text-[var(--dash-text)]">{displayName}</span>
-          <span className="block truncate text-[11px] text-[var(--dash-muted)]">{member ? `@${member.username}` : "未匹配成员"}</span>
-        </span>
+        <DashboardMemberIdentity
+          member={member}
+          displayName={displayName}
+          meta={member ? `@${member.username}` : "未匹配成员"}
+        />
       </button>
     </div>
   );
@@ -832,10 +984,16 @@ function DashboardCompactTaskRow({
   task,
   onSelect,
   showTags = true,
+  progressSegments = dashboardProgressSegmentCount,
+  progressTone = "default",
+  density = "normal",
 }: {
   task: DashboardTask;
   onSelect: (task: DashboardTask) => void;
   showTags?: boolean;
+  progressSegments?: number;
+  progressTone?: "default" | "member-task";
+  density?: "normal" | "compact";
 }) {
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key === "Enter" || event.key === " ") {
@@ -851,21 +1009,21 @@ function DashboardCompactTaskRow({
       title={[task.title, task.projectName, task.description].filter(Boolean).join(" · ")}
       onClick={() => onSelect(task)}
       onKeyDown={handleKeyDown}
-      className={`group flex w-full cursor-pointer flex-col overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] px-3 py-2.5 text-sm transition ${taskWarningFrameClass(task)}`}
+      className={`group flex w-full cursor-pointer flex-col overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] transition ${density === "compact" ? "px-2.5 py-2 text-xs" : "px-3 py-2.5 text-sm"} ${taskWarningFrameClass(task)}`}
     >
-      <span className="flex w-full min-w-0 items-start gap-3 text-left">
+      <span className={`flex w-full min-w-0 items-start text-left ${density === "compact" ? "gap-2" : "gap-3"}`}>
         <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <span className="shrink-0 truncate font-medium text-[var(--dash-text)]">{task.title}</span>
-          <span className="shrink-0 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2 py-0.5 text-[11px] font-semibold text-[var(--dash-muted)]">
+          <span className={`shrink-0 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2 py-0.5 font-semibold text-[var(--dash-muted)] ${density === "compact" ? "text-xs" : "text-[11px]"}`}>
             {task.projectName}
           </span>
           {task.description ? (
-            <span className="min-w-0 max-w-[34%] truncate text-[11px] text-[var(--dash-muted)]">
+            <span className={`min-w-0 max-w-[34%] truncate text-[var(--dash-muted)] ${density === "compact" ? "text-xs" : "text-[11px]"}`}>
               {task.description}
             </span>
           ) : null}
           {showTags ? (
-            <span className="flex min-w-0 flex-wrap items-center gap-2 text-[11px] text-[var(--dash-muted)]">
+            <span className={`flex min-w-0 flex-wrap items-center text-[var(--dash-muted)] ${density === "compact" ? "gap-1.5 text-xs" : "gap-2 text-[11px]"}`}>
               {task.tags.slice(0, 2).map((tag) => (
                 <span
                   key={tag}
@@ -883,20 +1041,15 @@ function DashboardCompactTaskRow({
             </span>
           ) : null}
         </span>
-        <span className="ml-auto flex shrink-0 flex-wrap justify-end gap-1.5 whitespace-nowrap">
+        <span className={`ml-auto flex shrink-0 flex-wrap justify-end whitespace-nowrap ${density === "compact" ? "gap-1" : "gap-1.5"}`}>
           {task.dueSoon ? <WarningDot tone="info" label="临期" /> : null}
           {task.overdue ? <WarningDot tone="danger" label="超期" /> : null}
           {task.blocked ? <WarningDot tone="warning" label="阻塞" /> : null}
         </span>
       </span>
-      <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_42px] items-center gap-2">
-        <div className="h-1.5 min-w-0 overflow-hidden rounded-full bg-[var(--dash-track)]">
-          <div
-            className="h-full rounded-full bg-[var(--dash-accent)]"
-            style={{ width: `${Math.min(100, Math.max(0, task.progress))}%` }}
-          />
-        </div>
-        <span className="text-right text-[11px] font-semibold text-[var(--dash-muted)]">{task.progress}%</span>
+      <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_42px] items-center gap-2 ${density === "compact" ? "mt-1.5" : "mt-2"}`}>
+        <DashboardProgressBar value={task.progress} size="xs" segments={progressSegments} tone={progressTone} />
+        <span className={`text-right font-semibold text-[var(--dash-muted)] ${density === "compact" ? "text-xs" : "text-[11px]"}`}>{task.progress}%</span>
       </div>
     </div>
   );
@@ -940,7 +1093,13 @@ function DashboardProjectDialog({
             <div className="space-y-2">
               {project.tasks.length > 0 ? (
                 project.tasks.map((task) => (
-                  <DashboardCompactTaskRow key={task.id} task={task} onSelect={onSelectTask} showTags={false} />
+                  <DashboardCompactTaskRow
+                    key={task.id}
+                    task={task}
+                    onSelect={onSelectTask}
+                    showTags={false}
+                    progressSegments={dashboardProjectTaskProgressSegmentCount}
+                  />
                 ))
               ) : (
                 <div className="rounded-xl border border-dashed border-[var(--dash-line)] px-3 py-5 text-center text-sm text-[var(--dash-muted)]">
@@ -1018,12 +1177,7 @@ function ProgressInfo({ value }: { value: number }) {
         <span>进度</span>
         <span className="font-semibold text-[var(--dash-text)]">{width}%</span>
       </div>
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-[var(--dash-track)]">
-        <div
-          className="h-full rounded-full bg-[linear-gradient(90deg,var(--dash-accent),var(--dash-hot))] transition-all duration-700 ease-out"
-          style={{ width: `${width}%` }}
-        />
-      </div>
+      <DashboardProgressBar value={width} size="sm" className="mt-3" />
     </div>
   );
 }
@@ -1094,16 +1248,6 @@ function findDashboardMemberByName(members: DashboardMember[], name: string) {
   );
 }
 
-function particleShape(index: number) {
-  const shapes = ["rounded-full", "rounded-full", "rounded-full", "rounded-sm", "rounded-sm", "rounded-full scale-x-[0.4]", "rounded-full"] as const;
-  return shapes[index % shapes.length];
-}
-
-function particleTone(index: number) {
-  const tones = ["particle-cyan", "particle-violet", "particle-blue", "particle-amber", "particle-rose", "particle-teal"] as const;
-  return tones[index % tones.length];
-}
-
 function metricToneClass(tone: "default" | "info" | "danger" | "warning") {
   if (tone === "info") return "border-[var(--dash-info-line)] hover:border-[var(--dash-info-rim)]";
   if (tone === "danger") return "border-[var(--dash-danger-line)] hover:border-[var(--dash-danger-rim)]";
@@ -1138,17 +1282,27 @@ const dashboardThemeCss = `
     --dash-line: rgba(148, 163, 184, 0.22);
     --dash-hover: rgba(51, 65, 85, 0.8);
     --dash-track: rgba(148, 163, 184, 0.18);
+    --dash-progress-segment: rgba(148, 163, 184, 0.2);
+    --dash-progress-segment-border: rgba(255, 255, 255, 0.08);
+    --dash-progress-fill: #67e8f9;
+    --dash-progress-fill-border: rgba(255, 255, 255, 0.18);
+    --dash-progress-fill-member-task: #a5f3fc;
+    --dash-progress-fill-member-task-border: rgba(224, 242, 254, 0.22);
     --scrollbar-track: rgba(15, 23, 42, 0.74);
     --scrollbar-thumb: rgba(138, 162, 189, 0.48);
     --scrollbar-thumb-hover: rgba(103, 232, 249, 0.7);
+    --loading-skeleton-bg: rgba(148, 163, 184, 0.18);
+    --loading-skeleton-sheen: rgba(255, 255, 255, 0.14);
+    --loading-overlay-bg: rgba(7, 11, 20, 0.72);
     --dash-accent: #67e8f9;
     --dash-accent-soft: rgba(103, 232, 249, 0.12);
     --dash-accent-glow: rgba(103, 232, 249, 0.28);
-    --dash-accent-text: #04111d;
-    --dash-hot: #a78bfa;
-    --dash-hot-glow: rgba(167, 139, 250, 0.22);
-    --dash-rim: rgba(103, 232, 249, 0.32);
-    --dash-shadow: rgba(0, 0, 0, 0.28);
+	    --dash-accent-text: #04111d;
+	    --dash-hot: #a78bfa;
+	    --dash-hot-glow: rgba(167, 139, 250, 0.22);
+	    --dash-rim: rgba(103, 232, 249, 0.32);
+	    --dash-particles-opacity: 0.94;
+	    --dash-shadow: rgba(0, 0, 0, 0.28);
     --dash-shadow-soft: rgba(0, 0, 0, 0.44);
     --dash-info: #fb923c;
     --dash-info-soft: rgba(251, 146, 60, 0.18);
@@ -1162,18 +1316,6 @@ const dashboardThemeCss = `
     --dash-warning-soft: rgba(251, 191, 36, 0.14);
     --dash-warning-line: rgba(251, 191, 36, 0.18);
     --dash-warning-rim: rgba(251, 191, 36, 0.38);
-    --dash-particle-cyan: rgba(186, 230, 253, 0.95);
-    --dash-particle-cyan-glow: rgba(103, 232, 249, 0.42);
-    --dash-particle-violet: rgba(221, 214, 254, 0.92);
-    --dash-particle-violet-glow: rgba(167, 139, 250, 0.42);
-    --dash-particle-blue: rgba(191, 219, 254, 0.94);
-    --dash-particle-blue-glow: rgba(59, 130, 246, 0.4);
-    --dash-particle-amber: rgba(253, 230, 138, 0.88);
-    --dash-particle-amber-glow: rgba(251, 191, 36, 0.34);
-    --dash-particle-rose: rgba(253, 164, 175, 0.88);
-    --dash-particle-rose-glow: rgba(244, 114, 182, 0.34);
-    --dash-particle-teal: rgba(153, 246, 228, 0.88);
-    --dash-particle-teal-glow: rgba(20, 184, 166, 0.34);
     --dash-meteor-tail-a: rgba(255, 255, 255, 0.22);
     --dash-meteor-tail-b: rgba(191, 219, 254, 0.88);
     --dash-meteor-tail-c: rgba(255, 255, 255, 0.98);
@@ -1194,17 +1336,27 @@ const dashboardThemeCss = `
     --dash-line: rgba(15, 23, 42, 0.14);
     --dash-hover: #f3f7fd;
     --dash-track: rgba(15, 23, 42, 0.1);
+    --dash-progress-segment: rgba(15, 23, 42, 0.12);
+    --dash-progress-segment-border: rgba(15, 23, 42, 0.08);
+    --dash-progress-fill: #0f766e;
+    --dash-progress-fill-border: rgba(15, 23, 42, 0.1);
+    --dash-progress-fill-member-task: #0d9488;
+    --dash-progress-fill-member-task-border: rgba(15, 118, 110, 0.16);
     --scrollbar-track: rgba(226, 232, 240, 0.76);
     --scrollbar-thumb: rgba(91, 107, 132, 0.46);
     --scrollbar-thumb-hover: rgba(15, 118, 110, 0.68);
+    --loading-skeleton-bg: rgba(15, 23, 42, 0.1);
+    --loading-skeleton-sheen: rgba(255, 255, 255, 0.78);
+    --loading-overlay-bg: rgba(238, 244, 251, 0.76);
     --dash-accent: #0f766e;
     --dash-accent-soft: rgba(15, 118, 110, 0.12);
     --dash-accent-glow: rgba(15, 118, 110, 0.18);
-    --dash-accent-text: #ffffff;
-    --dash-hot: #2563eb;
-    --dash-hot-glow: rgba(37, 99, 235, 0.18);
-    --dash-rim: rgba(37, 99, 235, 0.26);
-    --dash-shadow: rgba(15, 23, 42, 0.1);
+	    --dash-accent-text: #ffffff;
+	    --dash-hot: #2563eb;
+	    --dash-hot-glow: rgba(37, 99, 235, 0.18);
+	    --dash-rim: rgba(37, 99, 235, 0.26);
+	    --dash-particles-opacity: 0.9;
+	    --dash-shadow: rgba(15, 23, 42, 0.1);
     --dash-shadow-soft: rgba(15, 23, 42, 0.16);
     --dash-info: #ea580c;
     --dash-info-soft: rgba(234, 88, 12, 0.12);
@@ -1218,18 +1370,6 @@ const dashboardThemeCss = `
     --dash-warning-soft: rgba(217, 119, 6, 0.12);
     --dash-warning-line: rgba(217, 119, 6, 0.14);
     --dash-warning-rim: rgba(217, 119, 6, 0.26);
-    --dash-particle-cyan: rgba(14, 116, 144, 0.92);
-    --dash-particle-cyan-glow: rgba(15, 118, 110, 0.28);
-    --dash-particle-violet: rgba(109, 40, 217, 0.8);
-    --dash-particle-violet-glow: rgba(167, 139, 250, 0.24);
-    --dash-particle-blue: rgba(37, 99, 235, 0.88);
-    --dash-particle-blue-glow: rgba(37, 99, 235, 0.28);
-    --dash-particle-amber: rgba(217, 119, 6, 0.8);
-    --dash-particle-amber-glow: rgba(245, 158, 11, 0.24);
-    --dash-particle-rose: rgba(225, 29, 72, 0.78);
-    --dash-particle-rose-glow: rgba(244, 114, 182, 0.22);
-    --dash-particle-teal: rgba(13, 148, 136, 0.8);
-    --dash-particle-teal-glow: rgba(20, 184, 166, 0.22);
     --dash-meteor-tail-a: rgba(14, 116, 144, 0.16);
     --dash-meteor-tail-b: rgba(37, 99, 235, 0.68);
     --dash-meteor-tail-c: rgba(255, 255, 255, 0.92);
@@ -1237,76 +1377,57 @@ const dashboardThemeCss = `
     --dash-meteor-shadow-soft: rgba(37, 99, 235, 0.24);
     --dash-meteor-shadow-strong: rgba(125, 211, 252, 0.34);
   }
-  .dashboard-particle {
-    animation: dashboard-float linear infinite;
-  }
   .dashboard-filter-panel {
     background: var(--dash-popover);
   }
-  .dashboard-particle.particle-cyan {
-    background: var(--dash-particle-cyan);
-    box-shadow: 0 0 18px var(--dash-particle-cyan-glow);
+	  .dashboard-particles {
+	    opacity: var(--dash-particles-opacity);
+	  }
+	  .dashboard-particles canvas {
+	    display: block;
+	    height: 100%;
+	    width: 100%;
+	  }
+	  .dashboard-pulse {
+	    animation: dashboard-pulse 2.8s ease-in-out infinite;
+	  }
+  .dashboard-progress-track {
+    align-items: stretch;
   }
-  .dashboard-particle.particle-violet {
-    background: var(--dash-particle-violet);
-    box-shadow: 0 0 18px var(--dash-particle-violet-glow);
+  .dashboard-progress-segment {
+    min-width: 0;
+    flex: 1 1 0;
+    border-radius: 2px;
+    border: 1px solid var(--dash-progress-segment-border);
+    background: var(--dash-progress-segment);
   }
-  .dashboard-particle.particle-blue {
-    background: var(--dash-particle-blue);
-    box-shadow: 0 0 18px var(--dash-particle-blue-glow);
+  .dashboard-progress-segment.is-filled {
+    border-color: var(--dash-progress-fill-border);
+    background: var(--dash-progress-fill);
   }
-  .dashboard-particle.particle-amber {
-    background: var(--dash-particle-amber);
-    box-shadow: 0 0 18px var(--dash-particle-amber-glow);
+  .dashboard-progress-track.is-member-task .dashboard-progress-segment.is-filled {
+    border-color: var(--dash-progress-fill-member-task-border);
+    background: var(--dash-progress-fill-member-task);
   }
-  .dashboard-particle.particle-rose {
-    background: var(--dash-particle-rose);
-    box-shadow: 0 0 18px var(--dash-particle-rose-glow);
-  }
-  .dashboard-particle.particle-teal {
-    background: var(--dash-particle-teal);
-    box-shadow: 0 0 18px var(--dash-particle-teal-glow);
-  }
-  .dashboard-beam {
-    animation: dashboard-drift linear infinite;
-    transform-origin: top center;
-  }
-  .dashboard-pulse {
-    animation: dashboard-pulse 2.8s ease-in-out infinite;
-  }
-  .dashboard-energy {
-    background-size: 200% 100%;
-    animation: dashboard-energy 4.8s linear infinite;
-  }
-  @keyframes dashboard-float {
-    0% { transform: translate3d(0, 0, 0) scale(0.95); }
-    50% { transform: translate3d(0, -16px, 0) scale(1.08); }
-    100% { transform: translate3d(0, 0, 0) scale(0.95); }
-  }
-  @keyframes dashboard-drift {
-    0% { opacity: 0; transform: translate3d(0, -40px, 0) scaleY(0.85); }
-    25% { opacity: 0.32; }
-    75% { opacity: 0.22; }
-    100% { opacity: 0; transform: translate3d(0, 42px, 0) scaleY(1.08); }
-  }
-  @keyframes dashboard-pulse {
-    0%, 100% { transform: scale(0.9); opacity: 0.72; }
-    50% { transform: scale(1.15); opacity: 1; }
-  }
-  @keyframes dashboard-energy {
-    0% { background-position: 0% 50%; }
-    100% { background-position: 200% 50%; }
-  }
-  @keyframes dashboard-meteor {
+	  @keyframes dashboard-pulse {
+	    0%, 100% { transform: scale(0.9); opacity: 0.72; }
+	    50% { transform: scale(1.15); opacity: 1; }
+	  }
+	  @keyframes dashboard-meteor {
     0% { opacity: 0; transform: translate3d(0, 0, 0); }
-    14% { opacity: 0.95; }
-    68% { opacity: 0.82; }
+    18% { opacity: 0.9; }
+    72% { opacity: 0.82; }
     100% { opacity: 0; transform: translate3d(150vw, 0, 0); }
   }
   .dashboard-meteor {
     animation: dashboard-meteor ease-in-out infinite;
     will-change: transform, opacity;
   }
+	  @media (prefers-reduced-motion: reduce) {
+	    .dashboard-pulse {
+	      animation: none;
+	    }
+	  }
   .dashboard-meteor-tail {
     background: linear-gradient(
       90deg,
@@ -1316,10 +1437,10 @@ const dashboardThemeCss = `
       var(--dash-meteor-tail-c) 84%,
       transparent 100%
     );
-    box-shadow: 0 0 16px var(--dash-meteor-shadow-soft), 0 0 34px var(--dash-meteor-shadow-strong);
+    box-shadow: 0 0 10px var(--dash-meteor-shadow-soft);
   }
   .dashboard-meteor-head {
     background: var(--dash-meteor-head);
-    box-shadow: 0 0 18px var(--dash-meteor-shadow-strong), 0 0 38px var(--dash-meteor-shadow-soft);
+    box-shadow: 0 0 12px var(--dash-meteor-shadow-strong);
   }
 `;
