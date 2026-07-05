@@ -1116,21 +1116,21 @@ function DashboardCompactTaskRow({
       title={[task.title, task.projectName, task.description].filter(Boolean).join(" · ")}
       onClick={() => onSelect(task)}
       onKeyDown={handleKeyDown}
-      className={`group flex w-full cursor-pointer flex-col overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] transition ${density === "compact" ? "px-2.5 py-2 text-xs" : "px-3 py-2.5 text-sm"} ${taskWarningFrameClass(task)}`}
+      className={`group flex w-full cursor-pointer flex-col overflow-hidden rounded-2xl border bg-[linear-gradient(180deg,var(--dash-panel),var(--dash-card-bottom))] text-sm transition ${density === "compact" ? "px-2.5 py-2" : "px-3 py-2.5"} ${taskWarningFrameClass(task)}`}
     >
       <span className={`flex w-full min-w-0 items-start text-left ${density === "compact" ? "gap-2" : "gap-3"}`}>
         <span className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
           <span className="shrink-0 truncate font-medium text-[var(--dash-text)]">{task.title}</span>
-          <span className={`shrink-0 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2 py-0.5 font-semibold text-[var(--dash-muted)] ${density === "compact" ? "text-xs" : "text-[11px]"}`}>
+          <span className="shrink-0 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2 py-0.5 text-[11px] font-semibold text-[var(--dash-muted)]">
             {task.projectName}
           </span>
           {task.description ? (
-            <span className={`min-w-0 max-w-[34%] truncate text-[var(--dash-muted)] ${density === "compact" ? "text-xs" : "text-[11px]"}`}>
+            <span className="min-w-0 max-w-[34%] truncate text-[11px] text-[var(--dash-muted)]">
               {task.description}
             </span>
           ) : null}
           {showTags ? (
-            <span className={`flex min-w-0 flex-wrap items-center text-[var(--dash-muted)] ${density === "compact" ? "gap-1.5 text-xs" : "gap-2 text-[11px]"}`}>
+            <span className={`flex min-w-0 flex-wrap items-center text-[11px] text-[var(--dash-muted)] ${density === "compact" ? "gap-1.5" : "gap-2"}`}>
               {task.tags.slice(0, 2).map((tag) => (
                 <span
                   key={tag}
@@ -1156,7 +1156,7 @@ function DashboardCompactTaskRow({
       </span>
       <div className={`grid min-w-0 grid-cols-[minmax(0,1fr)_42px] items-center gap-2 ${density === "compact" ? "mt-1.5" : "mt-2"}`}>
         <DashboardProgressBar value={task.progress} size="xs" segments={progressSegments} tone={progressTone} />
-        <span className={`text-right font-semibold text-[var(--dash-muted)] ${density === "compact" ? "text-xs" : "text-[11px]"}`}>{task.progress}%</span>
+        <span className="text-right text-[11px] font-semibold text-[var(--dash-muted)]">{task.progress}%</span>
       </div>
     </div>
   );

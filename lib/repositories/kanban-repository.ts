@@ -94,6 +94,10 @@ export type UpdateTaskInput = Partial<
     blockedReason: unknown;
   }
 >;
+export type SaveTaskDetailInput = {
+  task?: UpdateTaskInput;
+  subtasks?: unknown;
+};
 export type ReorderTaskInput = { updates?: unknown };
 export type CreateSubtaskInput = { title?: unknown };
 export type UpdateSubtaskInput = Partial<{ title: unknown; done: unknown }>;
@@ -147,6 +151,13 @@ export class KanbanRepository {
 
   async x(sql: string, params: SqlValue[] = []) {
     return this.db.execute(sql, params);
+  }
+
+  async withTransaction<T>(callback: (repo: KanbanRepository) => Promise<T>) {
+    if (!this.db.transaction) {
+      return callback(this);
+    }
+    return this.db.transaction((db) => callback(new KanbanRepository(db)));
   }
 
   async ensureBootstrapData() {
@@ -1474,6 +1485,119 @@ export class KanbanRepository {
       metadata: { beforeStatus: current.status, afterStatus: status, changes },
     });
     return task(await this.getTaskRow(boardId, id), (await this.getSubtasks(id)).map(subtask));
+  }
+
+  async saveTaskDetail(actor: CurrentUser, boardId: string, id: string, input: SaveTaskDetailInput) {
+    return this.withTransaction((repo) => repo.saveTaskDetailInTransaction(actor, boardId, id, input));
+  }
+
+  async saveTaskDetailInTransaction(actor: CurrentUser, boardId: string, id: string, input: SaveTaskDetailInput) {
+    const taskInput = input && typeof input.task === "object" && input.task !== null
+      ? input.task
+      : {};
+    const updated = await this.updateTask(actor, boardId, id, taskInput);
+
+    if (Array.isArray(input?.subtasks)) {
+      await this.replaceTaskSubtasks(actor, boardId, updated, input.subtasks);
+    }
+
+    return task(await this.getTaskRow(boardId, id), (await this.getSubtasks(id)).map(subtask));
+  }
+
+  async replaceTaskSubtasks(
+    actor: CurrentUser,
+    boardId: string,
+    currentTask: ReturnType<typeof task>,
+    inputSubtasks: unknown[]
+  ) {
+    const taskRow = await this.getTaskRow(boardId, currentTask.id);
+    if (!taskRow || taskRow.deleted_at) throw new Error("任务不存在");
+    if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(currentTask, actor.id)) throw new Error("Forbidden");
+
+    const now = iso();
+    const existingRows = await this.getSubtasks(currentTask.id);
+    const existingById = new Map(existingRows.map((row) => [String(row.id), row]));
+    const nextSubtasks = normalizeTaskDetailSubtasks(inputSubtasks);
+    const keptIds = new Set<string>();
+    let createdCount = 0;
+    let updatedCount = 0;
+    let deletedCount = 0;
+
+    for (const [index, next] of nextSubtasks.entries()) {
+      const existing = next.id ? existingById.get(next.id) : null;
+      const done = currentTask.status === "done" || next.done ? 1 : 0;
+      const orderIndex = (index + 1) * 10;
+
+      if (existing) {
+        keptIds.add(String(existing.id));
+        const changed =
+          String(existing.title ?? "") !== next.title ||
+          Boolean(existing.done === 1 || existing.done === true) !== Boolean(done) ||
+          Number(existing.order_index ?? 0) !== orderIndex;
+        await this.x("UPDATE subtasks SET title=?,done=?,order_index=?,updated_at=? WHERE id=? AND task_id=?", [
+          next.title,
+          done,
+          orderIndex,
+          now,
+          String(existing.id),
+          currentTask.id,
+        ]);
+        if (changed) {
+          updatedCount += 1;
+        }
+        continue;
+      }
+
+      const id = crypto.randomUUID();
+      await this.x("INSERT INTO subtasks (id,task_id,title,done,order_index,created_at,updated_at) VALUES (?,?,?,?,?,?,?)", [
+        id,
+        currentTask.id,
+        next.title,
+        done,
+        orderIndex,
+        now,
+        now,
+      ]);
+      keptIds.add(id);
+      createdCount += 1;
+    }
+
+    for (const row of existingRows) {
+      const id = String(row.id);
+      if (!keptIds.has(id)) {
+        await this.x("DELETE FROM subtasks WHERE id=? AND task_id=?", [id, currentTask.id]);
+        deletedCount += 1;
+      }
+    }
+
+    const finalRows = await this.getSubtasks(currentTask.id);
+    const nextProgress = currentTask.status === "done"
+      ? 100
+      : finalRows.length
+        ? Math.round((finalRows.filter((row) => row.done === 1 || row.done === true).length / finalRows.length) * 100)
+        : currentTask.progress;
+    await this.x("UPDATE tasks SET progress=?,updated_at=? WHERE id=?", [nextProgress, now, currentTask.id]);
+
+    if (createdCount || updatedCount || deletedCount) {
+      await this.recordActivity(boardId, {
+        entityType: "subtask",
+        entityId: currentTask.id,
+        projectId: currentTask.projectId,
+        taskId: currentTask.id,
+        action: "subtask.sync",
+        message: `更新任务「${currentTask.title}」的任务拆解。`,
+        meta: { createdCount, updatedCount, deletedCount },
+      });
+      await this.recordAuditLog({
+        actor,
+        action: "subtask.sync",
+        resourceType: "task",
+        resourceId: currentTask.id,
+        boardId,
+        message: `同步任务拆解 ${currentTask.title}`,
+        metadata: { createdCount, updatedCount, deletedCount },
+      });
+    }
   }
 
   async deleteTask(actor: CurrentUser, boardId: string, id: string) {
@@ -3224,6 +3348,26 @@ function tags(value: unknown, fallback: string[]) {
     .filter(Boolean)
     .filter((item, index, array) => array.indexOf(item) === index)
     .slice(0, 8);
+}
+
+function normalizeTaskDetailSubtasks(value: unknown[]) {
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+      const record = item as Record<string, unknown>;
+      const title = text(record.title);
+      if (!title) {
+        return null;
+      }
+      return {
+        id: typeof record.id === "string" && record.id.trim() ? record.id.trim() : "",
+        title,
+        done: record.done === true || record.done === 1,
+      };
+    })
+    .filter((item): item is { id: string; title: string; done: boolean } => Boolean(item));
 }
 
 function ids(value: unknown) {

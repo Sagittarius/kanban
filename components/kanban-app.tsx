@@ -1604,15 +1604,39 @@ export default function KanbanApp({
     }
   }
 
-  async function persistTask(taskId: string, patch: Partial<BoardTask>) {
+  async function saveTaskDetail(
+    taskId: string,
+    patch: Partial<BoardTask>,
+    nextSubtasks: SubtaskDraft[]
+  ) {
     const previous = board.tasks.find((task) => task.id === taskId);
     const previousTasks = board.tasks;
+    if (!previous) {
+      return false;
+    }
+
     const updatedAt = new Date().toISOString();
+    const normalizedSubtasks = nextSubtasks
+      .map((step, index) => ({
+        ...step,
+        title: step.title.trim(),
+        orderIndex: (index + 1) * 10,
+        updatedAt,
+      }))
+      .filter((step) => step.title);
+    const progress = progressFromSubtasks(normalizedSubtasks, patch.progress ?? previous.progress);
+
     setBoard((current) => ({
       ...current,
       tasks: current.tasks.map((task) =>
         task.id === taskId
-          ? applyDoneSideEffects({ ...task, ...patch, updatedAt }, updatedAt)
+          ? applyDoneSideEffects({
+              ...task,
+              ...patch,
+              subtasks: normalizedSubtasks,
+              progress,
+              updatedAt,
+            }, updatedAt)
           : task
       ),
     }));
@@ -1628,12 +1652,19 @@ export default function KanbanApp({
     }
 
     try {
-      const saved = await apiRequest<BoardTask>(`/api/tasks/${taskId}`, "PATCH", patch);
+      const saved = await apiRequest<BoardTask>(`/api/tasks/${taskId}/detail`, "PATCH", {
+        task: patch,
+        subtasks: normalizedSubtasks.map((step) => ({
+          id: step.id,
+          title: step.title,
+          done: step.done,
+        })),
+      });
       setBoard((current) => ({
         ...current,
         tasks: current.tasks.map((task) => (task.id === taskId ? saved : task)),
       }));
-      await refreshBoard();
+      await refreshBoard(false);
       notifyDashboardRefresh();
       notify("任务已保存");
       return true;
@@ -1942,84 +1973,6 @@ export default function KanbanApp({
       }
       setSyncState("local");
       notify("拖拽保存失败", "error");
-    }
-  }
-
-  async function syncTaskSubtasks(taskId: string, nextSubtasks: SubtaskDraft[]) {
-    const currentTask = board.tasks.find((task) => task.id === taskId);
-    if (!currentTask) {
-      return false;
-    }
-
-    const normalizedSubtasks = nextSubtasks.map((step, index) => ({
-      ...step,
-      title: step.title.trim(),
-      orderIndex: (index + 1) * 10,
-    }));
-    const progress = progressFromSubtasks(normalizedSubtasks, currentTask.progress);
-    const updatedAt = new Date().toISOString();
-
-    if (isLocalPreview) {
-      setBoard((current) => ({
-        ...current,
-        tasks: current.tasks.map((task) =>
-          task.id === taskId
-            ? {
-                ...task,
-                subtasks: normalizedSubtasks,
-                progress,
-                updatedAt,
-              }
-            : task
-        ),
-      }));
-      appendLocalActivity(`更新任务「${currentTask.title}」的任务拆解。`, "subtask");
-      setSyncState("local");
-      return true;
-    }
-
-    const previousById = new Map(currentTask.subtasks.map((step) => [step.id, step]));
-    const nextIds = new Set(normalizedSubtasks.map((step) => step.id));
-
-    try {
-      for (const step of currentTask.subtasks) {
-        if (!nextIds.has(step.id)) {
-          await apiRequest(`/api/tasks/${taskId}/subtasks/${step.id}`, "DELETE");
-        }
-      }
-
-      for (const step of normalizedSubtasks) {
-        const previous = previousById.get(step.id);
-        if (!previous) {
-          const created = await apiRequest<Subtask>(`/api/tasks/${taskId}/subtasks`, "POST", {
-            title: step.title,
-          });
-          if (step.done) {
-            await apiRequest(`/api/tasks/${taskId}/subtasks/${created.id}`, "PATCH", { done: true });
-          }
-          continue;
-        }
-
-        const patch: { title?: string; done?: boolean } = {};
-        if (previous.title !== step.title) {
-          patch.title = step.title;
-        }
-        if (previous.done !== step.done) {
-          patch.done = step.done;
-        }
-        if (Object.keys(patch).length > 0) {
-          await apiRequest(`/api/tasks/${taskId}/subtasks/${step.id}`, "PATCH", patch);
-        }
-      }
-
-      await refreshBoard(false);
-      notifyDashboardRefresh();
-      return true;
-    } catch (error) {
-      await refreshBoard(false);
-      setSyncState("local");
-      notify(error instanceof Error ? error.message : "任务拆解保存失败", "error");
-      return false;
     }
   }
 
@@ -2686,8 +2639,7 @@ export default function KanbanApp({
               columns={board.columns}
               currentUser={currentUser ?? undefined}
               editable={selectedTaskEditable}
-              onSave={(patch) => persistTask(selectedTask.id, patch)}
-              onSyncSubtasks={(subtasks) => syncTaskSubtasks(selectedTask.id, subtasks)}
+              onSave={(patch, subtasks) => saveTaskDetail(selectedTask.id, patch, subtasks)}
               onInvalid={showNotice}
               onRework={() => reworkTask(selectedTask.id)}
               onDelete={() => void removeTask(selectedTask.id)}
@@ -3783,7 +3735,6 @@ function TaskDrawer({
   currentUser,
   editable,
   onSave,
-  onSyncSubtasks,
   onInvalid,
   onRework,
   onDelete,
@@ -3794,8 +3745,7 @@ function TaskDrawer({
   columns: BoardData["columns"];
   currentUser: BoardData["currentUser"];
   editable: boolean;
-  onSave: (patch: Partial<BoardTask>) => Promise<boolean>;
-  onSyncSubtasks: (subtasks: SubtaskDraft[]) => Promise<boolean>;
+  onSave: (patch: Partial<BoardTask>, subtasks: SubtaskDraft[]) => Promise<boolean>;
   onInvalid: (message: string, title?: string) => void;
   onRework: () => Promise<void>;
   onDelete: () => void;
@@ -3808,47 +3758,7 @@ function TaskDrawer({
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [editingSubtaskTitle, setEditingSubtaskTitle] = useState("");
   const taskSubtasksRef = useRef(task.subtasks);
-  const taskTagsText = task.tags.join(" ");
-  const taskDraftSnapshot = useMemo<TaskDraft>(
-    () => ({
-      title: task.title,
-      description: task.description,
-      projectId: task.projectId,
-      status: task.status,
-      priority: task.priority,
-      testDueDate: task.testDueDate,
-      designDueDate: task.designDueDate,
-      dueDate: task.dueDate,
-      ownerUserId: task.ownerUserId,
-      owner: task.owner,
-      testerUserId: task.testerUserId,
-      tester: task.tester,
-      workloadDays: task.workloadDays === null || task.workloadDays === undefined ? "" : String(task.workloadDays),
-      progress: task.progress,
-      blockers: String(task.blockers ?? 0),
-      blockedReason: task.blockedReason,
-      tagsText: taskTagsText,
-    }),
-    [
-      task.blockedReason,
-      task.blockers,
-      task.description,
-      task.designDueDate,
-      task.dueDate,
-      task.owner,
-      task.ownerUserId,
-      task.priority,
-      task.progress,
-      task.projectId,
-      task.status,
-      task.testDueDate,
-      task.tester,
-      task.testerUserId,
-      task.title,
-      task.workloadDays,
-      taskTagsText,
-    ]
-  );
+  const taskDraftSnapshot = useMemo<TaskDraft>(() => taskDraftFromTask(task), [task]);
 
   const taskMembers = membersForProject(projects, teams, draft.projectId);
   const taskProjectOptions = projects.map((project) => ({
@@ -3951,29 +3861,29 @@ function TaskDrawer({
     }
 
     setSaving(true);
-    const saved = await onSave({
-      title: draft.title,
-      description: draft.description,
-      projectId: draft.projectId,
-      status: draft.status,
-      priority: draft.priority,
-      testDueDate: draft.testDueDate,
-      designDueDate: draft.designDueDate,
-      dueDate: draft.dueDate,
-      ownerUserId: draft.ownerUserId,
-      owner: draft.owner,
-      testerUserId: draft.testerUserId,
-      tester: draft.tester,
-      workloadDays: normalizeWorkloadInput(draft.workloadDays),
-      progress: effectiveProgress,
-      blockers: Number(draft.blockers || 0),
-      blockedReason: draft.blockedReason,
-      tags: parseTags(draft.tagsText),
-    });
-    if (saved) {
-      await onSyncSubtasks(subtaskDrafts);
+    try {
+      await onSave({
+        title: draft.title,
+        description: draft.description,
+        projectId: draft.projectId,
+        status: draft.status,
+        priority: draft.priority,
+        testDueDate: draft.testDueDate,
+        designDueDate: draft.designDueDate,
+        dueDate: draft.dueDate,
+        ownerUserId: draft.ownerUserId,
+        owner: draft.owner,
+        testerUserId: draft.testerUserId,
+        tester: draft.tester,
+        workloadDays: normalizeWorkloadInput(draft.workloadDays),
+        progress: effectiveProgress,
+        blockers: Number(draft.blockers || 0),
+        blockedReason: draft.blockedReason,
+        tags: parseTags(draft.tagsText),
+      }, subtaskDrafts);
+    } finally {
+      setSaving(false);
     }
-    setSaving(false);
   }
 
   async function handleRework() {

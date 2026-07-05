@@ -15,6 +15,7 @@ export type DatabaseAdapter = {
     params?: SqlValue[]
   ): Promise<T[]>;
   execute(sql: string, params?: SqlValue[]): Promise<QueryResult>;
+  transaction?<T>(callback: (db: DatabaseAdapter) => Promise<T>): Promise<T>;
 };
 
 type LocalSQLiteDatabase = {
@@ -28,6 +29,12 @@ type LocalSQLiteDatabase = {
 
 type PgPool = {
   query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+  connect(): Promise<PgClient>;
+};
+
+type PgClient = {
+  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[]; rowCount?: number | null }>;
+  release(): void;
 };
 
 type MigrationTableConfig = {
@@ -100,6 +107,17 @@ function createSQLiteAdapterFromDatabase(database: LocalSQLiteDatabase): Databas
         lastInsertRowid: Number(result.lastInsertRowid),
       };
     },
+    async transaction<T>(callback: (db: DatabaseAdapter) => Promise<T>) {
+      database.exec("BEGIN");
+      try {
+        const result = await callback(createSQLiteAdapterFromDatabase(database));
+        database.exec("COMMIT");
+        return result;
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    },
   };
 }
 
@@ -134,6 +152,32 @@ async function createPostgresAdapter(): Promise<DatabaseAdapter> {
     async execute(sql: string, params: SqlValue[] = []) {
       const result = await cachedPgPool!.query(toPostgresSql(sql), normalizeParams(params));
       return { changes: result.rowCount ?? undefined };
+    },
+    async transaction<T>(callback: (db: DatabaseAdapter) => Promise<T>) {
+      const client = await cachedPgPool!.connect();
+      const txAdapter: DatabaseAdapter = {
+        mode: "postgres",
+        async query<TRecord extends Record<string, unknown>>(sql: string, params: SqlValue[] = []) {
+          const result = await client.query(toPostgresSql(sql), normalizeParams(params));
+          return result.rows as TRecord[];
+        },
+        async execute(sql: string, params: SqlValue[] = []) {
+          const result = await client.query(toPostgresSql(sql), normalizeParams(params));
+          return { changes: result.rowCount ?? undefined };
+        },
+      };
+
+      try {
+        await client.query("BEGIN");
+        const result = await callback(txAdapter);
+        await client.query("COMMIT");
+        return result;
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     },
   };
 
