@@ -2248,6 +2248,11 @@ export default function KanbanApp({
                 <span className="mr-2 h-2 w-2 rounded-full bg-current opacity-75" />
                 KANBAN
               </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-semibold normal-case tracking-normal text-[var(--accent)]">
+                <Edit3 size={12} />
+                <span className="text-[var(--text)]">kfzx-chenwh4</span>
+                <span className="text-[var(--accent)]">000959918</span>
+              </span>
               <button
                 type="button"
                 onClick={() => setChangelogOpen(true)}
@@ -2641,7 +2646,7 @@ export default function KanbanApp({
             <Edit3 size={13} />
             <span className="h-3 w-px bg-[var(--border)]" />
             <span className="font-medium text-[var(--text)]">kfzx-chenwh4</span>
-            <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--accent)]">0000959918</span>
+            <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--accent)]">000959918</span>
           </div>
         </div>
       </footer>

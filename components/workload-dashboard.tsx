@@ -638,7 +638,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
             <Edit3 size={13} />
             <span className="h-3 w-px bg-[var(--dash-line)]" />
             <span className="font-medium text-[var(--dash-text)]">kfzx-chenwh4</span>
-            <span className="rounded bg-[var(--dash-accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--dash-accent)]">0000959918</span>
+            <span className="rounded bg-[var(--dash-accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--dash-accent)]">000959918</span>
           </div>
         </div>
       </footer>
