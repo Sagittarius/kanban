@@ -966,7 +966,7 @@ export class KanbanRepository {
       ),
       this.q("SELECT * FROM system_parameters ORDER BY order_index ASC,key ASC"),
       this.listBoardsForUser(actor),
-      this.listBoardTeamOptions(boardId),
+      this.listBoardTeamOptions(boardId, actor),
     ]);
     const projects = projectRows.map(project);
     const byTask = new Map<string, Subtask[]>();
@@ -1047,7 +1047,7 @@ export class KanbanRepository {
     await this.requireBoardWrite(actor, boardId);
     const teamId = text(input.teamId);
     if (!teamId) throw new Error("请选择团队");
-    await this.requireBoardTeam(boardId, teamId);
+    await this.ensureProjectTeamAllowed(actor, boardId, teamId);
     const owner = await this.resolveProjectOwner(teamId, input);
     const now = iso();
     const row = {
@@ -1114,7 +1114,7 @@ export class KanbanRepository {
     const status = isProjectStatus(input.status) ? input.status : current.status;
     const teamId = text(input.teamId, current.teamId);
     if (!teamId) throw new Error("请选择团队");
-    await this.requireBoardTeam(boardId, teamId);
+    await this.ensureProjectTeamAllowed(actor, boardId, teamId);
     const owner = await this.resolveProjectOwner(teamId, input, current);
     const row = {
       team_id: teamId,
@@ -2154,10 +2154,19 @@ export class KanbanRepository {
     };
   }
 
-  async requireBoardTeam(boardId: string, teamId: string) {
-    if (!(await this.q("SELECT team_id FROM board_teams WHERE board_id=? AND team_id=? LIMIT 1", [boardId, teamId]))[0]) {
-      throw new Error("请选择团队");
+  async ensureProjectTeamAllowed(actor: CurrentUser, boardId: string, teamId: string) {
+    if ((await this.q("SELECT team_id FROM board_teams WHERE board_id=? AND team_id=? LIMIT 1", [boardId, teamId]))[0]) {
+      return;
     }
+    if (actor.role === "super_admin" && (await this.getTeamRow(teamId))) {
+      await this.x("INSERT INTO board_teams (board_id,team_id,created_at) VALUES (?,?,?) ON CONFLICT(board_id,team_id) DO NOTHING", [
+        boardId,
+        teamId,
+        iso(),
+      ]);
+      return;
+    }
+    throw new Error("请选择团队");
   }
 
   async getManagedUserRow(userId: string) {
@@ -2256,11 +2265,14 @@ export class KanbanRepository {
     return ownerUserId;
   }
 
-  async listBoardTeamOptions(boardId: string): Promise<BoardTeamOption[]> {
-    const rows = await this.q(
-      "SELECT t.*,u.username AS owner_username FROM board_teams bt JOIN teams t ON t.id=bt.team_id LEFT JOIN users u ON u.id=t.owner_user_id WHERE bt.board_id=? ORDER BY t.name ASC",
-      [boardId]
-    );
+  async listBoardTeamOptions(boardId: string, actor: CurrentUser): Promise<BoardTeamOption[]> {
+    const rows =
+      actor.role === "super_admin"
+        ? await this.q("SELECT t.*,u.username AS owner_username FROM teams t LEFT JOIN users u ON u.id=t.owner_user_id ORDER BY t.name ASC")
+        : await this.q(
+            "SELECT t.*,u.username AS owner_username FROM board_teams bt JOIN teams t ON t.id=bt.team_id LEFT JOIN users u ON u.id=t.owner_user_id WHERE bt.board_id=? ORDER BY t.name ASC",
+            [boardId]
+          );
     const teamIds = rows.map((row) => String(row.id));
     const membersByTeam = new Map<string, BoardUserOption[]>();
     const options: BoardTeamOption[] = [];
