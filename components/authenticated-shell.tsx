@@ -260,14 +260,14 @@ export default function AuthenticatedShell({
               </div>
               <label className="block space-y-2 text-sm">
                 <span className="font-medium text-[var(--muted)]">用户名</span>
-                <input value={currentUser.username} disabled className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-3 text-[var(--muted)]" />
+                <input value={currentUser.username} disabled className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-3 text-sm leading-5 text-[var(--muted)]" />
               </label>
               <label className="mt-3 block space-y-2 text-sm">
                 <span className="font-medium text-[var(--muted)]">姓名</span>
                 <input
                   value={profileDraft.displayName}
                   disabled
-                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-3 text-[var(--muted)]"
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-3 text-sm leading-5 text-[var(--muted)]"
                 />
               </label>
             </div>
@@ -277,7 +277,7 @@ export default function AuthenticatedShell({
                 <input
                   value={profileDraft.phone}
                   onChange={(event) => setProfileDraft((current) => ({ ...current, phone: event.target.value }))}
-                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-sm leading-5 text-[var(--text)] outline-none placeholder:text-sm placeholder:leading-5 placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
                   placeholder="输入手机号"
                 />
               </label>
@@ -317,7 +317,7 @@ export default function AuthenticatedShell({
                     type="password"
                     value={passwordDraft.currentPassword}
                     onChange={(event) => setPasswordDraft((current) => ({ ...current, currentPassword: event.target.value }))}
-                    className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+                    className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-sm leading-5 text-[var(--text)] outline-none placeholder:text-sm placeholder:leading-5 placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
                     placeholder="留空则不修改"
                   />
                 </label>
@@ -327,7 +327,7 @@ export default function AuthenticatedShell({
                     type="password"
                     value={passwordDraft.newPassword}
                     onChange={(event) => setPasswordDraft((current) => ({ ...current, newPassword: event.target.value }))}
-                    className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+                    className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-sm leading-5 text-[var(--text)] outline-none placeholder:text-sm placeholder:leading-5 placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
                     placeholder="至少 6 位"
                   />
                 </label>
@@ -338,7 +338,7 @@ export default function AuthenticatedShell({
                   type="password"
                   value={passwordDraft.confirmPassword}
                   onChange={(event) => setPasswordDraft((current) => ({ ...current, confirmPassword: event.target.value }))}
-                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
+                  className="h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--input)] px-3 text-sm leading-5 text-[var(--text)] outline-none placeholder:text-sm placeholder:leading-5 placeholder:text-[var(--muted)] focus:border-[var(--accent)]"
                   placeholder="再次输入新密码"
                 />
               </label>

@@ -614,7 +614,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
   }
 
   function canManageTeam(team: TeamSummary) {
-    return team.ownerUserId === currentUser.id;
+    return isSuperAdminRole(currentUser.role) || team.ownerUserId === currentUser.id;
   }
 
   function resetTeamDraft() {
@@ -1477,7 +1477,16 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
           border: 1px solid var(--border);
           background: var(--input);
           padding: 0 0.75rem;
+          color: var(--text);
+          font-size: 0.875rem;
+          line-height: 1.25rem;
           outline: none;
+        }
+        .field::placeholder {
+          color: var(--muted);
+          font-size: 0.875rem;
+          line-height: 1.25rem;
+          opacity: 0.72;
         }
         .field:focus {
           border-color: var(--accent);

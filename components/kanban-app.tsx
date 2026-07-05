@@ -4716,7 +4716,7 @@ function TaskCreateDialog({
 
         <form onSubmit={(event) => void onSubmit(event)} className="min-h-0 overflow-y-auto px-6 py-5">
           <div className="grid gap-4">
-            <label className="grid gap-1.5 text-base text-[var(--muted)]">
+            <label className="grid gap-1.5 text-sm text-[var(--muted)]">
               <span>任务名称<RequiredMark /></span>
               <input
                 name="newTaskTitle"
@@ -4726,7 +4726,7 @@ function TaskCreateDialog({
                 className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
             </label>
-            <label className="grid gap-1.5 text-base text-[var(--muted)]">
+            <label className="grid gap-1.5 text-sm text-[var(--muted)]">
               <span>任务描述<RequiredMark /></span>
               <textarea
                 name="newTaskDescription"
@@ -4820,7 +4820,7 @@ function TaskCreateDialog({
             </div>
 
             <div className="grid gap-3 md:grid-cols-3">
-              <label className="grid gap-1.5 text-base text-[var(--muted)]">
+              <label className="grid gap-1.5 text-sm text-[var(--muted)]">
                 <span>设计截止</span>
                 <input
                   name="newTaskDesignDueDate"
@@ -4830,7 +4830,7 @@ function TaskCreateDialog({
                   className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
                 />
               </label>
-              <label className="grid gap-1.5 text-base text-[var(--muted)]">
+              <label className="grid gap-1.5 text-sm text-[var(--muted)]">
                 <span>提测日期</span>
                 <input
                   name="newTaskTestDueDate"
@@ -4840,7 +4840,7 @@ function TaskCreateDialog({
                   className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm text-[var(--text)]"
                 />
               </label>
-              <label className="grid gap-1.5 text-base text-[var(--muted)]">
+              <label className="grid gap-1.5 text-sm text-[var(--muted)]">
                 <span>交付日期</span>
                 <input
                   name="newTaskDueDate"
@@ -4852,7 +4852,7 @@ function TaskCreateDialog({
               </label>
             </div>
 
-            <label className="grid gap-1.5 text-base text-[var(--muted)]">
+            <label className="grid gap-1.5 text-sm text-[var(--muted)]">
               <span>标签</span>
               <input
                 name="newTaskTags"
@@ -5052,7 +5052,7 @@ function ChangelogDialog({
 
 function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
   return (
-    <label className="flex flex-col gap-1.5 text-base text-[var(--muted)] [&>input]:w-full [&>input]:rounded-md [&>input]:border [&>input]:border-[var(--border)] [&>input]:bg-[var(--input)] [&>input]:px-2 [&>input]:py-2 [&>input]:text-base [&>input]:text-[var(--text)] [&>input::placeholder]:text-base [&>input::placeholder]:text-[var(--muted)] [&>input::placeholder]:opacity-50 [&>select]:w-full [&>select]:rounded-md [&>select]:border [&>select]:border-[var(--border)] [&>select]:bg-[var(--input)] [&>select]:px-2 [&>select]:py-2 [&>select]:text-base [&>select]:text-[var(--text)] [&>textarea]:w-full [&>textarea]:rounded-md [&>textarea]:border [&>textarea]:border-[var(--border)] [&>textarea]:bg-[var(--input)] [&>textarea]:px-2 [&>textarea]:py-2 [&>textarea]:text-base [&>textarea]:text-[var(--text)] [&>textarea::placeholder]:text-base [&>textarea::placeholder]:text-[var(--muted)] [&>textarea::placeholder]:opacity-50">
+    <label className="flex flex-col gap-1.5 text-sm text-[var(--muted)] [&>input]:w-full [&>input]:rounded-md [&>input]:border [&>input]:border-[var(--border)] [&>input]:bg-[var(--input)] [&>input]:px-2 [&>input]:py-2 [&>input]:text-sm [&>input]:leading-5 [&>input]:text-[var(--text)] [&>input::placeholder]:text-sm [&>input::placeholder]:leading-5 [&>input::placeholder]:text-[var(--muted)] [&>input::placeholder]:opacity-50 [&>select]:w-full [&>select]:rounded-md [&>select]:border [&>select]:border-[var(--border)] [&>select]:bg-[var(--input)] [&>select]:px-2 [&>select]:py-2 [&>select]:text-sm [&>select]:leading-5 [&>select]:text-[var(--text)] [&>textarea]:w-full [&>textarea]:rounded-md [&>textarea]:border [&>textarea]:border-[var(--border)] [&>textarea]:bg-[var(--input)] [&>textarea]:px-2 [&>textarea]:py-2 [&>textarea]:text-sm [&>textarea]:leading-5 [&>textarea]:text-[var(--text)] [&>textarea::placeholder]:text-sm [&>textarea::placeholder]:leading-5 [&>textarea::placeholder]:text-[var(--muted)] [&>textarea::placeholder]:opacity-50">
       <span>{label}{required ? <RequiredMark /> : null}</span>
       {children}
     </label>

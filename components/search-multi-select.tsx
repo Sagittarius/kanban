@@ -118,7 +118,7 @@ export default function SearchMultiSelect({
               </span>
             ))
           ) : (
-            <span className={`truncate text-[var(--sms-muted)] ${compact ? "" : "text-base leading-6"}`}>{placeholder}</span>
+            <span className="truncate text-sm leading-5 text-[var(--sms-muted)]">{placeholder}</span>
           )}
           {selected.length > (compact ? 2 : 4) ? (
             <span className="rounded-full bg-[var(--sms-panel-soft)] px-2 py-1 text-xs font-medium text-[var(--sms-muted)]">

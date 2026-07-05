@@ -2128,6 +2128,7 @@ export class KanbanRepository {
     if (!teamRow) {
       throw new Error("Forbidden");
     }
+    if (actor.role === "super_admin") return;
     if (String(teamRow.owner_user_id) !== actor.id) throw new Error("Forbidden");
   }
 
