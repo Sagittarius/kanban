@@ -51,9 +51,12 @@ export type BoardTask = {
   tester: string;
   workloadDays?: number | null;
   startDate: string;
-  testDueDate: string;
   designDueDate: string;
+  designCompletedAt: string | null;
+  testDueDate: string;
+  devCompletedAt: string | null;
   dueDate: string;
+  completedAt: string | null;
   estimate: number;
   progress: number;
   blockers: number;
@@ -62,7 +65,6 @@ export type BoardTask = {
   subtasks: Subtask[];
   orderIndex: number;
   deletedAt: string | null;
-  completedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -474,6 +476,8 @@ export const seedTasks: BoardTask[] = [
     designDueDate: "2026-06-09",
     testDueDate: "2026-06-10",
     dueDate: "2026-06-12",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 5,
     progress: 30,
     blockers: 0,
@@ -501,6 +505,8 @@ export const seedTasks: BoardTask[] = [
     designDueDate: "2026-06-06",
     testDueDate: "2026-06-08",
     dueDate: "2026-06-10",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 8,
     progress: 62,
     blockers: 1,
@@ -528,6 +534,8 @@ export const seedTasks: BoardTask[] = [
     designDueDate: "2026-06-03",
     testDueDate: "2026-06-05",
     dueDate: "2026-06-07",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 3,
     progress: 88,
     blockers: 0,
@@ -555,6 +563,8 @@ export const seedTasks: BoardTask[] = [
     designDueDate: "",
     testDueDate: "",
     dueDate: "2026-06-18",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 2,
     progress: 0,
     blockers: 0,
@@ -582,6 +592,8 @@ export const seedTasks: BoardTask[] = [
     designDueDate: "2026-05-31",
     testDueDate: "2026-06-03",
     dueDate: "2026-06-05",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 4,
     progress: 100,
     blockers: 0,
@@ -609,6 +621,8 @@ export const seedTasks: BoardTask[] = [
     designDueDate: "2026-06-05",
     testDueDate: "2026-06-07",
     dueDate: "2026-06-09",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 3,
     progress: 45,
     blockers: 1,
@@ -636,6 +650,8 @@ export const seedTasks: BoardTask[] = [
     designDueDate: "2026-06-15",
     testDueDate: "2026-06-17",
     dueDate: "2026-06-20",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 5,
     progress: 12,
     blockers: 0,

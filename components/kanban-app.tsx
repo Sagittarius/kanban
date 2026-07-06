@@ -49,6 +49,7 @@ import {
   RotateCcw,
   Rows3,
   Search,
+  ShieldCheck,
   SlidersHorizontal,
   Tag,
   Trash2,
@@ -260,6 +261,9 @@ function lateDaysByCompletion(date: string, compareIso: string | null) {
   if (!date || !compareIso) {
     return null;
   }
+  if (compareIso.startsWith(`${date}T23:59:59`)) {
+    return null;
+  }
   const lateDays = Math.ceil(
     (new Date(compareIso).getTime() - new Date(`${date}T23:59:59`).getTime()) / 86400000
   );
@@ -271,124 +275,99 @@ function negativeDayNote(days: number | null) {
 }
 
 type DeadlineMarker = {
+  key: "design" | "development" | "delivery";
   label: string;
   date: string;
   state: "normal" | "due-soon" | "overdue" | "late";
   note?: string;
 };
 
+function markerFromCompletedAt(
+  key: DeadlineMarker["key"],
+  label: string,
+  date: string,
+  completedAt: string | null
+): DeadlineMarker {
+  const lateDays = lateDaysByCompletion(date, completedAt);
+  return {
+    key,
+    label,
+    date,
+    state: lateDays !== null ? "late" : "normal",
+    note: lateDays !== null ? negativeDayNote(lateDays) : undefined,
+  };
+}
+
+function activeMarkerFromDueDate(
+  key: DeadlineMarker["key"],
+  label: string,
+  date: string,
+  days: number | null,
+  dueSoonDays: number
+): DeadlineMarker {
+  return {
+    key,
+    label,
+    date,
+    state:
+      days !== null && days < 0
+        ? "overdue"
+        : days !== null && days <= dueSoonDays
+          ? "due-soon"
+          : "normal",
+    note: days !== null && days < 0 ? negativeDayNote(days) : undefined,
+  };
+}
+
+function historicalMarkerFromDueDate(
+  key: DeadlineMarker["key"],
+  label: string,
+  date: string,
+  days: number | null
+): DeadlineMarker {
+  return {
+    key,
+    label,
+    date,
+    state: days !== null && days < 0 ? "overdue" : "normal",
+    note: days !== null && days < 0 ? negativeDayNote(days) : undefined,
+  };
+}
+
 function deadlineMarkers(task: BoardTask, todayKey: string, dueSoonDays: number): DeadlineMarker[] {
   const markers: DeadlineMarker[] = [];
   const designDays = daysUntil(task.designDueDate, todayKey);
   const testDays = daysUntil(task.testDueDate, todayKey);
   const deliveryDays = daysUntil(task.dueDate, todayKey);
-  const designLateDaysAfterCompletion = lateDaysByCompletion(task.designDueDate, task.completedAt);
-  const testLateDaysAfterCompletion = lateDaysByCompletion(task.testDueDate, task.completedAt);
-  const deliveryLateDaysAfterCompletion = lateDaysByCompletion(task.dueDate, task.completedAt);
 
-  // 设计截止：设计中阶段标注临期/超期
-  if (task.status === "design" && task.designDueDate) {
-    markers.push({
-      label: "设计",
-      date: task.designDueDate,
-      state:
-        designDays !== null && designDays < 0
-          ? "overdue"
-          : designDays !== null && designDays <= dueSoonDays
-            ? "due-soon"
-            : "normal",
-      note: designDays !== null && designDays < 0 ? negativeDayNote(designDays) : undefined,
-    });
+  if (task.designDueDate && (task.status === "design" || task.status === "dev" || task.status === "test" || task.status === "done" || task.designCompletedAt)) {
+    markers.push(
+      task.designCompletedAt
+        ? markerFromCompletedAt("design", "设计", task.designDueDate, task.designCompletedAt)
+        : task.status === "design"
+          ? activeMarkerFromDueDate("design", "设计", task.designDueDate, designDays, dueSoonDays)
+          : historicalMarkerFromDueDate("design", "设计", task.designDueDate, designDays)
+    );
   }
 
-  // 已完成且超设计截止
-  if ((task.status === "dev" || task.status === "test" || task.status === "done") && task.designDueDate) {
-    markers.push({
-      label: "设计",
-      date: task.designDueDate,
-      state:
-        task.status === "done"
-          ? designLateDaysAfterCompletion !== null
-            ? "late"
-            : "normal"
-          : designDays !== null && designDays < 0
-            ? "overdue"
-            : "normal",
-      note:
-        task.status === "done"
-          ? designLateDaysAfterCompletion !== null
-            ? negativeDayNote(designLateDaysAfterCompletion)
-            : undefined
-          : designDays !== null && designDays < 0
-            ? negativeDayNote(designDays)
-            : undefined,
-    });
+  if (task.testDueDate && (task.status === "dev" || task.status === "test" || task.status === "done" || task.devCompletedAt)) {
+    markers.push(
+      task.devCompletedAt
+        ? markerFromCompletedAt("development", "开发", task.testDueDate, task.devCompletedAt)
+        : task.status === "dev"
+          ? activeMarkerFromDueDate("development", "开发", task.testDueDate, testDays, dueSoonDays)
+          : historicalMarkerFromDueDate("development", "开发", task.testDueDate, testDays)
+    );
   }
 
-  if (task.status === "dev" && task.testDueDate) {
-    markers.push({
-      label: "提测",
-      date: task.testDueDate,
-      state:
-        testDays !== null && testDays < 0
-          ? "overdue"
-          : testDays !== null && testDays <= dueSoonDays
-            ? "due-soon"
-            : "normal",
-      note: testDays !== null && testDays < 0 ? negativeDayNote(testDays) : undefined,
-    });
-  }
-
-  if ((task.status === "test" || task.status === "done") && task.testDueDate) {
-    markers.push({
-      label: "提测",
-      date: task.testDueDate,
-      state:
-        task.status === "done"
-          ? testLateDaysAfterCompletion !== null
-            ? "late"
-            : "normal"
-          : testDays !== null && testDays < 0
-            ? "overdue"
-            : "normal",
-      note:
-        task.status === "done"
-          ? testLateDaysAfterCompletion !== null
-            ? negativeDayNote(testLateDaysAfterCompletion)
-            : undefined
-          : testDays !== null && testDays < 0
-            ? negativeDayNote(testDays)
-            : undefined,
-    });
-  }
-
-  if ((task.status === "test" || task.status === "done") && task.dueDate) {
-    markers.push({
-      label: "交付",
-      date: task.dueDate,
-      state:
-        task.status === "done"
-          ? deliveryLateDaysAfterCompletion !== null
-            ? "late"
-            : "normal"
-          : deliveryDays !== null && deliveryDays < 0
-            ? "overdue"
-            : deliveryDays !== null && deliveryDays <= dueSoonDays
-              ? "due-soon"
-              : "normal",
-      note:
-        task.status === "done"
-          ? deliveryLateDaysAfterCompletion !== null
-            ? negativeDayNote(deliveryLateDaysAfterCompletion)
-            : undefined
-          : deliveryDays !== null && deliveryDays < 0
-            ? negativeDayNote(deliveryDays)
-            : undefined,
-    });
-  }
-
-  if ((task.status === "backlog" || task.status === "dev") && task.dueDate) {
-    markers.push({ label: "交付", date: task.dueDate, state: "normal" });
+  if (task.dueDate && (task.status === "backlog" || task.status === "dev" || task.status === "test" || task.status === "done" || task.completedAt)) {
+    markers.push(
+      task.completedAt
+        ? markerFromCompletedAt("delivery", "交付", task.dueDate, task.completedAt)
+        : task.status === "test"
+          ? activeMarkerFromDueDate("delivery", "交付", task.dueDate, deliveryDays, dueSoonDays)
+          : { key: "delivery", label: "交付", date: task.dueDate, state: "normal" }
+    );
   }
 
   return markers;
@@ -400,6 +379,26 @@ function taskHasDueSoonAlert(task: BoardTask, todayKey: string, dueSoonDays: num
 
 function taskHasOverdueAlert(task: BoardTask, todayKey: string, dueSoonDays: number) {
   return deadlineMarkers(task, todayKey, dueSoonDays).some((marker) => marker.state === "overdue" || marker.state === "late");
+}
+
+function normalizableWarningKeysForStatus(status: BoardStatus): DeadlineMarker["key"][] {
+  if (status === "dev") {
+    return ["design"];
+  }
+  if (status === "test") {
+    return ["design", "development"];
+  }
+  if (status === "done") {
+    return ["design", "development", "delivery"];
+  }
+  return [];
+}
+
+function normalizableOverdueMarkers(task: BoardTask, todayKey: string, dueSoonDays: number) {
+  const allowed = new Set(normalizableWarningKeysForStatus(task.status));
+  return deadlineMarkers(task, todayKey, dueSoonDays)
+    .filter((marker) => marker.state === "overdue" || marker.state === "late")
+    .filter((marker) => allowed.has(marker.key));
 }
 
 function deadlineSummary(task: BoardTask, todayKey: string, dueSoonDays: number) {
@@ -641,6 +640,33 @@ function measuredTaskCardWidth(status: BoardStatus) {
   return Math.max(240, Math.round(lane.clientWidth - paddingLeft - paddingRight));
 }
 
+function taskStatusRank(status: BoardStatus) {
+  return (
+    {
+      backlog: 0,
+      design: 1,
+      dev: 2,
+      test: 3,
+      done: 4,
+    } satisfies Record<BoardStatus, number>
+  )[status];
+}
+
+function taskWithStatusPreview(task: BoardTask, targetStatus: BoardStatus, updatedAt = new Date().toISOString()) {
+  const targetRank = taskStatusRank(targetStatus);
+  return applyDoneSideEffects(
+    {
+      ...task,
+      status: targetStatus,
+      designCompletedAt: targetRank >= taskStatusRank("dev") ? task.designCompletedAt ?? updatedAt : null,
+      devCompletedAt: targetRank >= taskStatusRank("test") ? task.devCompletedAt ?? updatedAt : null,
+      completedAt: targetRank >= taskStatusRank("done") ? task.completedAt ?? updatedAt : null,
+      updatedAt,
+    },
+    updatedAt
+  );
+}
+
 function activeTaskIdFromEvent(event: DragStartEvent | DragOverEvent | DragEndEvent | DragCancelEvent) {
   return typeof event.active.id === "string" ? event.active.id : null;
 }
@@ -677,14 +703,12 @@ function tasksByStatus(tasks: BoardTask[]) {
 
 function boardTasksFromGroups(currentTasks: BoardTask[], groups: Record<BoardStatus, BoardTask[]>) {
   const updates = new Map<string, BoardTask>();
+  const updatedAt = new Date().toISOString();
 
   (Object.entries(groups) as Array<[BoardStatus, BoardTask[]]>).forEach(([status, items]) => {
     items.forEach((task, index) => {
-      updates.set(task.id, {
-        ...task,
-        status,
-        orderIndex: (index + 1) * 10,
-      });
+      const orderedTask = task.status === status ? task : taskWithStatusPreview(task, status, updatedAt);
+      updates.set(task.id, { ...orderedTask, orderIndex: (index + 1) * 10 });
     });
   });
 
@@ -1233,10 +1257,16 @@ export default function KanbanApp({
   const draggingTask = draggingTaskId
     ? board.tasks.find((task) => task.id === draggingTaskId) ?? null
     : null;
+  const draggingPreviewTask = draggingTask && crossDragTarget
+    ? taskWithStatusPreview(draggingTask, crossDragTarget)
+    : draggingTask;
   const draggingTaskProject = draggingTask
     ? projectById(board.projects, draggingTask.projectId)
     : fallbackProject;
   const selectedTaskEditable = selectedTask ? canEditTask(selectedTask) : false;
+  const selectedTaskNormalizableOverdueMarkers = selectedTask && canManageProjects
+    ? normalizableOverdueMarkers(selectedTask, todayKey, dueSoonDays)
+    : [];
   const selectedProject = selectedProjectId
     ? board.projects.find((project) => project.id === selectedProjectId) ?? null
     : null;
@@ -1676,6 +1706,47 @@ export default function KanbanApp({
     }
   }
 
+  async function normalizeTaskOverdue(taskId: string, warningKey: DeadlineMarker["key"]) {
+    const previousTasks = board.tasks;
+    const currentTask = board.tasks.find((task) => task.id === taskId);
+    if (!currentTask) {
+      return false;
+    }
+    const marker = normalizableOverdueMarkers(currentTask, todayKey, dueSoonDays)
+      .find((item) => item.key === warningKey);
+    if (!marker) {
+      return false;
+    }
+    setSyncState("syncing");
+
+    if (isLocalPreview) {
+      notify("本地预览模式不支持消除告警", "error");
+      setBoard((current) => ({ ...current, tasks: previousTasks }));
+      setSyncState("local");
+      return false;
+    }
+
+    try {
+      const saved = await apiRequest<BoardTask>(`/api/tasks/${taskId}/normalize-overdue`, "POST", {
+        normalized: true,
+        warningKeys: [warningKey],
+      });
+      setBoard((current) => ({
+        ...current,
+        tasks: current.tasks.map((task) => (task.id === taskId ? saved : task)),
+      }));
+      setSyncState("synced");
+      notifyDashboardRefresh();
+      notify(`已消除${marker.label}告警`);
+      return true;
+    } catch (error) {
+      setBoard((current) => ({ ...current, tasks: previousTasks }));
+      setSyncState("local");
+      notify(error instanceof Error ? error.message : "消除告警失败", "error");
+      return false;
+    }
+  }
+
   async function createTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -1711,6 +1782,8 @@ export default function KanbanApp({
       testDueDate: newTask.testDueDate,
       designDueDate: newTask.designDueDate,
       dueDate: newTask.dueDate,
+      designCompletedAt: null,
+      devCompletedAt: null,
       estimate: 1,
       progress: 0,
       blockers: 0,
@@ -2548,20 +2621,20 @@ export default function KanbanApp({
                 </div>
                 <DeleteDropZone visible={draggingTaskId !== null} />
                 <DragOverlay dropAnimation={dragOverlayDropAnimation} zIndex={160}>
-                  {draggingTask ? (
+                  {draggingPreviewTask ? (
                     <div
                       className="transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)]"
                       style={{
-                        width: dragOverlayWidth ?? measuredTaskCardWidth(draggingTask.status),
+                        width: dragOverlayWidth ?? measuredTaskCardWidth(draggingPreviewTask.status),
                         maxWidth: "calc(100vw - 32px)",
                       }}
                     >
                       <TaskCard
-                        task={draggingTask}
+                        task={draggingPreviewTask}
                         todayKey={todayKey}
                         dueSoonDays={dueSoonDays}
                         project={draggingTaskProject}
-                        selected={draggingTask.id === selectedTaskId}
+                        selected={draggingPreviewTask.id === selectedTaskId}
                         stripeEnabled={taskCardStripeEnabled}
                         dragging
                         draggable={false}
@@ -2587,19 +2660,18 @@ export default function KanbanApp({
       </div>
 
       <footer className="border-t border-[var(--border)] text-sm text-[var(--muted)]">
-        <div className="mx-auto flex w-full max-w-[2160px] flex-col items-center gap-3 px-5 py-5 sm:flex-row sm:justify-between 2xl:px-8">
-          <div className="flex items-center gap-2">
+        <div className="mx-auto flex w-full max-w-[2160px] justify-center px-5 py-5 2xl:px-8">
+          <div className="flex flex-wrap items-center justify-center gap-2 text-center">
             <Copyright size={14} />
             <span>2026 <strong>Kanban</strong></span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--accent)]">
+              <Edit3 size={12} />
+              <span className="text-[var(--text)]">kfzx-chenwh4</span>
+              <span>000959918</span>
+            </span>
             <span className="rounded bg-[var(--card-section)] px-1.5 py-0.5 text-xs text-[var(--muted)]">
               v{appVersion}
             </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Edit3 size={13} />
-            <span className="h-3 w-px bg-[var(--border)]" />
-            <span className="font-medium text-[var(--text)]">kfzx-chenwh4</span>
-            <span className="rounded bg-[var(--accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--accent)]">000959918</span>
           </div>
         </div>
       </footer>
@@ -2639,7 +2711,9 @@ export default function KanbanApp({
               columns={board.columns}
               currentUser={currentUser ?? undefined}
               editable={selectedTaskEditable}
+              normalizableOverdueMarkers={selectedTaskNormalizableOverdueMarkers}
               onSave={(patch, subtasks) => saveTaskDetail(selectedTask.id, patch, subtasks)}
+              onNormalizeOverdue={(warningKey) => normalizeTaskOverdue(selectedTask.id, warningKey)}
               onInvalid={showNotice}
               onRework={() => reworkTask(selectedTask.id)}
               onDelete={() => void removeTask(selectedTask.id)}
@@ -3734,7 +3808,9 @@ function TaskDrawer({
   columns,
   currentUser,
   editable,
+  normalizableOverdueMarkers,
   onSave,
+  onNormalizeOverdue,
   onInvalid,
   onRework,
   onDelete,
@@ -3745,7 +3821,9 @@ function TaskDrawer({
   columns: BoardData["columns"];
   currentUser: BoardData["currentUser"];
   editable: boolean;
+  normalizableOverdueMarkers: DeadlineMarker[];
   onSave: (patch: Partial<BoardTask>, subtasks: SubtaskDraft[]) => Promise<boolean>;
+  onNormalizeOverdue: (warningKey: DeadlineMarker["key"]) => Promise<boolean>;
   onInvalid: (message: string, title?: string) => void;
   onRework: () => Promise<void>;
   onDelete: () => void;
@@ -3755,6 +3833,7 @@ function TaskDrawer({
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [saving, setSaving] = useState(false);
   const [reworking, setReworking] = useState(false);
+  const [normalizingOverdueKey, setNormalizingOverdueKey] = useState<DeadlineMarker["key"] | null>(null);
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [editingSubtaskTitle, setEditingSubtaskTitle] = useState("");
   const taskSubtasksRef = useRef(task.subtasks);
@@ -3797,6 +3876,69 @@ function TaskDrawer({
     setEditingSubtaskTitle("");
   }, [subtaskResetKey, task.id, task.updatedAt, taskDraftSnapshot]);
 
+  function buildTaskPatch(nextDraft: TaskDraft, nextSubtaskDrafts: SubtaskDraft[]) {
+    const hasSubtasks = nextSubtaskDrafts.length > 0;
+    const effectiveProgress = hasSubtasks
+      ? progressFromSubtasks(nextSubtaskDrafts, nextDraft.progress)
+      : nextDraft.progress;
+
+    return {
+      patch: {
+        title: nextDraft.title,
+        description: nextDraft.description,
+        projectId: nextDraft.projectId,
+        status: nextDraft.status,
+        priority: nextDraft.priority,
+        testDueDate: nextDraft.testDueDate,
+        designDueDate: nextDraft.designDueDate,
+        dueDate: nextDraft.dueDate,
+        ownerUserId: nextDraft.ownerUserId,
+        owner: nextDraft.owner,
+        testerUserId: nextDraft.testerUserId,
+        tester: nextDraft.tester,
+        workloadDays: normalizeWorkloadInput(nextDraft.workloadDays),
+        progress: effectiveProgress,
+        blockers: Number(nextDraft.blockers || 0),
+        blockedReason: nextDraft.blockedReason,
+        tags: parseTags(nextDraft.tagsText),
+      },
+      effectiveProgress,
+    };
+  }
+
+  async function persistTaskDraft(nextDraft: TaskDraft, nextSubtaskDrafts: SubtaskDraft[]) {
+    if (!nextDraft.title.trim()) {
+      onInvalid("请输入任务名称。", "无法保存任务");
+      return false;
+    }
+    if (!nextDraft.description.trim()) {
+      onInvalid("请输入任务描述。", "无法保存任务");
+      return false;
+    }
+    if (!nextDraft.projectId) {
+      onInvalid("请选择项目。", "无法保存任务");
+      return false;
+    }
+    const hasDraftAssignee = Boolean(nextDraft.ownerUserId || nextDraft.testerUserId);
+    if (
+      currentUser?.role === "team_member" &&
+      hasDraftAssignee &&
+      nextDraft.ownerUserId !== currentUser.id &&
+      nextDraft.testerUserId !== currentUser.id
+    ) {
+      onInvalid("团队成员只能保存跟自己有关的任务", "无法保存任务");
+      return false;
+    }
+
+    setSaving(true);
+    try {
+      const { patch } = buildTaskPatch(nextDraft, nextSubtaskDrafts);
+      return await onSave(patch, nextSubtaskDrafts);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function commitSubtaskTitle(subtaskId: string, title: string) {
     if (!title.trim()) {
       setEditingSubtaskId(null);
@@ -3814,82 +3956,52 @@ function TaskDrawer({
     setEditingSubtaskTitle("");
   }
 
-  function addSubtask(event: FormEvent<HTMLFormElement>) {
+  async function addSubtask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!newSubtaskTitle.trim()) {
       return;
     }
     const now = new Date().toISOString();
-    setSubtaskDrafts((current) => [
-      ...current,
+    const nextSubtasks = [
+      ...subtaskDrafts,
       {
-        id: `draft-step-${task.id}-${Date.now()}-${current.length + 1}`,
+        id: `draft-step-${task.id}-${Date.now()}-${subtaskDrafts.length + 1}`,
         taskId: task.id,
         title: newSubtaskTitle.trim(),
         done: false,
-        orderIndex: current.length * 10 + 10,
+        orderIndex: subtaskDrafts.length * 10 + 10,
         createdAt: now,
         updatedAt: now,
       },
-    ]);
-    setNewSubtaskTitle("");
+    ];
+
+    setSubtaskDrafts(nextSubtasks);
+    const saved = await persistTaskDraft(draft, nextSubtasks);
+    if (saved) {
+      setNewSubtaskTitle("");
+      return;
+    }
+    setSubtaskDrafts(subtaskDrafts);
   }
 
   async function saveTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!draft.title.trim()) {
-      onInvalid("请输入任务名称。", "无法保存任务");
-      return;
-    }
-    if (!draft.description.trim()) {
-      onInvalid("请输入任务描述。", "无法保存任务");
-      return;
-    }
-    if (!draft.projectId) {
-      onInvalid("请选择项目。", "无法保存任务");
-      return;
-    }
-    const hasDraftAssignee = Boolean(draft.ownerUserId || draft.testerUserId);
-    if (
-      currentUser?.role === "team_member" &&
-      hasDraftAssignee &&
-      draft.ownerUserId !== currentUser.id &&
-      draft.testerUserId !== currentUser.id
-    ) {
-      onInvalid("团队成员只能保存跟自己有关的任务", "无法保存任务");
-      return;
-    }
-
-    setSaving(true);
-    try {
-      await onSave({
-        title: draft.title,
-        description: draft.description,
-        projectId: draft.projectId,
-        status: draft.status,
-        priority: draft.priority,
-        testDueDate: draft.testDueDate,
-        designDueDate: draft.designDueDate,
-        dueDate: draft.dueDate,
-        ownerUserId: draft.ownerUserId,
-        owner: draft.owner,
-        testerUserId: draft.testerUserId,
-        tester: draft.tester,
-        workloadDays: normalizeWorkloadInput(draft.workloadDays),
-        progress: effectiveProgress,
-        blockers: Number(draft.blockers || 0),
-        blockedReason: draft.blockedReason,
-        tags: parseTags(draft.tagsText),
-      }, subtaskDrafts);
-    } finally {
-      setSaving(false);
-    }
+    await persistTaskDraft(draft, subtaskDrafts);
   }
 
   async function handleRework() {
     setReworking(true);
     await onRework();
     setReworking(false);
+  }
+
+  async function handleNormalizeOverdue(warningKey: DeadlineMarker["key"]) {
+    setNormalizingOverdueKey(warningKey);
+    try {
+      await onNormalizeOverdue(warningKey);
+    } finally {
+      setNormalizingOverdueKey(null);
+    }
   }
 
   return (
@@ -4206,35 +4318,67 @@ function TaskDrawer({
         </fieldset>
       </section>
 
+      {editable && normalizableOverdueMarkers.length > 0 ? (
+        <section className="space-y-2 rounded-md border border-[var(--danger)]/35 bg-[var(--danger-soft)] p-3 text-sm text-[var(--danger)]">
+          <div className="flex items-center gap-2 font-semibold">
+            <ShieldCheck size={15} className="shrink-0" />
+            <span>告警</span>
+          </div>
+          <div className="space-y-2">
+            {normalizableOverdueMarkers.map((marker) => (
+              <div key={marker.key} className="flex items-center justify-between gap-3 rounded border border-[var(--danger)]/25 bg-[var(--panel)]/70 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="truncate font-medium">{marker.label}超期</div>
+                  <div className="text-xs opacity-80">
+                    截止 {marker.date}{marker.note ? `，${marker.note}` : ""}
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void handleNormalizeOverdue(marker.key)}
+                  disabled={normalizingOverdueKey === marker.key}
+                  className="shrink-0 rounded border border-[var(--danger)] px-2.5 py-1.5 text-xs font-semibold text-[var(--danger)] transition hover:bg-[var(--danger-soft)] disabled:opacity-60"
+                >
+                  {normalizingOverdueKey === marker.key ? "处理中" : "消除"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       {editable ? (
         <div className={`mt-2 grid gap-3 border-t border-[var(--border)] pt-5 ${task.status === "done" ? "grid-cols-3" : "grid-cols-2"}`}>
           <button
             type="submit"
             form="task-edit-form"
             disabled={saving}
-            className="flex items-center justify-center gap-2 rounded-md bg-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60"
+            title="保存任务"
+            className="flex min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md bg-[var(--accent)] px-3 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--accent-hover)] disabled:opacity-60"
           >
-            <CheckCircle2 size={16} />
-            {saving ? "保存中" : "保存任务"}
+            <CheckCircle2 size={16} className="shrink-0" />
+            <span>{saving ? "保存中" : "保存"}</span>
           </button>
           {task.status === "done" ? (
             <button
               type="button"
+              title="发起返工"
               onClick={() => void handleRework()}
               disabled={reworking}
-              className="flex items-center justify-center gap-2 rounded-md border border-[var(--accent)] px-4 py-2.5 text-sm font-semibold text-[var(--accent)] transition hover:bg-[var(--accent-soft)] disabled:opacity-60"
+              className="flex min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-[var(--accent)] px-3 py-2.5 text-sm font-semibold text-[var(--accent)] transition hover:bg-[var(--accent-soft)] disabled:opacity-60"
             >
-              <RotateCcw size={16} />
-              {reworking ? "发起中" : "发起返工"}
+              <RotateCcw size={16} className="shrink-0" />
+              <span>{reworking ? "发起中" : "返工"}</span>
             </button>
           ) : null}
           <button
             type="button"
+            title="删除任务"
             onClick={onDelete}
-            className="flex items-center justify-center gap-2 rounded-md border border-[var(--danger)] px-4 py-2.5 text-sm font-semibold text-[var(--danger)] transition hover:bg-[var(--danger-soft)]"
+            className="flex min-w-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-[var(--danger)] px-3 py-2.5 text-sm font-semibold text-[var(--danger)] transition hover:bg-[var(--danger-soft)]"
           >
-            <Trash2 size={16} />
-            删除任务
+            <Trash2 size={16} className="shrink-0" />
+            <span>删除</span>
           </button>
         </div>
       ) : (

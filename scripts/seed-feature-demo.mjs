@@ -367,7 +367,7 @@ function insertProjects(db) {
 
 function insertTasks(db) {
   const stmt = db.prepare(
-    "INSERT INTO tasks (id, project_id, title, description, status, priority, owner, start_date, due_date, estimate, workload_days, progress, blockers, tags, order_index, created_at, updated_at, blocked_reason, deleted_at, completed_at, test_due_date, design_due_date, tester, owner_user_id, tester_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+    "INSERT INTO tasks (id, project_id, title, description, status, priority, owner_user_id, owner, tester_user_id, tester, workload_days, start_date, design_due_date, design_completed_at, test_due_date, dev_completed_at, due_date, completed_at, estimate, progress, blockers, blocked_reason, tags, order_index, deleted_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
   );
   for (const task of buildTasks()) {
     stmt.run(
@@ -377,25 +377,27 @@ function insertTasks(db) {
       task.description,
       task.status,
       task.priority,
+      task.ownerUserId,
       task.owner,
-      task.startDate,
-      task.dueDate,
-      task.estimate,
+      task.testerUserId,
+      task.tester,
       task.workloadDays,
+      task.startDate,
+      task.designDueDate,
+      null,
+      task.testDueDate,
+      null,
+      task.dueDate,
+      task.completedAt,
+      task.estimate,
       task.progress,
       task.blockers,
+      task.blockedReason,
       JSON.stringify(task.tags),
       task.orderIndex,
-      task.createdAt,
-      task.updatedAt,
-      task.blockedReason,
       task.deletedAt,
-      task.completedAt,
-      task.testDueDate,
-      task.designDueDate,
-      task.tester,
-      task.ownerUserId,
-      task.testerUserId
+      task.createdAt,
+      task.updatedAt
     );
   }
 }

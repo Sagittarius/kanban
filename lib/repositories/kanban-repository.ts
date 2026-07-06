@@ -98,6 +98,10 @@ export type SaveTaskDetailInput = {
   task?: UpdateTaskInput;
   subtasks?: unknown;
 };
+export type NormalizeTaskOverdueInput = {
+  normalized?: unknown;
+  warningKeys?: unknown;
+};
 export type ReorderTaskInput = { updates?: unknown };
 export type CreateSubtaskInput = { title?: unknown };
 export type UpdateSubtaskInput = Partial<{ title: unknown; done: unknown }>;
@@ -1244,9 +1248,12 @@ export class KanbanRepository {
       tester: assignees.testerName,
       workload_days: workloadDays(input.workloadDays),
       start_date: "",
-      test_due_date: opt(input.testDueDate),
       design_due_date: opt(input.designDueDate),
+      design_completed_at: null,
+      test_due_date: opt(input.testDueDate),
+      dev_completed_at: null,
       due_date: opt(input.dueDate),
+      completed_at: null,
       estimate: 1,
       progress: 0,
       blockers: 0,
@@ -1254,12 +1261,11 @@ export class KanbanRepository {
       tags: JSON.stringify(tags(input.tags, [])),
       order_index: await this.nextTaskOrderIndex("backlog", projectId),
       deleted_at: null,
-      completed_at: null,
       created_at: now,
       updated_at: now,
     };
     await this.x(
-      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,test_due_date,design_due_date,due_date,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,design_due_date,design_completed_at,test_due_date,dev_completed_at,due_date,completed_at,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         row.id,
         row.project_id,
@@ -1273,9 +1279,12 @@ export class KanbanRepository {
         row.tester,
         row.workload_days,
         row.start_date,
-        row.test_due_date,
         row.design_due_date,
+        row.design_completed_at,
+        row.test_due_date,
+        row.dev_completed_at,
         row.due_date,
+        row.completed_at,
         row.estimate,
         row.progress,
         row.blockers,
@@ -1283,7 +1292,6 @@ export class KanbanRepository {
         row.tags,
         row.order_index,
         row.deleted_at,
-        row.completed_at,
         row.created_at,
         row.updated_at,
       ]
@@ -1320,7 +1328,7 @@ export class KanbanRepository {
     const nextTitle = current.title.endsWith("（返工）") ? current.title : `${current.title}（返工）`;
     const nextTags = Array.from(new Set([...current.tags, "返工"]));
     await this.x(
-      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,test_due_date,design_due_date,due_date,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,completed_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,design_due_date,design_completed_at,test_due_date,dev_completed_at,due_date,completed_at,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         newTaskId,
         current.projectId,
@@ -1334,16 +1342,18 @@ export class KanbanRepository {
         current.tester,
         current.workloadDays,
         "",
-        current.testDueDate,
         current.designDueDate,
+        null,
+        current.testDueDate,
+        null,
         current.dueDate,
+        null,
         current.estimate,
         0,
         0,
         "",
         JSON.stringify(nextTags),
         await this.nextTaskOrderIndex("backlog", current.projectId),
-        null,
         null,
         now,
         now,
@@ -1399,10 +1409,14 @@ export class KanbanRepository {
     }
     const nextTitle = text(input.title, current.title);
     const nextDescription = opt(input.description, current.description);
+    const nextDesignDueDate = opt(input.designDueDate, current.designDueDate);
+    const nextTestDueDate = opt(input.testDueDate, current.testDueDate);
+    const nextDueDate = opt(input.dueDate, current.dueDate);
     if (input.title !== undefined && !nextTitle) throw new Error("任务名称不能为空");
     if (input.description !== undefined && !nextDescription.trim()) throw new Error("任务描述不能为空");
     const nextTags = JSON.stringify(tags(input.tags, current.tags));
-    const completed = status === "done" ? (current.status === "done" ? current.completedAt : iso()) : null;
+    const now = iso();
+    const phaseCompletion = phaseCompletionForStatus(current, status, now);
     const order = status !== current.status ? await this.nextTaskOrderIndex(status, projectId) : current.orderIndex;
     const nextProgress = status === "done"
       ? 100
@@ -1412,7 +1426,7 @@ export class KanbanRepository {
     const nextBlockers = status === "done" ? 0 : num(input.blockers, current.blockers, 0, 99);
     const nextBlockedReason = status === "done" ? "" : opt(input.blockedReason, current.blockedReason);
     await this.x(
-      "UPDATE tasks SET title=?,description=?,project_id=?,status=?,priority=?,owner_user_id=?,owner=?,tester_user_id=?,tester=?,workload_days=?,start_date=?,test_due_date=?,design_due_date=?,due_date=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,completed_at=?,updated_at=? WHERE id=?",
+      "UPDATE tasks SET title=?,description=?,project_id=?,status=?,priority=?,owner_user_id=?,owner=?,tester_user_id=?,tester=?,workload_days=?,start_date=?,design_due_date=?,design_completed_at=?,test_due_date=?,dev_completed_at=?,due_date=?,completed_at=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,updated_at=? WHERE id=?",
       [
         nextTitle,
         nextDescription,
@@ -1425,17 +1439,19 @@ export class KanbanRepository {
         assignees.testerName,
         input.workloadDays === undefined ? current.workloadDays : workloadDays(input.workloadDays),
         opt(input.startDate, current.startDate),
-        opt(input.testDueDate, current.testDueDate),
-        opt(input.designDueDate, current.designDueDate),
-        opt(input.dueDate, current.dueDate),
+        nextDesignDueDate,
+        phaseCompletion.designCompletedAt,
+        nextTestDueDate,
+        phaseCompletion.devCompletedAt,
+        nextDueDate,
+        phaseCompletion.completedAt,
         num(input.estimate, current.estimate, 1, 99),
         nextProgress,
         nextBlockers,
         nextBlockedReason,
         nextTags,
         order,
-        completed,
-        iso(),
+        now,
         id,
       ]
     );
@@ -1450,9 +1466,9 @@ export class KanbanRepository {
       changeEntry("优先级", priorityLabel(current.priority), priorityLabel(isPriority(input.priority) ? input.priority : current.priority)),
       changeEntry("负责人", current.owner || "空", assignees.ownerName || "空"),
       changeEntry("测试员", current.tester || "空", assignees.testerName || "空"),
-      changeEntry("设计截止", current.designDueDate || "空", opt(input.designDueDate, current.designDueDate) || "空"),
-      changeEntry("提测日期", current.testDueDate || "空", opt(input.testDueDate, current.testDueDate) || "空"),
-      changeEntry("交付日期", current.dueDate || "空", opt(input.dueDate, current.dueDate) || "空"),
+      changeEntry("设计截止", current.designDueDate || "空", nextDesignDueDate || "空"),
+      changeEntry("提测日期", current.testDueDate || "空", nextTestDueDate || "空"),
+      changeEntry("交付日期", current.dueDate || "空", nextDueDate || "空"),
       changeEntry("工作量", formatWorkload(current.workloadDays), formatWorkload(input.workloadDays === undefined ? current.workloadDays : workloadDays(input.workloadDays))),
       changeEntry("进度", `${current.progress}%`, `${nextProgress}%`),
       changeEntry("阻塞", String(current.blockers), String(nextBlockers)),
@@ -1637,18 +1653,29 @@ export class KanbanRepository {
       const old = byId.get(item.id);
       if (!old) continue;
       const oldStatus = normalizeBoardStatus(old?.status);
-      const completed = item.status === "done" ? (oldStatus === "done" ? String(old?.completed_at ?? iso()) : iso()) : null;
+      const now = iso();
+      const phaseCompletion = phaseCompletionForStatus(
+        {
+          designCompletedAt: old.design_completed_at as string | null,
+          devCompletedAt: old.dev_completed_at as string | null,
+          completedAt: old.completed_at as string | null,
+        },
+        item.status,
+        now
+      );
       const nextProgress = item.status === "done" ? 100 : num(old.progress, 0, 0, 100);
       const nextBlockers = item.status === "done" ? 0 : num(old.blockers, 0, 0, 99);
       const nextBlockedReason = item.status === "done" ? "" : String(old.blocked_reason ?? "");
-      await this.x("UPDATE tasks SET status=?,order_index=?,progress=?,blockers=?,blocked_reason=?,completed_at=?,updated_at=? WHERE id=?", [
+      await this.x("UPDATE tasks SET status=?,order_index=?,progress=?,blockers=?,blocked_reason=?,design_completed_at=?,dev_completed_at=?,completed_at=?,updated_at=? WHERE id=?", [
         item.status,
         item.orderIndex,
         nextProgress,
         nextBlockers,
         nextBlockedReason,
-        completed,
-        iso(),
+        phaseCompletion.designCompletedAt,
+        phaseCompletion.devCompletedAt,
+        phaseCompletion.completedAt,
+        now,
         item.id,
       ]);
       if (item.status === "done") {
@@ -1676,6 +1703,70 @@ export class KanbanRepository {
       }
     }
     return { ok: true as const };
+  }
+
+  async normalizeTaskOverdue(actor: CurrentUser, boardId: string, id: string, input: NormalizeTaskOverdueInput = {}) {
+    await this.requireBoardRead(actor, boardId);
+    if (!canManageBoardTasks(actor)) throw new Error("Forbidden");
+    const row = await this.getTaskRow(boardId, id);
+    if (!row || row.deleted_at) throw new Error("任务不存在");
+    const current = task(row, (await this.getSubtasks(id)).map(subtask));
+    const settings = await this.getSystemSettings(actor);
+    const warnings = taskWarningFlags(current, todayKeyInTimeZone(actor.timezone), settings.dueSoonDays);
+    if (!warnings.overdue) {
+      return current;
+    }
+
+    const normalized = input.normalized !== false;
+    const requestedKeys = normalizeWarningKeys(input.warningKeys);
+    const allowedKeys = normalizableWarningKeysForStatus(current.status);
+    const warningKeys = requestedKeys.length
+      ? warnings.overdueKeys.filter((key) => requestedKeys.includes(key) && allowedKeys.includes(key))
+      : warnings.overdueKeys.filter((key) => allowedKeys.includes(key));
+    if (!warningKeys.length) {
+      return current;
+    }
+    const nextDesignCompletedAt = warningKeys.includes("design")
+      ? normalized ? completionIsoForDueDate(current.designDueDate) : null
+      : current.designCompletedAt;
+    const nextDevCompletedAt = warningKeys.includes("development")
+      ? normalized ? completionIsoForDueDate(current.testDueDate) : null
+      : current.devCompletedAt;
+    const nextCompletedAt = warningKeys.includes("delivery")
+      ? normalized ? completionIsoForDueDate(current.dueDate) : null
+      : current.completedAt;
+    await this.x("UPDATE tasks SET design_completed_at=?,dev_completed_at=?,completed_at=?,updated_at=? WHERE id=?", [
+      nextDesignCompletedAt,
+      nextDevCompletedAt,
+      nextCompletedAt,
+      iso(),
+      id,
+    ]);
+    await this.recordActivity(boardId, {
+      entityType: "task",
+      entityId: id,
+      projectId: current.projectId,
+      taskId: id,
+      action: normalized ? "task.overdue.normalize" : "task.overdue.restore",
+      message: normalized
+        ? `消除任务「${current.title}」的${warningKeys.map(warningKeyLabel).join("、")}超期告警。`
+        : `恢复任务「${current.title}」的超期自动判断。`,
+      meta: {
+        normalized,
+        warningKeys,
+        normalizedBy: actor.id,
+      },
+    });
+    await this.recordAuditLog({
+      actor,
+      action: normalized ? "task.overdue.normalize" : "task.overdue.restore",
+      resourceType: "task",
+      resourceId: id,
+      boardId,
+      message: normalized ? `消除任务超期告警 ${current.title}` : `恢复任务超期判断 ${current.title}`,
+      metadata: { normalized, warningKeys },
+    });
+    return task(await this.getTaskRow(boardId, id), (await this.getSubtasks(id)).map(subtask));
   }
 
   async createSubtask(actor: CurrentUser, boardId: string, taskId: string, input: CreateSubtaskInput) {
@@ -2918,12 +3009,15 @@ function task(row: Record<string, unknown>, steps: Subtask[]) {
     owner: String(row.owner ?? ""),
     testerUserId: typeof row.tester_user_id === "string" ? row.tester_user_id : "",
     tester: typeof row.tester === "string" ? row.tester : "",
-    startDate: String(row.start_date ?? ""),
-    testDueDate: String(row.test_due_date ?? ""),
-    designDueDate: typeof row.design_due_date === "string" ? row.design_due_date : "",
-    dueDate: String(row.due_date ?? ""),
-    estimate: Number(row.estimate ?? 1),
     workloadDays: workloadDays(row.workload_days),
+    startDate: String(row.start_date ?? ""),
+    designDueDate: typeof row.design_due_date === "string" ? row.design_due_date : "",
+    designCompletedAt: typeof row.design_completed_at === "string" ? row.design_completed_at : null,
+    testDueDate: String(row.test_due_date ?? ""),
+    devCompletedAt: typeof row.dev_completed_at === "string" ? row.dev_completed_at : null,
+    dueDate: String(row.due_date ?? ""),
+    completedAt: row.completed_at as string | null,
+    estimate: Number(row.estimate ?? 1),
     progress: effectiveProgress,
     blockers: Number(row.blockers ?? 0),
     blockedReason: String(row.blocked_reason ?? ""),
@@ -2931,7 +3025,6 @@ function task(row: Record<string, unknown>, steps: Subtask[]) {
     subtasks: steps,
     orderIndex: Number(row.order_index ?? 0),
     deletedAt: row.deleted_at as string | null,
-    completedAt: row.completed_at as string | null,
     createdAt: String(row.created_at),
     updatedAt: String(row.updated_at),
   };
@@ -2946,8 +3039,57 @@ function daysUntil(date: string, todayKey: string) {
 
 function lateDaysByCompletion(date: string, compareIso: string | null) {
   if (!date || !compareIso) return null;
+  if (compareIso.startsWith(`${date}T23:59:59`)) return null;
   const lateDays = Math.ceil((new Date(compareIso).getTime() - new Date(`${date}T23:59:59`).getTime()) / 86400000);
   return lateDays > 0 ? -lateDays : null;
+}
+
+type TaskWarningKey = "design" | "development" | "delivery";
+
+function completionIsoForDueDate(date: string) {
+  return date ? `${date}T23:59:59` : iso();
+}
+
+function taskStatusRank(status: BoardStatus) {
+  return (
+    {
+      backlog: 0,
+      design: 1,
+      dev: 2,
+      test: 3,
+      done: 4,
+    } satisfies Record<BoardStatus, number>
+  )[status];
+}
+
+function phaseCompletionForStatus(
+  current: {
+    designCompletedAt?: string | null;
+    devCompletedAt?: string | null;
+    completedAt?: string | null;
+  },
+  status: BoardStatus,
+  now: string
+) {
+  const rank = taskStatusRank(status);
+  return {
+    designCompletedAt: rank >= taskStatusRank("dev") ? current.designCompletedAt ?? now : null,
+    devCompletedAt: rank >= taskStatusRank("test") ? current.devCompletedAt ?? now : null,
+    completedAt: rank >= taskStatusRank("done") ? current.completedAt ?? now : null,
+  };
+}
+
+function normalizableWarningKeysForStatus(status: BoardStatus): TaskWarningKey[] {
+  if (status === "dev") {
+    return ["design"];
+  }
+  if (status === "test") {
+    return ["design", "development"];
+  }
+  if (status === "done") {
+    return ["design", "development", "delivery"];
+  }
+  return [];
 }
 
 function taskWarningFlags(
@@ -2958,27 +3100,44 @@ function taskWarningFlags(
   const designDays = daysUntil(taskValue.designDueDate, todayKey);
   const testDays = daysUntil(taskValue.testDueDate, todayKey);
   const deliveryDays = daysUntil(taskValue.dueDate, todayKey);
-  const designLateDays = lateDaysByCompletion(taskValue.designDueDate, taskValue.completedAt);
-  const testLateDays = lateDaysByCompletion(taskValue.testDueDate, taskValue.completedAt);
+  const designLateDays = lateDaysByCompletion(taskValue.designDueDate, taskValue.designCompletedAt);
+  const testLateDays = lateDaysByCompletion(taskValue.testDueDate, taskValue.devCompletedAt);
   const deliveryLateDays = lateDaysByCompletion(taskValue.dueDate, taskValue.completedAt);
 
   const dueSoon =
-    (taskValue.status === "design" && designDays !== null && designDays >= 0 && designDays <= dueSoonDays) ||
-    (taskValue.status === "dev" && testDays !== null && testDays >= 0 && testDays <= dueSoonDays) ||
-    ((taskValue.status === "test" || taskValue.status === "done") && deliveryDays !== null && deliveryDays >= 0 && deliveryDays <= dueSoonDays);
+    (taskValue.status === "design" && !taskValue.designCompletedAt && designDays !== null && designDays >= 0 && designDays <= dueSoonDays) ||
+    (taskValue.status === "dev" && !taskValue.devCompletedAt && testDays !== null && testDays >= 0 && testDays <= dueSoonDays) ||
+    (taskValue.status === "test" && !taskValue.completedAt && deliveryDays !== null && deliveryDays >= 0 && deliveryDays <= dueSoonDays);
 
-  const overdue =
-    (taskValue.status === "design" && designDays !== null && designDays < 0) ||
-    ((taskValue.status === "dev" || taskValue.status === "test") && taskValue.designDueDate && designDays !== null && designDays < 0) ||
-    (taskValue.status === "dev" && testDays !== null && testDays < 0) ||
-    (taskValue.status === "test" && taskValue.testDueDate && testDays !== null && testDays < 0) ||
-    (taskValue.status === "test" && deliveryDays !== null && deliveryDays < 0) ||
-    (taskValue.status === "done" &&
-      (designLateDays !== null || testLateDays !== null || deliveryLateDays !== null));
+  const overdueKeys: TaskWarningKey[] = [];
+  if (taskValue.designDueDate) {
+    if (
+      taskValue.designCompletedAt
+        ? designLateDays !== null
+        : taskStatusRank(taskValue.status) >= taskStatusRank("design") && designDays !== null && designDays < 0
+    ) {
+      overdueKeys.push("design");
+    }
+  }
+  if (taskValue.testDueDate) {
+    if (
+      taskValue.devCompletedAt
+        ? testLateDays !== null
+        : taskStatusRank(taskValue.status) >= taskStatusRank("dev") && testDays !== null && testDays < 0
+    ) {
+      overdueKeys.push("development");
+    }
+  }
+  if (taskValue.dueDate) {
+    if (taskValue.completedAt ? deliveryLateDays !== null : taskValue.status === "test" && deliveryDays !== null && deliveryDays < 0) {
+      overdueKeys.push("delivery");
+    }
+  }
 
   return {
     dueSoon,
-    overdue,
+    overdue: overdueKeys.length > 0,
+    overdueKeys,
     blocked: taskValue.blockers > 0,
   };
 }
@@ -3348,6 +3507,24 @@ function tags(value: unknown, fallback: string[]) {
     .filter(Boolean)
     .filter((item, index, array) => array.indexOf(item) === index)
     .slice(0, 8);
+}
+
+function normalizeWarningKeys(value: unknown): TaskWarningKey[] {
+  if (!Array.isArray(value)) return [];
+  const allowed = new Set<TaskWarningKey>(["design", "development", "delivery"]);
+  return value
+    .filter((item): item is TaskWarningKey => typeof item === "string" && allowed.has(item as TaskWarningKey))
+    .filter((item, index, array) => array.indexOf(item) === index);
+}
+
+function warningKeyLabel(value: TaskWarningKey) {
+  return (
+    {
+      design: "设计",
+      development: "开发",
+      delivery: "交付",
+    } satisfies Record<TaskWarningKey, string>
+  )[value];
 }
 
 function normalizeTaskDetailSubtasks(value: unknown[]) {

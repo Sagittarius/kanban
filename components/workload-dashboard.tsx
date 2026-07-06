@@ -624,21 +624,20 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
         </section>
       </div>
       <footer className="relative z-20 border-t border-[var(--dash-line)] bg-[var(--dash-bg)]/85 text-sm text-[var(--dash-muted)]">
-        <div className="mx-auto flex w-full max-w-[2160px] flex-col items-center gap-3 px-5 py-5 sm:flex-row sm:justify-between 2xl:px-8">
-          <div className="flex items-center gap-2">
+        <div className="mx-auto flex w-full max-w-[2160px] justify-center px-5 py-5 2xl:px-8">
+          <div className="flex flex-wrap items-center justify-center gap-2 text-center">
             <Copyright size={14} />
             <span>2026 <strong>Kanban</strong></span>
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-[var(--dash-accent)]/20 bg-[var(--dash-accent-soft)] px-3 py-1 text-[11px] font-semibold text-[var(--dash-accent)]">
+              <Edit3 size={12} />
+              <span className="text-[var(--dash-text)]">kfzx-chenwh4</span>
+              <span>000959918</span>
+            </span>
             {props.appVersion ? (
               <span className="rounded bg-[var(--dash-track)] px-1.5 py-0.5 text-xs text-[var(--dash-muted)]">
                 v{props.appVersion}
               </span>
             ) : null}
-          </div>
-          <div className="flex items-center gap-2">
-            <Edit3 size={13} />
-            <span className="h-3 w-px bg-[var(--dash-line)]" />
-            <span className="font-medium text-[var(--dash-text)]">kfzx-chenwh4</span>
-            <span className="rounded bg-[var(--dash-accent-soft)] px-1.5 py-0.5 text-xs font-medium text-[var(--dash-accent)]">000959918</span>
           </div>
         </div>
       </footer>

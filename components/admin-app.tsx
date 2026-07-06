@@ -1047,10 +1047,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     {canManageTeam(team) ? (
                       <div className="mt-4 flex justify-end gap-2">
                         <SmallButton
-                          onClick={() => {
-                            setSelectedTeam(team);
-                            editTeam(team);
-                          }}
+                          onClick={() => editTeam(team)}
                         >
                           编辑
                         </SmallButton>
