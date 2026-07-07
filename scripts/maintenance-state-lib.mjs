@@ -48,7 +48,7 @@ export function clearMaintenanceState() {
   }
 }
 
-export function withMaintenanceLock(run) {
+export async function withMaintenanceLock(run) {
   const lockPath = resolveMaintenanceLockPath();
   let handle;
 
@@ -71,7 +71,7 @@ export function withMaintenanceLock(run) {
   }
 
   try {
-    return run();
+    return await run();
   } finally {
     if (typeof handle === "number") {
       fs.closeSync(handle);

@@ -30,7 +30,8 @@ docker compose -f docker-compose.postgres.yml up -d --build
 - `POSTGRES_URL=postgres://...@postgres:5432/kanban`
 - `KANBAN_DB_DRIVER=postgres`
 - 应用等待 PostgreSQL healthcheck 通过后启动
-- 容器启动前执行 `scripts/migrate-postgres.mjs`
+- 默认容器启动前执行 `scripts/migrate-postgres.mjs`
+- 如设置 `KANBAN_AUTO_UPGRADE=false`，容器启动前只做 PostgreSQL 维护预检；检测到待迁移结构时，首页会进入维护升级页面，确认后再执行迁移
 
 ### 手工运行
 

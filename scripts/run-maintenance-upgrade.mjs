@@ -1,10 +1,14 @@
 import { pathToFileURL } from "node:url";
 import { readMaintenanceState, withMaintenanceLock, writeMaintenanceState, clearMaintenanceState } from "./maintenance-state-lib.mjs";
+import { runPostgresMigrations } from "./postgres-migration-lib.mjs";
 import { readImageTag } from "./sqlite-migration-lib.mjs";
-import { runSafeUpgrade } from "./upgrade-local-sqlite.mjs";
+
+function resolveDatabaseDriver() {
+  return process.env.KANBAN_DB_DRIVER ?? process.env.DB_DRIVER ?? "sqlite";
+}
 
 export async function runMaintenanceUpgrade() {
-  return withMaintenanceLock(() => {
+  return withMaintenanceLock(async () => {
     const previous = readMaintenanceState();
     writeMaintenanceState({
       ...(previous ?? {}),
@@ -14,7 +18,9 @@ export async function runMaintenanceUpgrade() {
     });
 
     try {
-      const result = runSafeUpgrade();
+      const result = resolveDatabaseDriver() === "postgres"
+        ? await runPostgresMigrations()
+        : await runSqliteSafeUpgrade();
       clearMaintenanceState();
       return result;
     } catch (error) {
@@ -37,6 +43,11 @@ export async function runMaintenanceUpgrade() {
       throw error;
     }
   });
+}
+
+async function runSqliteSafeUpgrade() {
+  const { runSafeUpgrade } = await import("./upgrade-local-sqlite.mjs");
+  return runSafeUpgrade();
 }
 
 async function main() {

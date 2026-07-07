@@ -161,6 +161,8 @@ PostgreSQL 迁移：
 KANBAN_DB_DRIVER=postgres POSTGRES_URL=postgres://kanban:password@localhost:5432/kanban node scripts/migrate-postgres.mjs
 ```
 
+Docker 启动时默认自动执行数据库迁移。设置 `KANBAN_AUTO_UPGRADE=false` 后，SQLite 和 PostgreSQL 都会先进入维护预检；存在待执行迁移时会展示维护升级页面，由页面确认后再升级。
+
 PostgreSQL 性能建议：
 
 - 生产和多人使用场景优先使用 PostgreSQL

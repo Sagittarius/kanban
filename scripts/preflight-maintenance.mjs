@@ -1,10 +1,17 @@
 import { pathToFileURL } from "node:url";
-import { inspectUpgradeState } from "./upgrade-local-sqlite.mjs";
+import { inspectPostgresUpgradeState } from "./postgres-migration-lib.mjs";
 import { clearMaintenanceState, writeMaintenanceState } from "./maintenance-state-lib.mjs";
 import { readImageTag } from "./sqlite-migration-lib.mjs";
 
-export function runPreflightMaintenance() {
-  const state = inspectUpgradeState();
+function resolveDatabaseDriver() {
+  return process.env.KANBAN_DB_DRIVER ?? process.env.DB_DRIVER ?? "sqlite";
+}
+
+export async function runPreflightMaintenance() {
+  const driver = resolveDatabaseDriver();
+  const state = driver === "postgres"
+    ? await inspectPostgresUpgradeState()
+    : await inspectSqliteUpgradeState();
 
   if (state.pending.length === 0) {
     clearMaintenanceState();
@@ -33,8 +40,13 @@ export function runPreflightMaintenance() {
   return { maintenance: true, statePath, ...state };
 }
 
+async function inspectSqliteUpgradeState() {
+  const { inspectUpgradeState } = await import("./upgrade-local-sqlite.mjs");
+  return inspectUpgradeState();
+}
+
 async function main() {
-  runPreflightMaintenance();
+  await runPreflightMaintenance();
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

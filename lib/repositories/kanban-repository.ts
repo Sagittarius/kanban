@@ -1017,8 +1017,7 @@ export class KanbanRepository {
 
   async getSystemSettings(actor: CurrentUser) {
     adminOnly(actor);
-    await this.ensureSystemParameters();
-    return settingsFromRows(await this.q("SELECT * FROM system_parameters ORDER BY order_index ASC,key ASC"));
+    return this.readSystemSettings();
   }
 
   async updateSystemSettings(actor: CurrentUser, input: UpdateSystemSettingsInput) {
@@ -1711,7 +1710,7 @@ export class KanbanRepository {
     const row = await this.getTaskRow(boardId, id);
     if (!row || row.deleted_at) throw new Error("任务不存在");
     const current = task(row, (await this.getSubtasks(id)).map(subtask));
-    const settings = await this.getSystemSettings(actor);
+    const settings = await this.readSystemSettings();
     const warnings = taskWarningFlags(current, todayKeyInTimeZone(actor.timezone), settings.dueSoonDays);
     if (!warnings.overdue) {
       return current;
@@ -2270,6 +2269,11 @@ export class KanbanRepository {
         }
       }
     }
+  }
+
+  private async readSystemSettings() {
+    await this.ensureSystemParameters();
+    return settingsFromRows(await this.q("SELECT * FROM system_parameters ORDER BY order_index ASC,key ASC"));
   }
 
   async ensureBoardDefaults(boardId: string, ownerName: string) {
