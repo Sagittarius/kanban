@@ -67,6 +67,7 @@ export function errorStatus(error: unknown) {
   const message = error instanceof Error ? error.message : "Request failed";
   if (message === "Unauthorized") return 401;
   if (message === "Forbidden") return 403;
+  if (message.includes("只能") || message.includes("无法修改自己无关任务") || message.includes("无法删除自己无关任务")) return 403;
   if (message.endsWith("not found") || message.endsWith("Not found") || message.endsWith("不存在")) return 404;
   if (
     message === "Username already exists" ||

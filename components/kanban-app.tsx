@@ -1766,6 +1766,15 @@ export default function KanbanApp({
       showNotice("当前没有可用项目，请先创建项目。", "无法添加任务");
       return;
     }
+    const hasNewTaskAssignee = Boolean(newTask.ownerUserId || newTask.testerUserId);
+    if (
+      currentUser?.role === "team_member" &&
+      (!hasNewTaskAssignee ||
+        (newTask.ownerUserId !== currentUser.id && newTask.testerUserId !== currentUser.id))
+    ) {
+      showNotice("团队成员创建任务时，负责人或测试员至少一项需要选择自己。", "无法添加任务");
+      return;
+    }
     const optimistic: BoardTask = {
       id: nextLocalId("local-task"),
       projectId,
@@ -1860,6 +1869,9 @@ export default function KanbanApp({
     if (!task) {
       return;
     }
+    const previousTasks = board.tasks;
+    const previousDrawerMode = drawerMode;
+    const previousSelectedTaskId = selectedTaskId;
 
     setBoard((current) => ({
       ...current,
@@ -1883,10 +1895,15 @@ export default function KanbanApp({
       await refreshBoard();
       notifyDashboardRefresh();
       notify("任务已删除");
-    } catch {
-      appendLocalActivity(`删除任务「${task.title}」。`);
+    } catch (error) {
+      latestTasksRef.current = previousTasks;
+      setBoard((current) => ({ ...current, tasks: previousTasks }));
+      if (previousSelectedTaskId === taskId) {
+        setDrawerMode(previousDrawerMode);
+        setSelectedTaskId(previousSelectedTaskId);
+      }
       setSyncState("local");
-      notify("任务删除失败", "error");
+      notify(error instanceof Error ? error.message : "任务删除失败", "error");
     }
   }
 
@@ -2009,7 +2026,7 @@ export default function KanbanApp({
     setBoard((current) =>
       sameTaskOrder(current.tasks, finalTasks) ? current : { ...current, tasks: finalTasks }
     );
-    void persistCurrentOrder(finalTasks, startTasks);
+    void persistCurrentOrder(finalTasks, startTasks, sourceId);
     dragStartTasksRef.current = null;
     dragStartStatusRef.current = null;
   }
@@ -2027,7 +2044,7 @@ export default function KanbanApp({
     dragStartStatusRef.current = null;
   }
 
-  async function persistCurrentOrder(tasksToPersist = board.tasks, rollbackTasks?: BoardTask[]) {
+  async function persistCurrentOrder(tasksToPersist = board.tasks, rollbackTasks?: BoardTask[], activeTaskId?: string) {
     setSyncState("syncing");
     if (isLocalPreview) {
       setSyncState("local");
@@ -2036,16 +2053,17 @@ export default function KanbanApp({
 
     try {
       await apiRequest("/api/tasks/reorder", "POST", {
+        activeTaskId,
         updates: taskUpdates(tasksToPersist),
       });
       await refreshBoard(false);
-    } catch {
+    } catch (error) {
       if (rollbackTasks) {
         latestTasksRef.current = rollbackTasks;
         setBoard((current) => ({ ...current, tasks: rollbackTasks }));
       }
       setSyncState("local");
-      notify("拖拽保存失败", "error");
+      notify(error instanceof Error ? error.message : "拖拽保存失败", "error");
     }
   }
 
@@ -3840,6 +3858,9 @@ function TaskDrawer({
   const taskDraftSnapshot = useMemo<TaskDraft>(() => taskDraftFromTask(task), [task]);
 
   const taskMembers = membersForProject(projects, teams, draft.projectId);
+  const restrictedEditor = editable && currentUser?.role === "team_member";
+  const canEditScopedFields = editable;
+  const canEditManagedFields = editable && !restrictedEditor;
   const taskProjectOptions = projects.map((project) => ({
     value: project.id,
     label: project.name,
@@ -3883,25 +3904,34 @@ function TaskDrawer({
       : nextDraft.progress;
 
     return {
-      patch: {
-        title: nextDraft.title,
-        description: nextDraft.description,
-        projectId: nextDraft.projectId,
-        status: nextDraft.status,
-        priority: nextDraft.priority,
-        testDueDate: nextDraft.testDueDate,
-        designDueDate: nextDraft.designDueDate,
-        dueDate: nextDraft.dueDate,
-        ownerUserId: nextDraft.ownerUserId,
-        owner: nextDraft.owner,
-        testerUserId: nextDraft.testerUserId,
-        tester: nextDraft.tester,
-        workloadDays: normalizeWorkloadInput(nextDraft.workloadDays),
-        progress: effectiveProgress,
-        blockers: Number(nextDraft.blockers || 0),
-        blockedReason: nextDraft.blockedReason,
-        tags: parseTags(nextDraft.tagsText),
-      },
+      patch: restrictedEditor
+        ? {
+            description: nextDraft.description,
+            status: nextDraft.status,
+            progress: effectiveProgress,
+            blockers: Number(nextDraft.blockers || 0),
+            blockedReason: nextDraft.blockedReason,
+            tags: parseTags(nextDraft.tagsText),
+          }
+        : {
+            title: nextDraft.title,
+            description: nextDraft.description,
+            projectId: nextDraft.projectId,
+            status: nextDraft.status,
+            priority: nextDraft.priority,
+            testDueDate: nextDraft.testDueDate,
+            designDueDate: nextDraft.designDueDate,
+            dueDate: nextDraft.dueDate,
+            ownerUserId: nextDraft.ownerUserId,
+            owner: nextDraft.owner,
+            testerUserId: nextDraft.testerUserId,
+            tester: nextDraft.tester,
+            workloadDays: normalizeWorkloadInput(nextDraft.workloadDays),
+            progress: effectiveProgress,
+            blockers: Number(nextDraft.blockers || 0),
+            blockedReason: nextDraft.blockedReason,
+            tags: parseTags(nextDraft.tagsText),
+          },
       effectiveProgress,
     };
   }
@@ -3922,11 +3952,10 @@ function TaskDrawer({
     const hasDraftAssignee = Boolean(nextDraft.ownerUserId || nextDraft.testerUserId);
     if (
       currentUser?.role === "team_member" &&
-      hasDraftAssignee &&
-      nextDraft.ownerUserId !== currentUser.id &&
-      nextDraft.testerUserId !== currentUser.id
+      (!hasDraftAssignee ||
+        (nextDraft.ownerUserId !== currentUser.id && nextDraft.testerUserId !== currentUser.id))
     ) {
-      onInvalid("团队成员只能保存跟自己有关的任务", "无法保存任务");
+      onInvalid("团队成员编辑任务时，负责人或测试员至少一项需要选择自己。", "无法保存任务");
       return false;
     }
 
@@ -4005,7 +4034,7 @@ function TaskDrawer({
   }
 
   return (
-    <section className="space-y-5 pr-10">
+    <section className={`space-y-5 pr-10 ${editable ? "" : "opacity-60"}`}>
       <div>
         <h2 className="text-base font-semibold">{editable ? "编辑任务信息" : "任务信息"}</h2>
       </div>
@@ -4017,6 +4046,7 @@ function TaskDrawer({
               name="taskTitle"
               value={draft.title}
               onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+              disabled={!canEditScopedFields}
             />
           </Field>
           <div className="grid grid-cols-2 gap-4">
@@ -4035,6 +4065,7 @@ function TaskDrawer({
                   }))
                 }
                 placeholder="选择项目"
+                disabled={!canEditManagedFields}
               />
             </Field>
             <Field label="状态">
@@ -4043,6 +4074,7 @@ function TaskDrawer({
                 options={taskColumnOptions}
                 onChange={(value) => setDraft((current) => ({ ...current, status: value as BoardStatus }))}
                 placeholder="选择状态"
+                disabled={!canEditScopedFields}
               />
             </Field>
             <Field label="优先级">
@@ -4051,6 +4083,7 @@ function TaskDrawer({
                 options={taskPriorityOptions}
                 onChange={(value) => setDraft((current) => ({ ...current, priority: value as Priority }))}
                 placeholder="选择优先级"
+                disabled={!canEditManagedFields}
               />
             </Field>
             <Field label="工作量（人日）">
@@ -4062,6 +4095,7 @@ function TaskDrawer({
                 value={draft.workloadDays}
                 onChange={(event) => setDraft((current) => ({ ...current, workloadDays: event.target.value }))}
                 placeholder="不填按 1 人日计算"
+                disabled={!canEditManagedFields}
               />
             </Field>
             <Field label="负责人">
@@ -4074,7 +4108,7 @@ function TaskDrawer({
                 }}
                 placeholder={draft.projectId ? "选择负责人" : "先选择项目"}
                 clearable
-                disabled={!draft.projectId}
+                disabled={!draft.projectId || !canEditManagedFields}
               />
             </Field>
             <Field label="测试员">
@@ -4087,7 +4121,7 @@ function TaskDrawer({
                 }}
                 placeholder={draft.projectId ? "选择测试员" : "先选择项目"}
                 clearable
-                disabled={!draft.projectId}
+                disabled={!draft.projectId || !canEditManagedFields}
               />
             </Field>
             <Field label="设计截止">
@@ -4096,6 +4130,7 @@ function TaskDrawer({
                 type="date"
                 value={draft.designDueDate}
                 onChange={(event) => setDraft((current) => ({ ...current, designDueDate: event.target.value }))}
+                disabled={!canEditManagedFields}
               />
             </Field>
             <Field label="提测日期">
@@ -4104,6 +4139,7 @@ function TaskDrawer({
                 type="date"
                 value={draft.testDueDate}
                 onChange={(event) => setDraft((current) => ({ ...current, testDueDate: event.target.value }))}
+                disabled={!canEditManagedFields}
               />
             </Field>
             <Field label="交付日期">
@@ -4112,6 +4148,7 @@ function TaskDrawer({
                 type="date"
                 value={draft.dueDate}
                 onChange={(event) => setDraft((current) => ({ ...current, dueDate: event.target.value }))}
+                disabled={!canEditManagedFields}
               />
             </Field>
           </div>
@@ -4156,6 +4193,7 @@ function TaskDrawer({
                   value={draft.progress}
                   onChange={(event) => setDraft((current) => ({ ...current, progress: Number(event.target.value) }))}
                   className="w-full accent-[var(--accent)]"
+                  disabled={!canEditScopedFields}
                 />
               )}
             </div>

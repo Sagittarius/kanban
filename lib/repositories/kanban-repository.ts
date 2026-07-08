@@ -102,7 +102,7 @@ export type NormalizeTaskOverdueInput = {
   normalized?: unknown;
   warningKeys?: unknown;
 };
-export type ReorderTaskInput = { updates?: unknown };
+export type ReorderTaskInput = { updates?: unknown; activeTaskId?: unknown };
 export type CreateSubtaskInput = { title?: unknown };
 export type UpdateSubtaskInput = Partial<{ title: unknown; done: unknown }>;
 export type UpdateSystemSettingsInput = Partial<{ dueSoonDays: unknown; activityRetentionDays: unknown; parameters: unknown }>;
@@ -1229,6 +1229,13 @@ export class KanbanRepository {
     const projectRow = await this.getProjectRow(boardId, projectId);
     if (!projectRow) throw new Error("项目不存在");
     const assignees = await this.resolveTaskAssignees(project(projectRow), input);
+    if (
+      actor.role === "team_member" &&
+      (!assignees.ownerUserId && !assignees.testerUserId ||
+        (assignees.ownerUserId !== actor.id && assignees.testerUserId !== actor.id))
+    ) {
+      throw new Error("团队成员创建任务时，负责人或测试员至少一项需要选择自己");
+    }
     const title = text(input.title);
     const description = text(input.description);
     if (!title) throw new Error("任务名称不能为空");
@@ -1396,6 +1403,9 @@ export class KanbanRepository {
     if (!old || old.deleted_at) throw new Error("任务不存在");
     const current = task(old, (await this.getSubtasks(id)).map(subtask));
     if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
+    if (actor.role === "team_member") {
+      assertTeamMemberTaskUpdateAllowed(input);
+    }
     const status = input.status === undefined ? current.status : normalizeBoardStatus(input.status);
     const projectId = text(input.projectId, current.projectId);
     const projectRow = await this.getProjectRow(boardId, projectId);
@@ -1403,8 +1413,11 @@ export class KanbanRepository {
     const currentProjectRow = await this.getProjectRow(boardId, current.projectId);
     const assignees = await this.resolveTaskAssignees(project(projectRow), input, current);
     const hasNextAssignee = Boolean(assignees.ownerUserId || assignees.testerUserId);
-    if (actor.role === "team_member" && hasNextAssignee && assignees.ownerUserId !== actor.id && assignees.testerUserId !== actor.id) {
-      throw new Error("Forbidden");
+    if (
+      actor.role === "team_member" &&
+      (!hasNextAssignee || (assignees.ownerUserId !== actor.id && assignees.testerUserId !== actor.id))
+    ) {
+      throw new Error("团队成员编辑任务时，负责人或测试员至少一项需要选择自己");
     }
     const nextTitle = text(input.title, current.title);
     const nextDescription = opt(input.description, current.description);
@@ -1620,7 +1633,9 @@ export class KanbanRepository {
     const old = await this.getTaskRow(boardId, id);
     if (!old || old.deleted_at) throw new Error("任务不存在");
     const current = task(old, (await this.getSubtasks(id)).map(subtask));
-    if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) throw new Error("Forbidden");
+    if (!canManageBoardTasks(actor) && !isTaskRelatedToUser(current, actor.id)) {
+      throw new Error("无法删除自己无关任务");
+    }
     await this.x("UPDATE tasks SET deleted_at=?,updated_at=? WHERE id=?", [iso(), iso(), id]);
     await this.recordActivity(boardId, {
       entityType: "task",
@@ -1646,8 +1661,20 @@ export class KanbanRepository {
     await this.requireBoardRead(actor, boardId);
     const items = Array.isArray(input.updates) ? input.updates.map(reorderItem).filter(isReorderItem) : [];
     if (!items.length) return { ok: true as const };
+    const activeTaskId = text(input.activeTaskId);
     const rows = await this.getTaskRowsByIds(boardId, items.map((item) => item.id));
     const byId = new Map(rows.map((row) => [String(row.id), row]));
+    if (actor.role === "team_member") {
+      const targetTaskId = activeTaskId || items[0]?.id || "";
+      const activeRow = targetTaskId ? byId.get(targetTaskId) : null;
+      if (!activeRow) {
+        throw new Error("任务不存在");
+      }
+      const activeTask = task(activeRow, []);
+      if (!isTaskRelatedToUser(activeTask, actor.id)) {
+        throw new Error("无法修改自己无关任务");
+      }
+    }
     for (const item of items) {
       const old = byId.get(item.id);
       if (!old) continue;
@@ -3342,6 +3369,27 @@ function isManagementRole(actor: CurrentUser) {
 
 function isTaskRelatedToUser(taskValue: { ownerUserId: string; testerUserId: string }, userId: string) {
   return taskValue.ownerUserId === userId || taskValue.testerUserId === userId;
+}
+
+function assertTeamMemberTaskUpdateAllowed(input: UpdateTaskInput) {
+  const forbiddenKeys = [
+    "projectId",
+    "priority",
+    "designDueDate",
+    "testDueDate",
+    "dueDate",
+    "ownerUserId",
+    "owner",
+    "testerUserId",
+    "tester",
+    "workloadDays",
+    "startDate",
+    "estimate",
+  ] as const;
+  const hasForbiddenField = forbiddenKeys.some((key) => input[key] !== undefined);
+  if (hasForbiddenField) {
+    throw new Error("团队成员当前只能修改状态、描述、进度、任务拆解、标签和阻塞信息");
+  }
 }
 
 function adminOnly(actor: CurrentUser) {

@@ -314,7 +314,7 @@ export default function SearchableSelect({
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-controls={open ? listboxIdRef.current : undefined}
-        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-[var(--select-border)] bg-[var(--select-input)] px-3 py-2 text-left text-sm leading-5 text-[var(--select-text)] outline-none transition hover:bg-[var(--select-panel-soft)] disabled:cursor-not-allowed disabled:opacity-60"
+        className="flex min-h-10 w-full items-center justify-between gap-2 rounded-md border border-[var(--select-border)] bg-[var(--select-input)] px-3 py-2 text-left text-sm leading-5 text-[var(--select-text)] outline-none transition hover:bg-[var(--select-panel-soft)] disabled:cursor-not-allowed disabled:border-[var(--select-border)] disabled:bg-[var(--select-panel-soft)] disabled:text-[var(--select-muted)] disabled:opacity-100"
       >
         <span className={`min-w-0 truncate text-sm leading-5 ${selected ? "" : "text-[var(--select-muted)]"}`}>
           {selected?.label ?? placeholder}
