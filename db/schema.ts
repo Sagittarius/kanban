@@ -174,6 +174,7 @@ export const auditLogs = sqliteTable("audit_logs", {
   id: text("id").primaryKey(),
   actorUserId: text("actor_user_id").notNull().default(""),
   actorUsername: text("actor_username").notNull().default(""),
+  actorDisplayName: text("actor_display_name").notNull().default(""),
   actorRole: text("actor_role").notNull().default(""),
   action: text("action").notNull(),
   resourceType: text("resource_type").notNull().default("system"),

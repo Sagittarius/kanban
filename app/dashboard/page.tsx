@@ -40,7 +40,7 @@ export default async function DashboardPage() {
         return <LoginPage />;
       }
       if (user) {
-        pageLogContext.setContext({ userId: user.id });
+        pageLogContext.setContext({ username: user.username, display_name: user.displayName || "" });
       }
 
       // The dashboard service still expects a CurrentUser shape. Public mode uses

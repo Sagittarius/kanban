@@ -134,6 +134,7 @@ const TABLES = [
       "id",
       "actor_user_id",
       "actor_username",
+      "actor_display_name",
       "actor_role",
       "action",
       "resource_type",

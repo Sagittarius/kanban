@@ -76,6 +76,7 @@ export type AuditLogEntry = {
   id: string;
   actorUserId: string;
   actorUsername: string;
+  actorDisplayName: string;
   actorRole: string;
   action: string;
   resourceType: string;

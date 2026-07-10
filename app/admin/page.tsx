@@ -19,7 +19,7 @@ export default async function AdminPage() {
       if (!user) {
         return <LoginPage />;
       }
-      pageLogContext.setContext({ userId: user.id });
+      pageLogContext.setContext({ username: user.username, display_name: user.displayName || "" });
 
       if (!canAccessAdmin(user.role)) {
         return (

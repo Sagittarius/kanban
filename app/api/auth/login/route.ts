@@ -20,6 +20,7 @@ export const POST = withApiLogging("auth.login", async function POST(request: Re
     if (!row || !active || !(await verifyPassword(password, passwordHash))) {
       await repo.recordAuditLog({
         actorUsername: username,
+        actorDisplayName: typeof row?.display_name === "string" ? row.display_name : "",
         action: "auth.login",
         resourceType: "user",
         result: "failure",

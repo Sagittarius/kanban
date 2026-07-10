@@ -16,6 +16,8 @@ export type DiagnosticLogEntry = {
   status?: number;
   durationMs?: number;
   userId?: string;
+  username?: string;
+  display_name?: string;
   boardId?: string;
   message?: string;
   errorName?: string;
@@ -105,6 +107,8 @@ function parseLogLine(line: string): DiagnosticLogEntry | null {
       status: optionalNumber(parsed.status),
       durationMs: optionalNumber(parsed.durationMs),
       userId: optionalString(parsed.userId),
+      username: optionalString(parsed.username),
+      display_name: optionalString(parsed.display_name),
       boardId: optionalString(parsed.boardId),
       message: optionalString(parsed.message),
       errorName: optionalString(parsed.errorName),

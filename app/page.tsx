@@ -62,7 +62,7 @@ export default async function Home() {
     }
 
     const user = optionalUser ?? (await requireSessionUser());
-    pageLogContext.setContext({ userId: user.id });
+    pageLogContext.setContext({ username: user.username, display_name: user.displayName || "" });
     const repo = await getKanbanRepository();
 
     try {
@@ -98,8 +98,8 @@ export default async function Home() {
     } catch (error) {
       const logFields = {
         ...errorFields(error),
-        userId: user.id,
         username: user.username,
+        display_name: user.displayName || "",
         role: user.role,
         authEnabled: isAuthFeatureEnabled(),
       };

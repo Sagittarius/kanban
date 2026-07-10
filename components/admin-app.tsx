@@ -1362,7 +1362,7 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
         {currentTab === "audit" ? (
           <div className="mt-5">
             <Panel title="审计日志" count={auditTotal} loading={loadingAuditLogs}>
-              <SearchInput value={auditQuery} onChange={(value) => { setAuditQuery(value); setAuditPage(1); }} placeholder="搜索用户、动作、对象、IP、Request ID" />
+              <SearchInput value={auditQuery} onChange={(value) => { setAuditQuery(value); setAuditPage(1); }} placeholder="搜索账号、姓名、动作、对象、IP、Request ID" />
               <div className="mt-4 overflow-hidden rounded-xl border border-[var(--border)]">
                 <div className="grid grid-cols-[150px_160px_180px_minmax(0,1fr)_120px] gap-3 border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-semibold text-[var(--muted)]">
                   <span>时间</span>
@@ -1378,8 +1378,8 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     <div key={item.id} className="grid grid-cols-[150px_160px_180px_minmax(0,1fr)_120px] gap-3 px-4 py-3 text-sm">
                       <span className="text-[var(--muted)]">{formatAuditTime(item.createdAt)}</span>
                       <span className="min-w-0">
-                        <span className="block truncate font-semibold text-[var(--text)]">{item.actorUsername || "-"}</span>
-                        <span className="block truncate text-xs text-[var(--muted)]">{item.actorRole || "-"}</span>
+                        <span className="block truncate font-semibold text-[var(--text)]">{item.actorDisplayName || item.actorUsername || "-"}</span>
+                        <span className="block truncate text-xs text-[var(--muted)]">@{item.actorUsername || "-"}{item.actorRole ? ` · ${item.actorRole}` : ""}</span>
                       </span>
                       <span className="min-w-0">
                         <span className="block truncate font-medium">{item.action}</span>

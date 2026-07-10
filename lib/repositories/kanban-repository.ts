@@ -111,6 +111,7 @@ export type AuditLogInput = {
   actor?: CurrentUser | null;
   actorUserId?: string;
   actorUsername?: string;
+  actorDisplayName?: string;
   actorRole?: string;
   action: string;
   resourceType?: string;
@@ -301,6 +302,7 @@ export class KanbanRepository {
       const like = likeValue(query);
       whereParts.push(`(
         lower(coalesce(actor_username,'')) LIKE ? ESCAPE '\\'
+        OR lower(coalesce(actor_display_name,'')) LIKE ? ESCAPE '\\'
         OR lower(coalesce(actor_role,'')) LIKE ? ESCAPE '\\'
         OR lower(coalesce(action,'')) LIKE ? ESCAPE '\\'
         OR lower(coalesce(resource_type,'')) LIKE ? ESCAPE '\\'
@@ -310,7 +312,7 @@ export class KanbanRepository {
         OR lower(coalesce(request_id,'')) LIKE ? ESCAPE '\\'
         OR lower(coalesce(result,'')) LIKE ? ESCAPE '\\'
       )`);
-      params.push(like, like, like, like, like, like, like, like, like);
+      params.push(like, like, like, like, like, like, like, like, like, like);
     }
     const where = whereParts.length ? `WHERE ${whereParts.join(" AND ")}` : "";
     const total = Number((await this.q(`SELECT COUNT(*) AS count FROM audit_logs ${where}`, params))[0]?.count ?? 0);
@@ -2761,6 +2763,7 @@ export class KanbanRepository {
       id: crypto.randomUUID(),
       actor_user_id: input.actorUserId ?? actor?.id ?? "",
       actor_username: input.actorUsername ?? actor?.username ?? "",
+      actor_display_name: input.actorDisplayName ?? actor?.displayName ?? "",
       actor_role: input.actorRole ?? actor?.role ?? "",
       action: input.action,
       resource_type: input.resourceType ?? "system",
@@ -2777,11 +2780,12 @@ export class KanbanRepository {
 
     try {
       await this.x(
-        "INSERT INTO audit_logs (id,actor_user_id,actor_username,actor_role,action,resource_type,resource_id,board_id,result,message,ip_address,user_agent,request_id,metadata,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        "INSERT INTO audit_logs (id,actor_user_id,actor_username,actor_display_name,actor_role,action,resource_type,resource_id,board_id,result,message,ip_address,user_agent,request_id,metadata,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
           row.id,
           row.actor_user_id,
           row.actor_username,
+          row.actor_display_name,
           row.actor_role,
           row.action,
           row.resource_type,
@@ -2805,8 +2809,9 @@ export class KanbanRepository {
         resourceType: row.resource_type,
         resourceId: row.resource_id,
         boardId: row.board_id,
-        actorUserId: row.actor_user_id,
         actorUsername: row.actor_username,
+        actorDisplayName: row.actor_display_name,
+        display_name: row.actor_display_name,
         actorRole: row.actor_role,
         message: row.message,
         metadata: input.metadata ?? {},
@@ -2819,8 +2824,9 @@ export class KanbanRepository {
 
       repositoryLogger.info("audit event recorded", {
         auditId: row.id,
-        actorUserId: row.actor_user_id,
         actorUsername: row.actor_username,
+        actorDisplayName: row.actor_display_name,
+        display_name: row.actor_display_name,
         action: row.action,
         resourceType: row.resource_type,
         resourceId: row.resource_id,
@@ -2835,8 +2841,9 @@ export class KanbanRepository {
         resourceType: row.resource_type,
         resourceId: row.resource_id,
         boardId: row.board_id,
-        actorUserId: row.actor_user_id,
         actorUsername: row.actor_username,
+        actorDisplayName: row.actor_display_name,
+        display_name: row.actor_display_name,
         actorRole: row.actor_role,
         message: row.message,
         metadata: input.metadata ?? {},
@@ -2847,6 +2854,9 @@ export class KanbanRepository {
         resourceType: row.resource_type,
         resourceId: row.resource_id,
         boardId: row.board_id,
+        actorUsername: row.actor_username,
+        actorDisplayName: row.actor_display_name,
+        display_name: row.actor_display_name,
         result: row.result,
         ...errorFields(error),
       });
@@ -3192,6 +3202,7 @@ function auditLogRow(row: Record<string, unknown>): AuditLogEntry {
     id: String(row.id),
     actorUserId: String(row.actor_user_id ?? ""),
     actorUsername: String(row.actor_username ?? ""),
+    actorDisplayName: String(row.actor_display_name ?? ""),
     actorRole: String(row.actor_role ?? ""),
     action: String(row.action),
     resourceType: String(row.resource_type ?? "system"),

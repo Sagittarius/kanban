@@ -13,7 +13,7 @@ export default async function DiagnosticsPage() {
       return <LoginPage />;
     }
 
-    pageLogContext.setContext({ userId: user.id });
+    pageLogContext.setContext({ username: user.username, display_name: user.displayName || "" });
     if (user.role !== "super_admin") {
       return (
         <DiagnosticsShell title="无权访问诊断中心">
@@ -130,7 +130,8 @@ function LogPanel({ title, entries, emptyText }: { title: string; entries: Diagn
                 <div className="mt-2 grid gap-1 font-mono text-[11px] leading-5 text-slate-400 md:grid-cols-2">
                   {entry.requestId ? <span className="break-all">requestId: {entry.requestId}</span> : null}
                   {entry.path ? <span className="break-all">path: {entry.path}</span> : null}
-                  {entry.userId ? <span className="break-all">userId: {entry.userId}</span> : null}
+                  {entry.username ? <span className="break-all">username: {entry.username}</span> : null}
+                  {entry.display_name ? <span className="break-all">display_name: {entry.display_name}</span> : null}
                   {entry.boardId ? <span className="break-all">boardId: {entry.boardId}</span> : null}
                   {entry.resourceTag ? <span className="break-all">resource: {entry.resourceTag}</span> : null}
                   {entry.resourceUrl ? <span className="break-all">resourceUrl: {entry.resourceUrl}</span> : null}
