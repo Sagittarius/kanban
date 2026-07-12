@@ -3,6 +3,7 @@ import { base64UrlDecode, base64UrlEncode } from "@/lib/password";
 export const SESSION_COOKIE = "kanban_session";
 export const ACTIVE_BOARD_COOKIE = "kanban_active_board";
 export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
+export const ACTIVE_BOARD_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 type SessionPayload = {
   userId: string;
@@ -60,6 +61,21 @@ export function sessionCookieOptions() {
     secure: cookieSecureEnabled(),
     path: "/",
     maxAge: SESSION_MAX_AGE_SECONDS,
+  };
+}
+
+export function activeBoardCookieName(userId: string) {
+  const userKey = userId.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 96);
+  return `${ACTIVE_BOARD_COOKIE}_${userKey}`;
+}
+
+export function activeBoardCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: cookieSecureEnabled(),
+    path: "/",
+    maxAge: ACTIVE_BOARD_MAX_AGE_SECONDS,
   };
 }
 

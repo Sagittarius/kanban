@@ -3,7 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import Image from "next/image";
 import MatrixRain from "react-matrix-rain";
-import { AlertTriangle, Binary, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Copyright, Edit3, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
+import { AlertTriangle, Binary, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Copyright, Edit3, History, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
+import ChangelogDialog from "@/components/changelog-dialog";
 import { LoadingSkeleton, LoadingStateBadge } from "@/components/loading-hint";
 import DashboardParticles from "@/components/dashboard-particles";
 import MemberProfileCard from "@/components/member-profile-card";
@@ -13,6 +14,7 @@ import { clientFetch, reportClientError } from "@/lib/client-observability";
 import { avatarOptions, jobTitleLabel } from "@/lib/ui-options";
 import type { CurrentUser, TeamSummary } from "@/lib/auth-models";
 import type { BoardStatus } from "@/lib/board-data";
+import type { ChangelogEntry } from "@/lib/changelog";
 
 type DashboardTheme = "dark" | "light";
 
@@ -115,7 +117,7 @@ const dashboardProjectTaskProgressSegmentCount = dashboardProgressSegmentCount *
 const matrixAlphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz$+-*/=%\"'#&_(),.;:?!\\|{}<>[]^~アカサタナハマヤラワイキシチニヒミリウクスツヌフムユルエケセテネヘメレオコソトノホモヨロヲン";
 const matrixMaxPixels = { width: 2200, height: 1400 };
 
-export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean; initialTheme?: DashboardTheme; appVersion?: string }) {
+export default function WorkloadDashboard(props: { currentUser: CurrentUser; publicView?: boolean; initialTheme?: DashboardTheme; appVersion?: string; changelogEntries?: ChangelogEntry[] }) {
   const { publicView = false, initialTheme = "dark" } = props;
   const [data, setData] = useState<DashboardData>(emptyDashboard);
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
@@ -128,6 +130,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   const [loadingDashboard, setLoadingDashboard] = useState(true);
   const [dashboardLoaded, setDashboardLoaded] = useState(false);
   const [matrixEnabled, setMatrixEnabled] = useState(false);
+  const [changelogOpen, setChangelogOpen] = useState(false);
 
   const meteors = useMemo(
     () =>
@@ -341,6 +344,17 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                   <span className="h-1.5 w-1.5 rounded-full bg-[var(--dash-accent)] shadow-[0_0_12px_var(--dash-accent-glow)] dashboard-pulse" />
                   实时观察
                 </div>
+                {props.appVersion ? (
+                  <button
+                    type="button"
+                    onClick={() => setChangelogOpen(true)}
+                    title="查看版本更新记录"
+                    className="mt-1 inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[var(--dash-line)] bg-[var(--dash-card)] px-2.5 py-1 text-[11px] font-semibold text-[var(--dash-muted)] transition hover:border-[var(--dash-rim)] hover:bg-[var(--dash-hover)] hover:text-[var(--dash-text)]"
+                  >
+                    {props.appVersion}
+                    <History size={12} />
+                  </button>
+                ) : null}
                 <LoadingStateBadge active={loadingDashboard} />
               </div>
             </div>
@@ -664,6 +678,14 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
           }}
           onClose={() => setSelectedMember(null)}
           theme="dashboard-dark"
+        />
+      ) : null}
+      {changelogOpen && props.appVersion ? (
+        <ChangelogDialog
+          appVersion={props.appVersion}
+          entries={props.changelogEntries ?? []}
+          variant="dashboard"
+          onClose={() => setChangelogOpen(false)}
         />
       ) : null}
     </main>

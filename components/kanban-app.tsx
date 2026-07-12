@@ -58,6 +58,7 @@ import {
 } from "lucide-react";
 import { read, utils, writeFileXLSX } from "xlsx";
 import ConfirmDialog, { type ConfirmDialogAction } from "@/components/confirm-dialog";
+import ChangelogDialog from "@/components/changelog-dialog";
 import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect, { type MultiSelectOption } from "@/components/search-multi-select";
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
@@ -5076,76 +5077,6 @@ function ImportTaskDialog({
     </div>
   );
 }
-
-function ChangelogDialog({
-  appVersion,
-  entries,
-  onClose,
-}: {
-  appVersion: string;
-  entries: ChangelogEntry[];
-  onClose: () => void;
-}) {
-  return (
-    <div className="fixed inset-0 z-[85] flex items-center justify-center bg-black/40 px-4 py-6" onClick={onClose}>
-      <div
-        className="flex max-h-[min(84vh,860px)] w-full max-w-[820px] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--panel)] shadow-2xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-6 py-5">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--accent)]">
-                版本记录
-              </span>
-              <span className="inline-flex items-center rounded-full border border-[var(--border)] bg-[var(--card-section)] px-2.5 py-1 text-xs font-semibold text-[var(--muted)]">
-                当前 {appVersion}
-              </span>
-            </div>
-            <h2 className="mt-3 text-xl font-semibold text-[var(--text)]">Changelog</h2>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-[var(--border)] bg-[var(--panel-soft)] text-[var(--muted)] transition hover:bg-[var(--card-section)] hover:text-[var(--text)]"
-          >
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-          <div className="space-y-4">
-            {entries.map((entry) => (
-              <section key={`${entry.version}-${entry.date}`} className="rounded-2xl border border-[var(--border)] bg-[var(--panel-soft)] p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <h3 className="text-base font-semibold text-[var(--text)]">{entry.version}</h3>
-                    {entry.date ? <p className="mt-1 text-xs text-[var(--muted)]">{entry.date}</p> : null}
-                  </div>
-                  {entry.version === appVersion || entry.version === appVersion.replace(/@.+$/, "") ? (
-                    <span className="inline-flex items-center rounded-full border border-[var(--accent)]/20 bg-[var(--accent-soft)] px-2.5 py-1 text-xs font-semibold text-[var(--accent)]">
-                      当前版本
-                    </span>
-                  ) : null}
-                </div>
-                <ul className="mt-3 space-y-2">
-                  {entry.items.map((item, index) => (
-                    <li key={`${entry.version}-${index}`} className="flex items-start gap-2 text-sm leading-6 text-[var(--text)]">
-                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--accent)] opacity-80" />
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-
 
 function Field({ label, children, required = false }: { label: string; children: ReactNode; required?: boolean }) {
   return (

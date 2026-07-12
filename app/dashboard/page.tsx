@@ -7,6 +7,7 @@ import { DEFAULT_TIMEZONE } from "@/lib/timezone";
 import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
 import { requireSessionUser } from "@/lib/server-session";
 import { getAppVersion } from "@/lib/app-meta";
+import { readChangelogEntries } from "@/lib/changelog";
 import type { CurrentUser } from "@/lib/auth-models";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +49,15 @@ export default async function DashboardPage() {
       // the public-dashboard repository path above.
       const currentUser = user ? serializableCurrentUser(user) : PUBLIC_DASHBOARD_USER;
 
-      return <WorkloadDashboard currentUser={currentUser} publicView={!user} initialTheme={initialTheme} appVersion={getAppVersion()} />;
+      return (
+        <WorkloadDashboard
+          currentUser={currentUser}
+          publicView={!user}
+          initialTheme={initialTheme}
+          appVersion={getAppVersion()}
+          changelogEntries={readChangelogEntries()}
+        />
+      );
     } catch (error) {
       dashboardPageLogger.error("dashboard page render failed", {
         requestId: pageLogContext.requestId,

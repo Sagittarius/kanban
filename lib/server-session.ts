@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cookies } from "next/headers";
-import { ACTIVE_BOARD_COOKIE, SESSION_COOKIE, verifySessionToken } from "@/lib/auth";
+import { ACTIVE_BOARD_COOKIE, SESSION_COOKIE, activeBoardCookieName, verifySessionToken } from "@/lib/auth";
 import { isAuthFeatureEnabled } from "@/lib/auth-feature";
 import type { BoardSummary, CurrentUser } from "@/lib/auth-models";
 import { canAccessAdmin, isSuperAdminRole } from "@/lib/role-permissions";
@@ -53,7 +53,10 @@ export async function resolveActiveBoard(user: CurrentUser): Promise<BoardSummar
     return repo.resolvePublicBoard(user);
   }
   const cookieStore = await cookies();
-  const requested = cookieStore.get(ACTIVE_BOARD_COOKIE)?.value ?? null;
+  const requested =
+    cookieStore.get(activeBoardCookieName(user.id))?.value ??
+    cookieStore.get(ACTIVE_BOARD_COOKIE)?.value ??
+    null;
   return repo.resolveBoardForUser(user, requested);
 }
 
