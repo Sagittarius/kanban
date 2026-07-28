@@ -9,9 +9,11 @@ export const GET = withApiLogging("dashboard.get", async function GET(request: R
     const repo = await getKanbanRepository();
     const teamIds = url.searchParams.getAll("teamId").filter(Boolean);
     const projectIds = url.searchParams.getAll("projectId").filter(Boolean);
+    const jobTitles = url.searchParams.getAll("jobTitle").filter(Boolean);
     const input = {
       teamIds,
       projectIds,
+      jobTitles,
     };
     const publicEnabled = await repo.workloadDashboardPublicEnabled();
     const user = await requireSessionUser().catch((error: unknown) => {

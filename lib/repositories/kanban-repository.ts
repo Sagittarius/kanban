@@ -106,7 +106,14 @@ export type ReorderTaskInput = { updates?: unknown; activeTaskId?: unknown };
 export type CreateSubtaskInput = { title?: unknown };
 export type UpdateSubtaskInput = Partial<{ title: unknown; done: unknown }>;
 export type UpdateSystemSettingsInput = Partial<{ dueSoonDays: unknown; activityRetentionDays: unknown; parameters: unknown }>;
-export type WorkloadDashboardInput = Partial<{ teamId: unknown; projectId: unknown; teamIds: unknown; projectIds: unknown }>;
+export type WorkloadDashboardInput = Partial<{
+  teamId: unknown;
+  projectId: unknown;
+  teamIds: unknown;
+  projectIds: unknown;
+  jobTitle: unknown;
+  jobTitles: unknown;
+}>;
 export type AuditLogInput = {
   actor?: CurrentUser | null;
   actorUserId?: string;
@@ -1918,6 +1925,7 @@ export class KanbanRepository {
     this.requireDashboardAccess(actor);
     const requestedTeamIds = uniqIds([input.teamId, input.teamIds]);
     const requestedProjectIds = uniqIds([input.projectId, input.projectIds]);
+    const requestedJobTitles = uniqIds([input.jobTitle, input.jobTitles]);
     const settings = settingsFromRows(await this.q("SELECT * FROM system_parameters ORDER BY order_index ASC,key ASC"));
     const dueSoonDays = settings.dueSoonDays;
     const testerDefaultWorkloadDays = settings.testerDefaultWorkloadDays;
@@ -1934,7 +1942,11 @@ export class KanbanRepository {
     const effectiveTeamIds = effectiveProjectRows.length
       ? Array.from(new Set(effectiveProjectRows.map((row) => String(row.team_id))))
       : selectedTeamIds;
-    const members = await this.dashboardMembers(effectiveTeamIds);
+    const availableMembers = await this.dashboardMembers(effectiveTeamIds);
+    const availableJobTitles = Array.from(new Set(availableMembers.map((member) => member.jobTitle).filter(Boolean))).sort();
+    const members = requestedJobTitles.length
+      ? availableMembers.filter((member) => requestedJobTitles.includes(member.jobTitle))
+      : availableMembers;
     const taskRows = await this.dashboardTasks(effectiveProjectRows.map((row) => String(row.id)));
     const projectStatusCounts = new Map<
       string,
@@ -2127,7 +2139,9 @@ export class KanbanRepository {
       filters: {
         teamIds: selectedTeamIds,
         projectIds: requestedProjectIds.length ? effectiveProjectRows.map((row) => String(row.id)) : [],
+        jobTitles: requestedJobTitles.filter((jobTitle) => availableJobTitles.includes(jobTitle)),
       },
+      availableJobTitles,
       teamIds: selectedTeamIds,
       projectIds: effectiveProjectRows.map((row) => String(row.id)),
       teams: allowedTeams,

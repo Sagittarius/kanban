@@ -11,7 +11,7 @@ import MemberProfileCard from "@/components/member-profile-card";
 import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
 import { clientFetch, reportClientError } from "@/lib/client-observability";
-import { avatarOptions, jobTitleLabel } from "@/lib/ui-options";
+import { avatarOptions, jobTitleLabel, jobTitleOptions as configuredJobTitleOptions } from "@/lib/ui-options";
 import type { CurrentUser, TeamSummary } from "@/lib/auth-models";
 import type { BoardStatus } from "@/lib/board-data";
 import type { ChangelogEntry } from "@/lib/changelog";
@@ -78,7 +78,8 @@ type DashboardMember = {
 };
 
 type DashboardData = {
-  filters: { teamIds: string[]; projectIds: string[] };
+  filters: { teamIds: string[]; projectIds: string[]; jobTitles: string[] };
+  availableJobTitles: string[];
   teams: TeamSummary[];
   projects: DashboardProject[];
   totals: {
@@ -98,7 +99,8 @@ type DashboardData = {
 };
 
 const emptyDashboard: DashboardData = {
-  filters: { teamIds: [], projectIds: [] },
+  filters: { teamIds: [], projectIds: [], jobTitles: [] },
+  availableJobTitles: [],
   teams: [],
   projects: [],
   totals: { teams: 0, projects: 0, members: 0, tasks: 0, workloadDays: 0, progress: 0, dueSoon: 0, overdue: 0, blocked: 0 },
@@ -122,6 +124,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
   const [data, setData] = useState<DashboardData>(emptyDashboard);
   const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([]);
   const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [selectedJobTitles, setSelectedJobTitles] = useState<string[]>([]);
   const [theme, setTheme] = useState<DashboardTheme>(initialTheme);
   const [expandedMemberId, setExpandedMemberId] = useState<string | null>(null);
   const [selectedTask, setSelectedTask] = useState<DashboardTask | null>(null);
@@ -152,6 +155,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
     const params = new URLSearchParams();
     for (const teamId of selectedTeamIds) params.append("teamId", teamId);
     for (const projectId of selectedProjectIds) params.append("projectId", projectId);
+    for (const jobTitle of selectedJobTitles) params.append("jobTitle", jobTitle);
     const response = await clientFetch(
       `/api/dashboard?${params.toString()}`,
       { signal },
@@ -161,7 +165,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
       throw new Error(`Dashboard request failed: ${response.status}`);
     }
     return response.json() as Promise<DashboardData>;
-  }, [selectedProjectIds, selectedTeamIds]);
+  }, [selectedJobTitles, selectedProjectIds, selectedTeamIds]);
 
   useEffect(() => {
     let active = true;
@@ -280,6 +284,21 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
     [data.projects, selectedTeamIds]
   );
 
+  const positionOptions = useMemo(
+    () => {
+      const configuredValues = new Set(configuredJobTitleOptions.map((option) => option.value));
+      return [
+        ...configuredJobTitleOptions
+          .filter((option) => option.value !== "custom")
+          .map((option) => ({ value: option.value, label: option.label })),
+        ...data.availableJobTitles
+          .filter((jobTitle) => !configuredValues.has(jobTitle as (typeof configuredJobTitleOptions)[number]["value"]))
+          .map((jobTitle) => ({ value: jobTitle, label: jobTitleLabel(jobTitle) })),
+      ];
+    },
+    [data.availableJobTitles]
+  );
+
   const busiest = data.members[0];
   const idleCount = data.members.filter((member) => member.taskCount === 0).length;
   const rankedMembers = data.members.slice(0, 5);
@@ -383,6 +402,18 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
                 placeholder="全部项目"
                 summaryLabel="项目"
                 searchPlaceholder="搜索项目"
+                compact
+                panelClassName="dashboard-filter-panel"
+              />
+            </div>
+            <div className="w-[220px] max-w-full">
+              <SearchMultiSelect
+                value={selectedJobTitles}
+                options={positionOptions}
+                onChange={setSelectedJobTitles}
+                placeholder="全部职位"
+                summaryLabel="职位"
+                searchPlaceholder="搜索职位"
                 compact
                 panelClassName="dashboard-filter-panel"
               />

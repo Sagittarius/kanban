@@ -2,7 +2,8 @@ import { base64UrlDecode, base64UrlEncode } from "@/lib/password";
 
 export const SESSION_COOKIE = "kanban_session";
 export const ACTIVE_BOARD_COOKIE = "kanban_active_board";
-export const SESSION_MAX_AGE_SECONDS = 60 * 60 * 12;
+export const DEFAULT_SESSION_TIMEOUT_SECONDS = 60 * 60 * 24;
+export const MAX_SESSION_TIMEOUT_SECONDS = 60 * 60 * 24 * 365;
 export const ACTIVE_BOARD_MAX_AGE_SECONDS = 60 * 60 * 24 * 365;
 
 type SessionPayload = {
@@ -18,7 +19,7 @@ export async function createSessionToken(userId: string) {
   const payload: SessionPayload = {
     userId,
     iat: now,
-    exp: now + SESSION_MAX_AGE_SECONDS,
+    exp: now + sessionMaxAgeSeconds(),
   };
   const body = base64UrlEncode(encoder.encode(JSON.stringify(payload)));
   const signature = await sign(body);
@@ -60,8 +61,40 @@ export function sessionCookieOptions() {
     sameSite: "lax" as const,
     secure: cookieSecureEnabled(),
     path: "/",
-    maxAge: SESSION_MAX_AGE_SECONDS,
+    maxAge: sessionMaxAgeSeconds(),
   };
+}
+
+export function parseSessionTimeoutSeconds(value: string | undefined | null) {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  const match = normalized.match(/^(\d+(?:\.\d+)?)\s*([smhd]?)$/);
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return null;
+  }
+
+  const unitSeconds = {
+    "": 1,
+    s: 1,
+    m: 60,
+    h: 60 * 60,
+    d: 60 * 60 * 24,
+  } as const;
+  const seconds = Math.round(amount * unitSeconds[match[2] as keyof typeof unitSeconds]);
+  return Math.min(Math.max(1, seconds), MAX_SESSION_TIMEOUT_SECONDS);
+}
+
+export function sessionMaxAgeSeconds() {
+  const configured = parseSessionTimeoutSeconds(process.env.KANBAN_SESSION_TIMEOUT);
+  return configured ?? DEFAULT_SESSION_TIMEOUT_SECONDS;
 }
 
 export function activeBoardCookieName(userId: string) {

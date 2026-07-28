@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, type CSSProperties, type FormEvent } from "react";
+import { useEffect, useState, type CSSProperties, type FormEvent } from "react";
 import LoginOrb from "@/components/login-orb";
-import { clientFetch } from "@/lib/client-observability";
+import { clientFetch, consumeSessionExpiredNotice } from "@/lib/client-observability";
 
 const particles = [
   { x: 8, y: 18, size: 3, delay: 0, duration: 9 },
@@ -73,6 +73,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (consumeSessionExpiredNotice()) {
+      setError("登录超时，请重新登录");
+    }
+  }, []);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

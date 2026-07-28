@@ -39,7 +39,7 @@ docker compose -f docker-compose.postgres.yml up -d --build
 pnpm install --frozen-lockfile
 pnpm run build
 KANBAN_DB_DRIVER=sqlite KANBAN_SQLITE_PATH=.data/kanban.sqlite node scripts/migrate-local-sqlite.mjs
-KANBAN_AUTH_SECRET=change-this-secret pnpm run start
+KANBAN_AUTH_SECRET=change-this-secret KANBAN_SESSION_TIMEOUT=24h pnpm run start
 ```
 
 启动方式说明：
@@ -61,6 +61,7 @@ KANBAN_AUTH_SECRET=change-this-secret pnpm run start
 
 建议配置：
 
+- `KANBAN_SESSION_TIMEOUT=24h`，登录会话有效期；支持 `s`、`m`、`h`、`d`，不带单位时按秒处理
 - HTTPS 环境设置 `KANBAN_COOKIE_SECURE=true`
 - 使用 PostgreSQL 时不要保留 compose 示例里的 `change-this-password`
 - 将 `/data` 或 `/data/logs` 挂载到持久化存储

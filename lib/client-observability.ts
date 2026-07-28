@@ -53,6 +53,9 @@ type ClientFetchLogOptions = {
 
 const reportedErrors = new Map<string, number>();
 const clientSessionStorageKey = "kanban_client_session_id";
+const sessionExpiredStorageKey = "kanban_session_expired";
+const sessionExpiredNoticeId = "kanban-session-expired-notice";
+let sessionExpiryRedirecting = false;
 
 export function reportClientError(payload: ClientErrorPayload) {
   if (typeof window === "undefined") {
@@ -113,6 +116,10 @@ export async function clientFetch(
     const durationMs = Math.round(performance.now() - startedAt);
     const responseRequestId = response.headers.get("x-request-id") ?? headers.get("x-request-id") ?? requestId;
 
+    if (response.status === 401 && shouldHandleSessionExpiry(endpoint)) {
+      handleSessionExpiry();
+    }
+
     if (shouldReportResponse(response.status, logOptions.reportStatuses ?? "server")) {
       reportClientError({
         source: "api-response",
@@ -145,6 +152,76 @@ export async function clientFetch(
       durationMs: Math.round(performance.now() - startedAt),
     });
     throw error;
+  }
+}
+
+function shouldHandleSessionExpiry(endpoint: string) {
+  const pathname = endpointPathname(endpoint);
+  return pathname !== "/api/auth/login" && pathname !== "/api/auth/logout" && pathname !== "/api/client-errors";
+}
+
+function endpointPathname(endpoint: string) {
+  try {
+    return new URL(endpoint, window.location.origin).pathname;
+  } catch {
+    return endpoint.split("?")[0];
+  }
+}
+
+function handleSessionExpiry() {
+  if (sessionExpiryRedirecting || typeof window === "undefined") {
+    return;
+  }
+  sessionExpiryRedirecting = true;
+
+  try {
+    window.sessionStorage.setItem(sessionExpiredStorageKey, "true");
+  } catch {
+    // Storage may be disabled. The in-page notice still provides feedback.
+  }
+
+  let notice = document.getElementById(sessionExpiredNoticeId);
+  if (!notice) {
+    notice = document.createElement("div");
+    notice.id = sessionExpiredNoticeId;
+    notice.setAttribute("role", "alert");
+    notice.textContent = "登录超时，请重新登录";
+    Object.assign(notice.style, {
+      position: "fixed",
+      left: "50%",
+      top: "24px",
+      zIndex: "2147483647",
+      transform: "translateX(-50%)",
+      border: "1px solid rgba(248, 113, 113, 0.48)",
+      borderRadius: "12px",
+      background: "#fff1f2",
+      color: "#be123c",
+      padding: "12px 18px",
+      fontSize: "14px",
+      fontWeight: "600",
+      lineHeight: "20px",
+      boxShadow: "0 18px 48px rgba(15, 23, 42, 0.22)",
+    });
+    document.body.appendChild(notice);
+  }
+
+  window.setTimeout(() => {
+    window.location.assign("/");
+  }, 900);
+}
+
+export function consumeSessionExpiredNotice() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+  try {
+    const expired = window.sessionStorage.getItem(sessionExpiredStorageKey) === "true";
+    if (expired) {
+      window.sessionStorage.removeItem(sessionExpiredStorageKey);
+    }
+    return expired;
+  } catch {
+    return false;
   }
 }
 

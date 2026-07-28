@@ -64,6 +64,7 @@ cp .env.development.example .env.development.local
 - `KANBAN_SQLITE_PATH=.data/kanban.sqlite`
 - `KANBAN_AUTH_ENABLED=true`
 - `KANBAN_AUTH_SECRET=change-this-secret`
+- `KANBAN_SESSION_TIMEOUT=24h`
 - `KANBAN_COOKIE_SECURE=true`
 - `KANBAN_SUPER_ADMIN_USERNAME=admin`
 - `KANBAN_SUPER_ADMIN_PASSWORD=admin@123`
@@ -71,6 +72,7 @@ cp .env.development.example .env.development.local
 - `KANBAN_LOG_FILE_ENABLED=true`
 
 生产环境必须修改 `KANBAN_AUTH_SECRET`、默认管理员密码和 PostgreSQL 默认密码。
+`KANBAN_SESSION_TIMEOUT` 同时控制登录令牌和 Cookie 的有效期，支持 `s`、`m`、`h`、`d`，例如 `3600s`、`60m`、`24h`、`30d`；不带单位时按秒处理。未配置或配置无效时默认 `24h`。
 
 ## Docker 部署
 
@@ -99,11 +101,11 @@ PostgreSQL compose 使用 `postgres:16-alpine`，应用服务等待数据库 hea
 ### 镜像构建
 
 ```bash
-docker build -t halfroom/kanban:beta-1.5.3 .
+docker build -t halfroom/kanban:beta-1.5.4 .
 
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t halfroom/kanban:beta-1.5.3 \
+  -t halfroom/kanban:beta-1.5.4 \
   --push .
 ```
 
@@ -127,16 +129,16 @@ Dockerfile 使用 Next standalone 输出：
 docker buildx build \
   --builder kanban-builder \
   --platform linux/arm64 \
-  --build-arg KANBAN_APP_VERSION=1.5.3 \
-  --build-arg KANBAN_IMAGE_TAG=halfroom/kanban:beta-1.5.3 \
-  -t halfroom/kanban:beta-1.5.3 \
-  --output type=docker,dest=halfroom-kanban-beta-1.5.3-linux-arm64.tar .
+  --build-arg KANBAN_APP_VERSION=1.5.4 \
+  --build-arg KANBAN_IMAGE_TAG=halfroom/kanban:beta-1.5.4 \
+  -t halfroom/kanban:beta-1.5.4 \
+  --output type=docker,dest=halfroom-kanban-beta-1.5.4-linux-arm64.tar .
 ```
 
 导入：
 
 ```bash
-docker load -i halfroom-kanban-beta-1.5.3-linux-arm64.tar
+docker load -i halfroom-kanban-beta-1.5.4-linux-arm64.tar
 ```
 
 ## 数据库维护
