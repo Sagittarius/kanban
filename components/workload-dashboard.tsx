@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import Image from "next/image";
 import MatrixRain from "react-matrix-rain";
-import { AlertTriangle, Binary, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Copyright, Edit3, History, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
+import { AlertTriangle, Binary, ChartNoAxesCombined, ChartPie, ChevronDown, ChevronRight, ClipboardList, Clock3, Copyright, Edit3, ExternalLink, History, Moon, ShieldAlert, Sun, Tag, Trophy, UsersRound, X } from "lucide-react";
 import ChangelogDialog from "@/components/changelog-dialog";
 import { LoadingSkeleton, LoadingStateBadge } from "@/components/loading-hint";
 import DashboardParticles from "@/components/dashboard-particles";
@@ -11,6 +11,7 @@ import MemberProfileCard from "@/components/member-profile-card";
 import OnboardingGuide from "@/components/onboarding-guide";
 import SearchMultiSelect from "@/components/search-multi-select";
 import { clientFetch, reportClientError } from "@/lib/client-observability";
+import { requirementTreeUrl } from "@/lib/requirement-tree-link";
 import { avatarOptions, jobTitleLabel, jobTitleOptions as configuredJobTitleOptions } from "@/lib/ui-options";
 import type { CurrentUser, TeamSummary } from "@/lib/auth-models";
 import type { BoardStatus } from "@/lib/board-data";
@@ -22,6 +23,8 @@ type DashboardTask = {
   id: string;
   title: string;
   description: string;
+  requirementItem: string;
+  subItem: string;
   projectId: string;
   projectName: string;
   status: BoardStatus;
@@ -96,6 +99,7 @@ type DashboardData = {
   members: DashboardMember[];
   dueSoonDays: number;
   todayKey: string;
+  requirementTreeExternalUrl: string;
 };
 
 const emptyDashboard: DashboardData = {
@@ -107,6 +111,7 @@ const emptyDashboard: DashboardData = {
   members: [],
   dueSoonDays: 2,
   todayKey: "",
+  requirementTreeExternalUrl: "",
 };
 
 const dashboardRefreshEventKey = "kanban:dashboard-refresh";
@@ -692,6 +697,7 @@ export default function WorkloadDashboard(props: { currentUser: CurrentUser; pub
         <DashboardTaskDialog
           task={selectedTask}
           members={data.members}
+          requirementTreeExternalUrl={data.requirementTreeExternalUrl}
           onSelectMember={setSelectedMember}
           onClose={() => setSelectedTask(null)}
         />
@@ -1075,11 +1081,13 @@ function MemberInline({
 function DashboardTaskDialog({
   task,
   members,
+  requirementTreeExternalUrl,
   onSelectMember,
   onClose,
 }: {
   task: DashboardTask;
   members: DashboardMember[];
+  requirementTreeExternalUrl: string;
   onSelectMember: (member: DashboardMember) => void;
   onClose: () => void;
 }) {
@@ -1108,6 +1116,8 @@ function DashboardTaskDialog({
         <DashInfo label="设计截止" value={task.designDueDate || "-"} />
         <DashInfo label="提测日期" value={task.testDueDate || "-"} />
         <DashInfo label="交付日期" value={task.dueDate || "-"} />
+        <DashboardReferenceInfo label="需求项" value={task.requirementItem} baseUrl={requirementTreeExternalUrl} />
+        <DashboardReferenceInfo label="子条目" value={task.subItem} baseUrl={requirementTreeExternalUrl} />
         <ProgressInfo value={task.progress} />
         <DashInfo label="工作量" value={`${task.effectiveWorkloadDays} 人日`} />
         <div className="rounded-2xl border border-[var(--dash-line)] bg-[var(--dash-card)] p-3">
@@ -1136,6 +1146,19 @@ function DashboardTaskDialog({
         {task.blockedReason ? <p className="mt-4 text-sm text-[var(--dash-muted)]">阻塞原因：{task.blockedReason}</p> : null}
       </div>
     </DialogShell>
+  );
+}
+
+function DashboardReferenceInfo({ label, value, baseUrl }: { label: string; value: string; baseUrl: string }) {
+  const text = value.trim();
+  const href = requirementTreeUrl(baseUrl, text);
+  return (
+    <div className="rounded-2xl border border-[var(--dash-line)] bg-[var(--dash-card)] p-3">
+      <div className="text-xs text-[var(--dash-muted)]">{label}</div>
+      {text ? (
+        href ? <a href={href} target="_blank" rel="noreferrer" className="mt-2 inline-flex max-w-full items-center gap-1 text-sm font-medium text-[var(--dash-accent)] hover:underline"><span className="truncate">{text}</span><ExternalLink size={13} className="shrink-0" /></a> : <div className="mt-2 truncate text-sm font-medium text-[var(--dash-text)]">{text}</div>
+      ) : <div className="mt-2 text-sm text-[var(--dash-muted)]">-</div>}
+    </div>
   );
 }
 

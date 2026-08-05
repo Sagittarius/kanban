@@ -1,4 +1,4 @@
-const FALLBACK_APP_VERSION = "1.5.4";
+const FALLBACK_APP_VERSION = "1.5.5";
 
 export function getAppVersion() {
   if (process.env.KANBAN_APP_VERSION) {

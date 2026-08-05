@@ -101,11 +101,11 @@ PostgreSQL compose 使用 `postgres:16-alpine`，应用服务等待数据库 hea
 ### 镜像构建
 
 ```bash
-docker build -t halfroom/kanban:beta-1.5.4 .
+docker build -t halfroom/kanban:beta-1.5.5 .
 
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  -t halfroom/kanban:beta-1.5.4 \
+  -t halfroom/kanban:beta-1.5.5 \
   --push .
 ```
 
@@ -129,16 +129,16 @@ Dockerfile 使用 Next standalone 输出：
 docker buildx build \
   --builder kanban-builder \
   --platform linux/arm64 \
-  --build-arg KANBAN_APP_VERSION=1.5.4 \
-  --build-arg KANBAN_IMAGE_TAG=halfroom/kanban:beta-1.5.4 \
-  -t halfroom/kanban:beta-1.5.4 \
-  --output type=docker,dest=halfroom-kanban-beta-1.5.4-linux-arm64.tar .
+  --build-arg KANBAN_APP_VERSION=1.5.5 \
+  --build-arg KANBAN_IMAGE_TAG=halfroom/kanban:beta-1.5.5 \
+  -t halfroom/kanban:beta-1.5.5 \
+  --output type=docker,dest=halfroom-kanban-beta-1.5.5-linux-arm64.tar .
 ```
 
 导入：
 
 ```bash
-docker load -i halfroom-kanban-beta-1.5.4-linux-arm64.tar
+docker load -i halfroom-kanban-beta-1.5.5-linux-arm64.tar
 ```
 
 ## 数据库维护

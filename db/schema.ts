@@ -119,6 +119,8 @@ export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull(),
   title: text("title").notNull(),
+  requirementItem: text("requirement_item").notNull().default(""),
+  subItem: text("sub_item").notNull().default(""),
   description: text("description").notNull().default(""),
   status: text("status").notNull().default("backlog"),
   priority: text("priority").notNull().default("medium"),

@@ -54,6 +54,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL,
   title TEXT NOT NULL,
+  requirement_item TEXT NOT NULL DEFAULT '',
+  sub_item TEXT NOT NULL DEFAULT '',
   description TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'backlog',
   priority TEXT NOT NULL DEFAULT 'medium',

@@ -43,6 +43,8 @@ export type BoardTask = {
   projectId: string;
   title: string;
   description: string;
+  requirementItem: string;
+  subItem: string;
   status: BoardStatus;
   priority: Priority;
   ownerUserId: string;
@@ -139,6 +141,18 @@ export type BoardData = {
 const seedTime = "2026-06-06T09:00:00.000Z";
 
 export const defaultSystemParameters: SystemParameter[] = [
+  {
+    key: "requirement_tree_external_url",
+    value: "",
+    label: "需求树外链",
+    valueType: "text",
+    group: "任务",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 8,
+    updatedAt: seedTime,
+  },
   {
     key: "due_soon_days",
     value: "2",
@@ -466,6 +480,8 @@ export const seedTasks: BoardTask[] = [
     projectId: "core-platform",
     title: "梳理 Q3 里程碑和依赖",
     description: "确认平台、数据、客户端三条线的关键依赖，形成可执行排期。",
+    requirementItem: "",
+    subItem: "",
     status: "dev",
     priority: "high",
     ownerUserId: "",
@@ -495,6 +511,8 @@ export const seedTasks: BoardTask[] = [
     projectId: "core-platform",
     title: "接口健康度巡检面板",
     description: "把异常率、延迟和最近部署事件放到同一个视图里。",
+    requirementItem: "",
+    subItem: "",
     status: "dev",
     priority: "high",
     ownerUserId: "",
@@ -524,6 +542,8 @@ export const seedTasks: BoardTask[] = [
     projectId: "mobile-delivery",
     title: "移动端任务详情重排",
     description: "把负责人、截止时间和阻塞原因放到首屏可见区域。",
+    requirementItem: "",
+    subItem: "",
     status: "test",
     priority: "medium",
     ownerUserId: "",
@@ -553,6 +573,8 @@ export const seedTasks: BoardTask[] = [
     projectId: "growth-ops",
     title: "发布节奏复盘",
     description: "整理最近四次发布中延期、返工和审批卡点。",
+    requirementItem: "",
+    subItem: "",
     status: "backlog",
     priority: "medium",
     ownerUserId: "",
@@ -582,6 +604,8 @@ export const seedTasks: BoardTask[] = [
     projectId: "core-platform",
     title: "验收数据导出规则",
     description: "明确字段口径、权限边界和异常数据处理方式。",
+    requirementItem: "",
+    subItem: "",
     status: "done",
     priority: "low",
     ownerUserId: "",
@@ -611,6 +635,8 @@ export const seedTasks: BoardTask[] = [
     projectId: "mobile-delivery",
     title: "缺陷分级规则补充",
     description: "补齐线上阻断、普通缺陷和体验问题的处理时限。",
+    requirementItem: "",
+    subItem: "",
     status: "dev",
     priority: "high",
     ownerUserId: "",
@@ -640,6 +666,8 @@ export const seedTasks: BoardTask[] = [
     projectId: "growth-ops",
     title: "客户案例素材池",
     description: "沉淀可复用案例、截图和行业标签，支持后续活动页面。",
+    requirementItem: "",
+    subItem: "",
     status: "backlog",
     priority: "low",
     ownerUserId: "",

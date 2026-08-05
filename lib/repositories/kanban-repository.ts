@@ -71,6 +71,8 @@ export type UpdateProjectInput = Partial<CreateProjectInput & { status: unknown;
 export type CreateTaskInput = {
   title?: unknown;
   description?: unknown;
+  requirementItem?: unknown;
+  subItem?: unknown;
   projectId?: unknown;
   priority?: unknown;
   owner?: unknown;
@@ -1247,6 +1249,8 @@ export class KanbanRepository {
     }
     const title = text(input.title);
     const description = text(input.description);
+    const requirementItem = text(input.requirementItem);
+    const subItem = text(input.subItem);
     if (!title) throw new Error("任务名称不能为空");
     if (!description) throw new Error("任务描述不能为空");
     const now = iso();
@@ -1255,6 +1259,8 @@ export class KanbanRepository {
       project_id: projectId,
       title,
       description,
+      requirement_item: requirementItem,
+      sub_item: subItem,
       status: "backlog",
       priority: isPriority(input.priority) ? input.priority : "medium",
       owner_user_id: assignees.ownerUserId,
@@ -1280,11 +1286,13 @@ export class KanbanRepository {
       updated_at: now,
     };
     await this.x(
-      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,design_due_date,design_completed_at,test_due_date,dev_completed_at,due_date,completed_at,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO tasks (id,project_id,title,requirement_item,sub_item,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,design_due_date,design_completed_at,test_due_date,dev_completed_at,due_date,completed_at,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         row.id,
         row.project_id,
         row.title,
+        row.requirement_item,
+        row.sub_item,
         row.description,
         row.status,
         row.priority,
@@ -1343,11 +1351,13 @@ export class KanbanRepository {
     const nextTitle = current.title.endsWith("（返工）") ? current.title : `${current.title}（返工）`;
     const nextTags = Array.from(new Set([...current.tags, "返工"]));
     await this.x(
-      "INSERT INTO tasks (id,project_id,title,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,design_due_date,design_completed_at,test_due_date,dev_completed_at,due_date,completed_at,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+      "INSERT INTO tasks (id,project_id,title,requirement_item,sub_item,description,status,priority,owner_user_id,owner,tester_user_id,tester,workload_days,start_date,design_due_date,design_completed_at,test_due_date,dev_completed_at,due_date,completed_at,estimate,progress,blockers,blocked_reason,tags,order_index,deleted_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
       [
         newTaskId,
         current.projectId,
         nextTitle,
+        current.requirementItem,
+        current.subItem,
         current.description,
         "backlog",
         current.priority,
@@ -1430,6 +1440,8 @@ export class KanbanRepository {
     }
     const nextTitle = text(input.title, current.title);
     const nextDescription = opt(input.description, current.description);
+    const nextRequirementItem = opt(input.requirementItem, current.requirementItem);
+    const nextSubItem = opt(input.subItem, current.subItem);
     const nextDesignDueDate = opt(input.designDueDate, current.designDueDate);
     const nextTestDueDate = opt(input.testDueDate, current.testDueDate);
     const nextDueDate = opt(input.dueDate, current.dueDate);
@@ -1447,10 +1459,12 @@ export class KanbanRepository {
     const nextBlockers = status === "done" ? 0 : num(input.blockers, current.blockers, 0, 99);
     const nextBlockedReason = status === "done" ? "" : opt(input.blockedReason, current.blockedReason);
     await this.x(
-      "UPDATE tasks SET title=?,description=?,project_id=?,status=?,priority=?,owner_user_id=?,owner=?,tester_user_id=?,tester=?,workload_days=?,start_date=?,design_due_date=?,design_completed_at=?,test_due_date=?,dev_completed_at=?,due_date=?,completed_at=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,updated_at=? WHERE id=?",
+      "UPDATE tasks SET title=?,description=?,requirement_item=?,sub_item=?,project_id=?,status=?,priority=?,owner_user_id=?,owner=?,tester_user_id=?,tester=?,workload_days=?,start_date=?,design_due_date=?,design_completed_at=?,test_due_date=?,dev_completed_at=?,due_date=?,completed_at=?,estimate=?,progress=?,blockers=?,blocked_reason=?,tags=?,order_index=?,updated_at=? WHERE id=?",
       [
         nextTitle,
         nextDescription,
+        nextRequirementItem,
+        nextSubItem,
         projectId,
         status,
         isPriority(input.priority) ? input.priority : current.priority,
@@ -1483,6 +1497,8 @@ export class KanbanRepository {
       changeEntry("项目", currentProjectRow ? String(currentProjectRow.name ?? current.projectId) : current.projectId, String(projectRow.name ?? projectId)),
       changeEntry("任务名称", current.title, nextTitle),
       changeEntry("任务描述", current.description, nextDescription),
+      changeEntry("需求项", current.requirementItem, nextRequirementItem),
+      changeEntry("子条目", current.subItem, nextSubItem),
       changeEntry("状态", statusLabel(current.status), statusLabel(status)),
       changeEntry("优先级", priorityLabel(current.priority), priorityLabel(isPriority(input.priority) ? input.priority : current.priority)),
       changeEntry("负责人", current.owner || "空", assignees.ownerName || "空"),
@@ -1929,6 +1945,7 @@ export class KanbanRepository {
     const settings = settingsFromRows(await this.q("SELECT * FROM system_parameters ORDER BY order_index ASC,key ASC"));
     const dueSoonDays = settings.dueSoonDays;
     const testerDefaultWorkloadDays = settings.testerDefaultWorkloadDays;
+    const requirementTreeExternalUrl = parameterText(settings, "requirement_tree_external_url");
     const todayKey = todayKeyInTimeZone(actor.timezone);
     const allowedTeams = await this.listTeamsForDashboard(actor);
     const allowedTeamIds = new Set(allowedTeams.map((teamItem) => teamItem.id));
@@ -2032,6 +2049,8 @@ export class KanbanRepository {
           id: normalizedTask.id,
           title: normalizedTask.title,
           description: normalizedTask.description,
+          requirementItem: normalizedTask.requirementItem,
+          subItem: normalizedTask.subItem,
           projectId: normalizedTask.projectId,
           projectName: projectNames.get(normalizedTask.projectId) ?? "",
           status: normalizedTask.status,
@@ -2104,6 +2123,8 @@ export class KanbanRepository {
           id: normalizedTask.id,
           title: normalizedTask.title,
           description: normalizedTask.description,
+          requirementItem: normalizedTask.requirementItem,
+          subItem: normalizedTask.subItem,
           projectId: normalizedTask.projectId,
           projectName: String(row.name),
           status: normalizedTask.status,
@@ -2165,6 +2186,7 @@ export class KanbanRepository {
       members: rows.sort((left, right) => right.workloadDays - left.workloadDays || right.taskCount - left.taskCount || left.displayName.localeCompare(right.displayName)),
       dueSoonDays,
       todayKey,
+      requirementTreeExternalUrl,
     };
   }
 
@@ -3058,6 +3080,8 @@ function task(row: Record<string, unknown>, steps: Subtask[]) {
     projectId: String(row.project_id),
     title: String(row.title),
     description: String(row.description ?? ""),
+    requirementItem: String(row.requirement_item ?? ""),
+    subItem: String(row.sub_item ?? ""),
     status,
     priority: isPriority(row.priority) ? row.priority : "medium",
     ownerUserId: typeof row.owner_user_id === "string" ? row.owner_user_id : "",

@@ -40,6 +40,7 @@ import {
   Download,
   Edit3,
   Eye,
+  ExternalLink,
   FileSpreadsheet,
   FolderPlus,
   History,
@@ -92,6 +93,7 @@ import {
 } from "@/lib/board-data";
 import type { ChangelogEntry } from "@/lib/changelog";
 import { clientFetch } from "@/lib/client-observability";
+import { requirementTreeUrl } from "@/lib/requirement-tree-link";
 import { canManageKanbanProjects, isSuperAdminRole } from "@/lib/role-permissions";
 import { getSelectSearchMatchRanges, textMatchesSelectQuery } from "@/lib/select-search";
 
@@ -138,6 +140,8 @@ const kanbanCollisionDetection: CollisionDetection = (args) => {
 type NewTaskForm = {
   title: string;
   description: string;
+  requirementItem: string;
+  subItem: string;
   projectId: string;
   ownerUserId: string;
   owner: string;
@@ -237,6 +241,23 @@ function formatActivityTime(value: string) {
       .map((part) => [part.type, part.value])
   );
   return `${parts.month}/${parts.day} ${parts.hour}:${parts.minute}`;
+}
+
+function formatStandardDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${values.year}-${values.month}-${values.day} ${values.hour}:${values.minute}:${values.second}`;
 }
 
 function parseTags(value: string) {
@@ -426,6 +447,8 @@ function taskSpreadsheet(task: BoardTask, project: Project, statusLabelText: str
     project: project.name,
     title: task.title,
     description: task.description || "",
+    requirementItem: task.requirementItem || "",
+    subItem: task.subItem || "",
     status: statusLabelText,
     priority: priorityLabels[task.priority],
     owner: task.owner || "",
@@ -438,7 +461,7 @@ function taskSpreadsheet(task: BoardTask, project: Project, statusLabelText: str
     deadlines: deadlineSummary(task, todayKey, dueSoonDays),
     progress: `${task.progress}%`,
     blockers: task.blockers > 0 ? `${task.blockers}` : "",
-    updatedAt: task.updatedAt.slice(0, 10),
+    updatedAt: formatStandardDateTime(task.updatedAt),
   };
 }
 
@@ -446,6 +469,8 @@ const taskImportHeaderRow = [
   "项目",
   "任务",
   "描述",
+  "需求项",
+  "子条目",
   "优先级",
   "负责人",
   "测试员",
@@ -460,6 +485,8 @@ type TaskImportRow = {
   project: string;
   title: string;
   description: string;
+  requirementItem: string;
+  subItem: string;
   priority: Priority;
   ownerUserId: string;
   testerUserId: string;
@@ -510,6 +537,8 @@ function parseTaskImportRow(
   const projectName = importField(row, ["项目", "project"]);
   const title = importField(row, ["任务", "title"]);
   const description = importField(row, ["描述", "description"]);
+  const requirementItem = importField(row, ["需求项", "requirementItem"]);
+  const subItem = importField(row, ["子条目", "subItem"]);
   const priority = parseImportedPriority(importField(row, ["优先级", "priority"]));
   const ownerValue = importField(row, ["负责人", "owner"]);
   const testerValue = importField(row, ["测试员", "tester"]);
@@ -556,6 +585,8 @@ function parseTaskImportRow(
     project: project?.id ?? "",
     title,
     description,
+    requirementItem,
+    subItem,
     priority,
     ownerUserId,
     testerUserId,
@@ -1164,6 +1195,8 @@ export default function KanbanApp({
   const [newTask, setNewTask] = useState<NewTaskForm>({
     title: "",
     description: "",
+    requirementItem: "",
+    subItem: "",
     projectId: initialBoard.projects.find((project) => project.status === "active")?.id ?? "",
     ownerUserId: "",
     owner: "",
@@ -1247,6 +1280,7 @@ export default function KanbanApp({
   const settings = board.settings ?? defaultSystemSettings;
   const dueSoonDays = settings.dueSoonDays;
   const taskCardStripeEnabled = settingBoolean(settings, "task_card_stripe_enabled", true);
+  const requirementTreeExternalUrl = settingText(settings, "requirement_tree_external_url", "");
   const archivedProjects = useMemo(
     () => sortedProjects.filter((project) => project.status === "archived"),
     [sortedProjects]
@@ -1307,6 +1341,8 @@ export default function KanbanApp({
         [
           task.title,
           task.description,
+          task.requirementItem,
+          task.subItem,
           task.owner,
           task.tester,
           ...task.tags,
@@ -1781,6 +1817,8 @@ export default function KanbanApp({
       projectId,
       title: newTask.title.trim(),
       description: newTask.description.trim(),
+      requirementItem: newTask.requirementItem.trim(),
+      subItem: newTask.subItem.trim(),
       status: "backlog",
       priority: newTask.priority,
       ownerUserId: newTask.ownerUserId,
@@ -1813,6 +1851,8 @@ export default function KanbanApp({
       ...current,
       title: "",
       description: "",
+      requirementItem: "",
+      subItem: "",
       owner: "",
       ownerUserId: "",
       tester: "",
@@ -1838,6 +1878,8 @@ export default function KanbanApp({
       const saved = await apiRequest<BoardTask>("/api/tasks", "POST", {
         title: newTask.title,
         description: newTask.description,
+        requirementItem: newTask.requirementItem,
+        subItem: newTask.subItem,
         projectId,
         ownerUserId: newTask.ownerUserId,
         testerUserId: newTask.testerUserId,
@@ -2123,6 +2165,8 @@ export default function KanbanApp({
         "project",
         "title",
         "description",
+        "requirementItem",
+        "subItem",
         "status",
         "priority",
         "owner",
@@ -2144,6 +2188,8 @@ export default function KanbanApp({
         "项目",
         "任务",
         "描述",
+        "需求项",
+        "子条目",
         "状态",
         "优先级",
         "负责人",
@@ -2171,7 +2217,7 @@ export default function KanbanApp({
   function downloadTaskImportTemplate() {
     const worksheet = utils.aoa_to_sheet([
       taskImportHeaderRow,
-      ["演示项目", "示例任务", "示例描述", "中优先级", "张三", "李四", "1", "2026-07-10", "2026-07-14", "2026-07-18", "业务需求/接口联调"],
+      ["演示项目", "示例任务", "示例描述", "I202608-0003", "SUB-0001", "中优先级", "张三", "李四", "1", "2026-07-10", "2026-07-14", "2026-07-18", "业务需求/接口联调"],
     ]);
     const notes = utils.aoa_to_sheet([
       ["说明"],
@@ -2225,6 +2271,8 @@ export default function KanbanApp({
           await apiRequest<BoardTask>("/api/tasks", "POST", {
             title: row.title,
             description: row.description,
+            requirementItem: row.requirementItem,
+            subItem: row.subItem,
             projectId: row.project,
             ownerUserId: row.ownerUserId,
             testerUserId: row.testerUserId,
@@ -2606,6 +2654,7 @@ export default function KanbanApp({
                         todayKey={todayKey}
                         dueSoonDays={dueSoonDays}
                         taskCardStripeEnabled={taskCardStripeEnabled}
+                        requirementTreeExternalUrl={requirementTreeExternalUrl}
                         crossDragTarget={crossDragTarget}
                         searchQuery={search}
                         onToggleCollapse={() => setBacklogCollapsed((current) => !current)}
@@ -2631,6 +2680,7 @@ export default function KanbanApp({
                         todayKey={todayKey}
                         dueSoonDays={dueSoonDays}
                         taskCardStripeEnabled={taskCardStripeEnabled}
+                        requirementTreeExternalUrl={requirementTreeExternalUrl}
                         crossDragTarget={crossDragTarget}
                         searchQuery={search}
                         onOpenTask={openTask}
@@ -2655,6 +2705,7 @@ export default function KanbanApp({
                         project={draggingTaskProject}
                         selected={draggingPreviewTask.id === selectedTaskId}
                         stripeEnabled={taskCardStripeEnabled}
+                        requirementTreeExternalUrl={requirementTreeExternalUrl}
                         dragging
                         draggable={false}
                         searchQuery={search}
@@ -2670,6 +2721,7 @@ export default function KanbanApp({
                 todayKey={todayKey}
                 dueSoonDays={dueSoonDays}
                 searchQuery={search}
+                requirementTreeExternalUrl={requirementTreeExternalUrl}
                 onOpenTask={openTask}
               />
             )}
@@ -2873,6 +2925,7 @@ function HorizontalBoardColumn({
   todayKey,
   dueSoonDays,
   taskCardStripeEnabled,
+  requirementTreeExternalUrl,
   crossDragTarget,
   searchQuery,
   onToggleCollapse,
@@ -2886,6 +2939,7 @@ function HorizontalBoardColumn({
   todayKey: string;
   dueSoonDays: number;
   taskCardStripeEnabled: boolean;
+  requirementTreeExternalUrl: string;
   crossDragTarget: BoardStatus | null;
   searchQuery: string;
   onToggleCollapse: () => void;
@@ -2954,6 +3008,7 @@ function HorizontalBoardColumn({
                     project={projectById(projects, task.projectId)}
                     selected={task.id === selectedTaskId}
                     stripeEnabled={taskCardStripeEnabled}
+                    requirementTreeExternalUrl={requirementTreeExternalUrl}
                     searchQuery={searchQuery}
                     className="w-[280px] shrink-0"
                     onSelect={() => onOpenTask(task.id)}
@@ -2978,6 +3033,7 @@ function BoardColumnView({
   todayKey,
   dueSoonDays,
   taskCardStripeEnabled,
+  requirementTreeExternalUrl,
   crossDragTarget,
   searchQuery,
   onOpenTask,
@@ -2989,6 +3045,7 @@ function BoardColumnView({
   todayKey: string;
   dueSoonDays: number;
   taskCardStripeEnabled: boolean;
+  requirementTreeExternalUrl: string;
   crossDragTarget: BoardStatus | null;
   searchQuery: string;
   onOpenTask: (taskId: string) => void;
@@ -3038,6 +3095,7 @@ function BoardColumnView({
                 project={projectById(projects, task.projectId)}
                 selected={task.id === selectedTaskId}
                 stripeEnabled={taskCardStripeEnabled}
+                requirementTreeExternalUrl={requirementTreeExternalUrl}
                 searchQuery={searchQuery}
                 className="w-full"
                 onSelect={() => onOpenTask(task.id)}
@@ -3057,20 +3115,24 @@ function KanbanListView({
   todayKey,
   dueSoonDays,
   searchQuery,
+  requirementTreeExternalUrl,
   onOpenTask,
 }: {
   tasks: Array<{ task: BoardTask; project: Project; statusLabel: string }>;
   todayKey: string;
   dueSoonDays: number;
   searchQuery: string;
+  requirementTreeExternalUrl: string;
   onOpenTask: (taskId: string) => void;
 }) {
   return (
     <div className="min-h-[760px] overflow-auto bg-[var(--lane-bg)] p-3 2xl:min-h-[900px]">
-      <div className="min-w-[1200px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
-        <div className="grid grid-cols-[180px_minmax(280px,1.6fr)_140px_110px_110px_130px_130px_140px_110px_110px] gap-3 border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">
+      <div className="min-w-[1480px] overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--panel)]">
+        <div className="grid grid-cols-[180px_minmax(260px,1.45fr)_150px_150px_130px_130px_110px_130px_130px_160px_90px_90px] gap-3 border-b border-[var(--border)] bg-[var(--panel-soft)] px-4 py-3 text-xs font-semibold uppercase tracking-[0.08em] text-[var(--muted)]">
           <span>项目 / 状态</span>
           <span>任务</span>
+          <span>需求项</span>
+          <span>子条目</span>
           <span>负责人</span>
           <span>测试员</span>
           <span>工作量（人日）</span>
@@ -3085,11 +3147,18 @@ function KanbanListView({
             tasks.map(({ task, project, statusLabel }) => {
               const deadlineText = deadlineSummary(task, todayKey, dueSoonDays);
               return (
-                <button
+                <div
                   key={task.id}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => onOpenTask(task.id)}
-                  className="grid w-full grid-cols-[180px_minmax(280px,1.6fr)_140px_110px_110px_130px_130px_140px_110px_110px] gap-3 px-4 py-3 text-left transition hover:bg-[var(--hover)]"
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      onOpenTask(task.id);
+                    }
+                  }}
+                  className="grid w-full cursor-pointer grid-cols-[180px_minmax(260px,1.45fr)_150px_150px_130px_130px_110px_130px_130px_160px_90px_90px] gap-3 px-4 py-3 text-left transition hover:bg-[var(--hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--accent)]"
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-semibold text-[var(--text)]">{project.name}</span>
@@ -3103,17 +3172,19 @@ function KanbanListView({
                       <HighlightedSearchText text={task.description || "无描述"} query={task.description ? searchQuery : ""} />
                     </span>
                   </span>
-                  <span className="truncate text-sm text-[var(--text)]">{task.owner || "-"}</span>
-                  <span className="truncate text-sm text-[var(--text)]">{task.tester || "-"}</span>
+                  <TaskReferenceLink label="需求项" value={task.requirementItem} baseUrl={requirementTreeExternalUrl} query={searchQuery} />
+                  <TaskReferenceLink label="子条目" value={task.subItem} baseUrl={requirementTreeExternalUrl} query={searchQuery} />
+                  <span className="truncate text-sm text-[var(--text)]"><HighlightedSearchText text={task.owner || "-"} query={task.owner ? searchQuery : ""} /></span>
+                  <span className="truncate text-sm text-[var(--text)]"><HighlightedSearchText text={task.tester || "-"} query={task.tester ? searchQuery : ""} /></span>
                   <span className="text-sm font-semibold text-[var(--text)]">{task.workloadDays ?? "-"}</span>
-                  <span className="truncate text-xs text-[var(--muted)]">{task.tags.join(" / ") || "-"}</span>
+                  <span className="truncate text-xs text-[var(--muted)]"><HighlightedSearchText text={task.tags.join(" / ") || "-"} query={task.tags.length ? searchQuery : ""} /></span>
                   <span className="truncate text-xs text-[var(--muted)]">{deadlineText}</span>
-                  <span className="text-xs text-[var(--muted)]">{task.updatedAt.slice(0, 10)}</span>
+                  <span className="text-xs tabular-nums text-[var(--muted)]">{formatStandardDateTime(task.updatedAt)}</span>
                   <span className="text-sm font-semibold text-[var(--text)]">{task.progress}%</span>
                   <span className={`text-sm font-semibold ${task.blockers > 0 ? "text-[#c7523d]" : "text-[var(--muted)]"}`}>
                     {task.blockers > 0 ? task.blockers : "-"}
                   </span>
-                </button>
+                </div>
               );
             })
           ) : (
@@ -3132,6 +3203,7 @@ function HorizontalSortableTaskCard({
   project,
   selected,
   stripeEnabled,
+  requirementTreeExternalUrl,
   searchQuery,
   className,
   onSelect,
@@ -3142,6 +3214,7 @@ function HorizontalSortableTaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  requirementTreeExternalUrl: string;
   searchQuery: string;
   className?: string;
   onSelect: () => void;
@@ -3154,6 +3227,7 @@ function HorizontalSortableTaskCard({
       project={project}
       selected={selected}
       stripeEnabled={stripeEnabled}
+      requirementTreeExternalUrl={requirementTreeExternalUrl}
       searchQuery={searchQuery}
       className={className}
       onSelect={onSelect}
@@ -3168,6 +3242,7 @@ function HorizontalDraggableTaskCard({
   project,
   selected,
   stripeEnabled,
+  requirementTreeExternalUrl,
   searchQuery,
   className,
   onSelect,
@@ -3178,6 +3253,7 @@ function HorizontalDraggableTaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  requirementTreeExternalUrl: string;
   searchQuery: string;
   className?: string;
   onSelect: () => void;
@@ -3216,6 +3292,7 @@ function HorizontalDraggableTaskCard({
         project={project}
         selected={selected}
         stripeEnabled={stripeEnabled}
+        requirementTreeExternalUrl={requirementTreeExternalUrl}
         searchQuery={searchQuery}
         dragging={isDragging}
         draggable={true}
@@ -3232,6 +3309,7 @@ function VerticalSortableTaskCard({
   project,
   selected,
   stripeEnabled,
+  requirementTreeExternalUrl,
   searchQuery,
   className,
   onSelect,
@@ -3242,6 +3320,7 @@ function VerticalSortableTaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  requirementTreeExternalUrl: string;
   searchQuery: string;
   className?: string;
   onSelect: () => void;
@@ -3254,6 +3333,7 @@ function VerticalSortableTaskCard({
       project={project}
       selected={selected}
       stripeEnabled={stripeEnabled}
+      requirementTreeExternalUrl={requirementTreeExternalUrl}
       searchQuery={searchQuery}
       className={className}
       onSelect={onSelect}
@@ -3268,6 +3348,7 @@ function VerticalDraggableTaskCard({
   project,
   selected,
   stripeEnabled,
+  requirementTreeExternalUrl,
   searchQuery,
   className,
   onSelect,
@@ -3278,6 +3359,7 @@ function VerticalDraggableTaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  requirementTreeExternalUrl: string;
   searchQuery: string;
   className?: string;
   onSelect: () => void;
@@ -3316,6 +3398,7 @@ function VerticalDraggableTaskCard({
         project={project}
         selected={selected}
         stripeEnabled={stripeEnabled}
+        requirementTreeExternalUrl={requirementTreeExternalUrl}
         searchQuery={searchQuery}
         dragging={isDragging}
         draggable={true}
@@ -3596,6 +3679,7 @@ function TaskCard({
   project,
   selected,
   stripeEnabled,
+  requirementTreeExternalUrl,
   searchQuery = "",
   dragging,
   draggable,
@@ -3607,6 +3691,7 @@ function TaskCard({
   project: Project;
   selected: boolean;
   stripeEnabled: boolean;
+  requirementTreeExternalUrl: string;
   searchQuery?: string;
   dragging: boolean;
   draggable: boolean;
@@ -3663,6 +3748,13 @@ function TaskCard({
           <HighlightedSearchText text={task.description || "暂无描述"} query={task.description ? searchQuery : ""} />
         </p>
       </div>
+
+      {task.requirementItem || task.subItem ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          <TaskReferenceLink label="需求项" value={task.requirementItem} baseUrl={requirementTreeExternalUrl} query={searchQuery} compact />
+          <TaskReferenceLink label="子条目" value={task.subItem} baseUrl={requirementTreeExternalUrl} query={searchQuery} compact />
+        </div>
+      ) : null}
 
       {visibleTags.length ? (
         <div className="mt-3 flex flex-wrap gap-1">
@@ -3730,6 +3822,17 @@ function TaskCard({
   );
 }
 
+function TaskReferenceLink({ label, value, baseUrl, query, compact = false }: { label: string; value: string; baseUrl: string; query: string; compact?: boolean }) {
+  const text = value.trim();
+  if (!text) return compact ? null : <span className="text-sm text-[var(--muted)]">-</span>;
+  const href = requirementTreeUrl(baseUrl, text);
+  const className = compact
+    ? "inline-flex max-w-full items-center gap-1 rounded-md border border-[var(--card-border)] bg-[var(--card-section)] px-2 py-0.5 text-[11px] text-[var(--muted)] transition hover:border-[var(--accent)] hover:text-[var(--accent)]"
+    : "inline-flex min-w-0 self-start items-center gap-1 pt-0.5 text-sm leading-5 text-[var(--accent)] underline-offset-2 transition hover:underline";
+  const content = <><span className={compact ? "text-[var(--muted)]" : "sr-only"}>{label}</span><span className="truncate"><HighlightedSearchText text={text} query={query} /></span>{href ? <ExternalLink size={compact ? 11 : 13} className="shrink-0" /> : null}</>;
+  return href ? <a href={href} target="_blank" rel="noreferrer" title={`打开${label}：${text}`} onClick={(event) => event.stopPropagation()} className={className}>{content}</a> : <span className={`${className} cursor-default`}>{content}</span>;
+}
+
 function TaskCardInfo({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="flex min-w-0 items-center justify-between gap-3 rounded-md border border-[var(--card-border)] bg-[var(--card-section)] px-2 py-1.5 text-left">
@@ -3779,6 +3882,8 @@ function Drawer({ children, onClose, side = "right" }: { children: ReactNode; on
 type TaskDraft = {
   title: string;
   description: string;
+  requirementItem: string;
+  subItem: string;
   projectId: string;
   status: BoardStatus;
   priority: Priority;
@@ -3802,6 +3907,8 @@ function taskDraftFromTask(task: BoardTask): TaskDraft {
   return {
     title: task.title,
     description: task.description,
+    requirementItem: task.requirementItem,
+    subItem: task.subItem,
     projectId: task.projectId,
     status: task.status,
     priority: task.priority,
@@ -3917,6 +4024,8 @@ function TaskDrawer({
         : {
             title: nextDraft.title,
             description: nextDraft.description,
+            requirementItem: nextDraft.requirementItem,
+            subItem: nextDraft.subItem,
             projectId: nextDraft.projectId,
             status: nextDraft.status,
             priority: nextDraft.priority,
@@ -4099,6 +4208,24 @@ function TaskDrawer({
                 disabled={!canEditManagedFields}
               />
             </Field>
+            <Field label="需求项">
+              <input
+                name="taskRequirementItem"
+                value={draft.requirementItem}
+                onChange={(event) => setDraft((current) => ({ ...current, requirementItem: event.target.value }))}
+                placeholder="需求项编号"
+                disabled={!canEditManagedFields}
+              />
+            </Field>
+            <Field label="子条目">
+              <input
+                name="taskSubItem"
+                value={draft.subItem}
+                onChange={(event) => setDraft((current) => ({ ...current, subItem: event.target.value }))}
+                placeholder="需求子条目编号"
+                disabled={!canEditManagedFields}
+              />
+            </Field>
             <Field label="负责人">
               <SearchableSelect
                 value={draft.ownerUserId}
@@ -4163,7 +4290,6 @@ function TaskDrawer({
               className="min-h-[184px] resize-none leading-6"
             />
           </Field>
-
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-4">
               <div className="text-sm font-medium leading-10 text-[var(--muted)]">{`进度 ${effectiveProgress}%`}</div>
@@ -4835,6 +4961,26 @@ function TaskCreateDialog({
                 className="min-h-[136px] w-full resize-none rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm leading-6 outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
               />
             </label>
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                <span>需求项</span>
+                <input
+                  value={newTask.requirementItem}
+                  onChange={(event) => onChange((current) => ({ ...current, requirementItem: event.target.value }))}
+                  placeholder="需求项编号"
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                />
+              </label>
+              <label className="grid gap-1.5 text-sm text-[var(--muted)]">
+                <span>子条目</span>
+                <input
+                  value={newTask.subItem}
+                  onChange={(event) => onChange((current) => ({ ...current, subItem: event.target.value }))}
+                  placeholder="需求子条目编号"
+                  className="w-full rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2 text-sm outline-none focus:border-[var(--accent)] focus:ring-2 focus:ring-[var(--accent-soft)]"
+                />
+              </label>
+            </div>
             <div className="grid gap-1.5 text-sm text-[var(--muted)]">
               <span>项目<RequiredMark /></span>
               {activeProjectOptions.length > 0 ? (

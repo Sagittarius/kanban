@@ -80,6 +80,8 @@ const TABLES = [
       "id",
       "project_id",
       "title",
+      "requirement_item",
+      "sub_item",
       "description",
       "status",
       "priority",
