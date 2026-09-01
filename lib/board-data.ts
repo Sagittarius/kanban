@@ -1,3 +1,5 @@
+import type { CurrentUser } from "@/lib/auth-models";
+
 export type BoardStatus = "backlog" | "design" | "dev" | "test" | "done";
 export type Priority = "high" | "medium" | "low";
 export type ProjectHealth = "good" | "normal" | "risk";
@@ -11,6 +13,8 @@ export type BoardColumn = {
 
 export type Project = {
   id: string;
+  teamId: string;
+  ownerUserId: string;
   name: string;
   description: string;
   owner: string;
@@ -39,14 +43,22 @@ export type BoardTask = {
   projectId: string;
   title: string;
   description: string;
+  requirementItem: string;
+  subItem: string;
   status: BoardStatus;
   priority: Priority;
+  ownerUserId: string;
   owner: string;
+  testerUserId: string;
   tester: string;
+  workloadDays?: number | null;
   startDate: string;
-  testDueDate: string;
   designDueDate: string;
+  designCompletedAt: string | null;
+  testDueDate: string;
+  devCompletedAt: string | null;
   dueDate: string;
+  completedAt: string | null;
   estimate: number;
   progress: number;
   blockers: number;
@@ -55,7 +67,6 @@ export type BoardTask = {
   subtasks: Subtask[];
   orderIndex: number;
   deletedAt: string | null;
-  completedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -87,22 +98,61 @@ export type SystemParameter = {
 
 export type SystemSettings = {
   dueSoonDays: number;
+  testerDefaultWorkloadDays: number;
   activityRetentionDays: number;
   parameters: SystemParameter[];
+};
+
+export type BoardUserOption = {
+  id: string;
+  username: string;
+  displayName: string;
+  role: "super_admin" | "project_manager" | "development_manager" | "team_member";
+  avatarKey: string;
+  jobTitle: string;
+  techStacks: string[];
+  phone: string;
+};
+
+export type BoardTeamOption = {
+  id: string;
+  name: string;
+  description: string;
+  ownerUserId: string;
+  ownerUsername: string;
+  color: string;
+  memberIds: string[];
+  members: BoardUserOption[];
 };
 
 export type BoardData = {
   columns: BoardColumn[];
   projects: Project[];
   tasks: BoardTask[];
+  currentUser?: CurrentUser;
+  teams?: BoardTeamOption[];
+  users?: BoardUserOption[];
   activity: ActivityLog[];
   settings: SystemSettings;
-  storageMode?: "d1" | "sqlite" | "local";
+  storageMode?: "sqlite" | "local" | "postgres";
+  boardName?: string;
 };
 
 const seedTime = "2026-06-06T09:00:00.000Z";
 
 export const defaultSystemParameters: SystemParameter[] = [
+  {
+    key: "requirement_tree_external_url",
+    value: "",
+    label: "需求树外链",
+    valueType: "text",
+    group: "任务",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 8,
+    updatedAt: seedTime,
+  },
   {
     key: "due_soon_days",
     value: "2",
@@ -113,6 +163,42 @@ export const defaultSystemParameters: SystemParameter[] = [
     minValue: 0,
     maxValue: 30,
     orderIndex: 10,
+    updatedAt: seedTime,
+  },
+  {
+    key: "project_manager_user_management_enabled",
+    value: "true",
+    label: "项目经理用户管理",
+    valueType: "boolean",
+    group: "权限",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 15,
+    updatedAt: seedTime,
+  },
+  {
+    key: "workload_dashboard_public_enabled",
+    value: "false",
+    label: "项目负载大屏公开访问",
+    valueType: "boolean",
+    group: "权限",
+    unit: "",
+    minValue: null,
+    maxValue: null,
+    orderIndex: 16,
+    updatedAt: seedTime,
+  },
+  {
+    key: "tester_default_workload_days",
+    value: "1",
+    label: "测试默认工作量",
+    valueType: "number",
+    group: "任务",
+    unit: "人日",
+    minValue: 0.5,
+    maxValue: 10,
+    orderIndex: 18,
     updatedAt: seedTime,
   },
   {
@@ -129,7 +215,7 @@ export const defaultSystemParameters: SystemParameter[] = [
   },
   {
     key: "board_title",
-    value: "项目看板",
+    value: "默认看板",
     label: "看板名称",
     valueType: "text",
     group: "看板",
@@ -215,6 +301,7 @@ export const defaultSystemParameters: SystemParameter[] = [
 
 export const defaultSystemSettings: SystemSettings = {
   dueSoonDays: 2,
+  testerDefaultWorkloadDays: 1,
   activityRetentionDays: 180,
   parameters: defaultSystemParameters.map((parameter) => ({ ...parameter })),
 };
@@ -282,6 +369,8 @@ export const healthLabels: Record<ProjectHealth, string> = {
 export const seedProjects: Project[] = [
   {
     id: "core-platform",
+    teamId: "",
+    ownerUserId: "",
     name: "核心平台",
     description: "平台能力、接口稳定性、数据出口和部署质量。",
     owner: "Vincent",
@@ -296,6 +385,8 @@ export const seedProjects: Project[] = [
   },
   {
     id: "mobile-delivery",
+    teamId: "",
+    ownerUserId: "",
     name: "移动端交付",
     description: "移动端页面、验收流程、缺陷分级和交互体验。",
     owner: "产品组",
@@ -310,6 +401,8 @@ export const seedProjects: Project[] = [
   },
   {
     id: "growth-ops",
+    teamId: "",
+    ownerUserId: "",
     name: "增长运营",
     description: "运营活动、案例素材、发布复盘和增长资产沉淀。",
     owner: "运营组",
@@ -387,14 +480,20 @@ export const seedTasks: BoardTask[] = [
     projectId: "core-platform",
     title: "梳理 Q3 里程碑和依赖",
     description: "确认平台、数据、客户端三条线的关键依赖，形成可执行排期。",
+    requirementItem: "",
+    subItem: "",
     status: "dev",
     priority: "high",
+    ownerUserId: "",
     owner: "Vincent",
+    testerUserId: "",
     tester: "QA",
     startDate: "2026-06-08",
     designDueDate: "2026-06-09",
     testDueDate: "2026-06-10",
     dueDate: "2026-06-12",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 5,
     progress: 30,
     blockers: 0,
@@ -412,14 +511,20 @@ export const seedTasks: BoardTask[] = [
     projectId: "core-platform",
     title: "接口健康度巡检面板",
     description: "把异常率、延迟和最近部署事件放到同一个视图里。",
+    requirementItem: "",
+    subItem: "",
     status: "dev",
     priority: "high",
+    ownerUserId: "",
     owner: "后端组",
+    testerUserId: "",
     tester: "QA",
     startDate: "2026-06-03",
     designDueDate: "2026-06-06",
     testDueDate: "2026-06-08",
     dueDate: "2026-06-10",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 8,
     progress: 62,
     blockers: 1,
@@ -437,14 +542,20 @@ export const seedTasks: BoardTask[] = [
     projectId: "mobile-delivery",
     title: "移动端任务详情重排",
     description: "把负责人、截止时间和阻塞原因放到首屏可见区域。",
+    requirementItem: "",
+    subItem: "",
     status: "test",
     priority: "medium",
+    ownerUserId: "",
     owner: "前端组",
+    testerUserId: "",
     tester: "测试组",
     startDate: "2026-06-01",
     designDueDate: "2026-06-03",
     testDueDate: "2026-06-05",
     dueDate: "2026-06-07",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 3,
     progress: 88,
     blockers: 0,
@@ -462,14 +573,20 @@ export const seedTasks: BoardTask[] = [
     projectId: "growth-ops",
     title: "发布节奏复盘",
     description: "整理最近四次发布中延期、返工和审批卡点。",
+    requirementItem: "",
+    subItem: "",
     status: "backlog",
     priority: "medium",
+    ownerUserId: "",
     owner: "运营组",
+    testerUserId: "",
     tester: "",
     startDate: "",
     designDueDate: "",
     testDueDate: "",
     dueDate: "2026-06-18",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 2,
     progress: 0,
     blockers: 0,
@@ -487,14 +604,20 @@ export const seedTasks: BoardTask[] = [
     projectId: "core-platform",
     title: "验收数据导出规则",
     description: "明确字段口径、权限边界和异常数据处理方式。",
+    requirementItem: "",
+    subItem: "",
     status: "done",
     priority: "low",
+    ownerUserId: "",
     owner: "数据组",
+    testerUserId: "",
     tester: "QA",
     startDate: "2026-05-28",
     designDueDate: "2026-05-31",
     testDueDate: "2026-06-03",
     dueDate: "2026-06-05",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 4,
     progress: 100,
     blockers: 0,
@@ -512,14 +635,20 @@ export const seedTasks: BoardTask[] = [
     projectId: "mobile-delivery",
     title: "缺陷分级规则补充",
     description: "补齐线上阻断、普通缺陷和体验问题的处理时限。",
+    requirementItem: "",
+    subItem: "",
     status: "dev",
     priority: "high",
+    ownerUserId: "",
     owner: "QA",
+    testerUserId: "",
     tester: "QA",
     startDate: "2026-06-04",
     designDueDate: "2026-06-05",
     testDueDate: "2026-06-07",
     dueDate: "2026-06-09",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 3,
     progress: 45,
     blockers: 1,
@@ -537,14 +666,20 @@ export const seedTasks: BoardTask[] = [
     projectId: "growth-ops",
     title: "客户案例素材池",
     description: "沉淀可复用案例、截图和行业标签，支持后续活动页面。",
+    requirementItem: "",
+    subItem: "",
     status: "backlog",
     priority: "low",
+    ownerUserId: "",
     owner: "市场组",
+    testerUserId: "",
     tester: "",
     startDate: "2026-06-11",
     designDueDate: "2026-06-15",
     testDueDate: "2026-06-17",
     dueDate: "2026-06-20",
+    designCompletedAt: null,
+    devCompletedAt: null,
     estimate: 5,
     progress: 12,
     blockers: 0,
@@ -601,11 +736,12 @@ export function createSeedBoard(): BoardData {
     projects: [],
     tasks: [],
     activity: [],
-    settings: {
-      dueSoonDays: defaultSystemSettings.dueSoonDays,
-      activityRetentionDays: defaultSystemSettings.activityRetentionDays,
-      parameters: defaultSystemSettings.parameters.map((parameter) => ({ ...parameter })),
-    },
+      settings: {
+        dueSoonDays: defaultSystemSettings.dueSoonDays,
+        testerDefaultWorkloadDays: defaultSystemSettings.testerDefaultWorkloadDays,
+        activityRetentionDays: defaultSystemSettings.activityRetentionDays,
+        parameters: defaultSystemSettings.parameters.map((parameter) => ({ ...parameter })),
+      },
     storageMode: "local",
   };
 }

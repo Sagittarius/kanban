@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { createSubtask } from "@/lib/board-store";
+import { withApiLogging } from "@/lib/api-logging";
 import { guardMaintenanceApi } from "@/lib/maintenance";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { errorMessage, errorStatus, requireActiveBoardContext } from "@/lib/server-session";
 
 type RouteContext = {
   params: Promise<{
@@ -8,7 +10,7 @@ type RouteContext = {
   }>;
 };
 
-export async function POST(request: Request, context: RouteContext) {
+export const POST = withApiLogging("subtasks.create", async function POST(request: Request, context: RouteContext) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -17,14 +19,13 @@ export async function POST(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
     const body = await request.json();
-    return NextResponse.json(await createSubtask(id, body), { status: 201 });
+    const { user, board } = await requireActiveBoardContext();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.createSubtask(user, board.id, id, body), { status: 201 });
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to create subtask";
-
     return NextResponse.json(
-      { error: message },
-      { status: message === "Task not found" ? 404 : 500 }
+      { error: errorMessage(error, "创建任务拆解失败") },
+      { status: errorStatus(error) }
     );
   }
-}
+});

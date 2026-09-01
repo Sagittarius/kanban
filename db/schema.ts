@@ -1,8 +1,104 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    username: text("username").notNull(),
+    passwordHash: text("password_hash").notNull(),
+    role: text("role").notNull().default("team_member"),
+    displayName: text("display_name").notNull().default(""),
+    phone: text("phone").notNull().default(""),
+    avatarKey: text("avatar_key").notNull().default(""),
+    jobTitle: text("job_title").notNull().default(""),
+    techStacks: text("tech_stacks").notNull().default("[]"),
+    timezone: text("timezone").notNull().default("Asia/Shanghai"),
+    isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    usernameIdx: uniqueIndex("users_username_unique").on(table.username),
+  })
+);
+
+export const boards = sqliteTable(
+  "boards",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    ownerUserId: text("owner_user_id").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    ownerIdx: index("boards_owner_user_id_idx").on(table.ownerUserId),
+  })
+);
+
+export const boardMembers = sqliteTable(
+  "board_members",
+  {
+    boardId: text("board_id").notNull(),
+    userId: text("user_id").notNull(),
+    role: text("role").notNull().default("viewer"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("board_members_board_user_unique").on(table.boardId, table.userId),
+    userIdx: index("board_members_user_id_idx").on(table.userId),
+  })
+);
+
+export const teams = sqliteTable(
+  "teams",
+  {
+    id: text("id").primaryKey(),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    ownerUserId: text("owner_user_id").notNull(),
+    color: text("color").notNull().default("#0f766e"),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    ownerIdx: index("teams_owner_user_id_idx").on(table.ownerUserId),
+  })
+);
+
+export const teamMembers = sqliteTable(
+  "team_members",
+  {
+    teamId: text("team_id").notNull(),
+    userId: text("user_id").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("team_members_team_user_unique").on(table.teamId, table.userId),
+    userIdx: index("team_members_user_id_idx").on(table.userId),
+  })
+);
+
+export const boardTeams = sqliteTable(
+  "board_teams",
+  {
+    boardId: text("board_id").notNull(),
+    teamId: text("team_id").notNull(),
+    createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("board_teams_board_team_unique").on(table.boardId, table.teamId),
+    teamIdx: index("board_teams_team_id_idx").on(table.teamId),
+  })
+);
 
 export const projects = sqliteTable("projects", {
   id: text("id").primaryKey(),
+  boardId: text("board_id").notNull().default("default-board"),
+  teamId: text("team_id").notNull().default(""),
+  ownerUserId: text("owner_user_id").notNull().default(""),
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   owner: text("owner").notNull(),
@@ -14,21 +110,32 @@ export const projects = sqliteTable("projects", {
   orderIndex: integer("order_index").notNull().default(0),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+}, (table) => ({
+  boardIdx: index("projects_board_id_idx").on(table.boardId),
+  ownerIdx: index("projects_owner_user_id_idx").on(table.ownerUserId),
+}));
 
 export const tasks = sqliteTable("tasks", {
   id: text("id").primaryKey(),
   projectId: text("project_id").notNull(),
   title: text("title").notNull(),
+  requirementItem: text("requirement_item").notNull().default(""),
+  subItem: text("sub_item").notNull().default(""),
   description: text("description").notNull().default(""),
   status: text("status").notNull().default("backlog"),
   priority: text("priority").notNull().default("medium"),
+  ownerUserId: text("owner_user_id").notNull().default(""),
   owner: text("owner").notNull().default("未分配"),
+  testerUserId: text("tester_user_id").notNull().default(""),
   tester: text("tester").notNull().default(""),
+  workloadDays: real("workload_days"),
   startDate: text("start_date").notNull().default(""),
-  testDueDate: text("test_due_date").notNull().default(""),
   designDueDate: text("design_due_date").notNull().default(""),
+  designCompletedAt: text("design_completed_at"),
+  testDueDate: text("test_due_date").notNull().default(""),
+  devCompletedAt: text("dev_completed_at"),
   dueDate: text("due_date").notNull().default(""),
+  completedAt: text("completed_at"),
   estimate: integer("estimate").notNull().default(1),
   progress: integer("progress").notNull().default(0),
   blockers: integer("blockers").notNull().default(0),
@@ -36,7 +143,6 @@ export const tasks = sqliteTable("tasks", {
   tags: text("tags").notNull().default("[]"),
   orderIndex: integer("order_index").notNull().default(0),
   deletedAt: text("deleted_at"),
-  completedAt: text("completed_at"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
@@ -53,6 +159,7 @@ export const subtasks = sqliteTable("subtasks", {
 
 export const activityLog = sqliteTable("task_activity", {
   id: text("id").primaryKey(),
+  boardId: text("board_id").notNull().default("default-board"),
   entityType: text("entity_type").notNull(),
   entityId: text("entity_id").notNull(),
   projectId: text("project_id"),
@@ -61,7 +168,33 @@ export const activityLog = sqliteTable("task_activity", {
   message: text("message").notNull(),
   meta: text("meta").notNull().default("{}"),
   createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
-});
+}, (table) => ({
+  boardIdx: index("task_activity_board_id_idx").on(table.boardId),
+}));
+
+export const auditLogs = sqliteTable("audit_logs", {
+  id: text("id").primaryKey(),
+  actorUserId: text("actor_user_id").notNull().default(""),
+  actorUsername: text("actor_username").notNull().default(""),
+  actorDisplayName: text("actor_display_name").notNull().default(""),
+  actorRole: text("actor_role").notNull().default(""),
+  action: text("action").notNull(),
+  resourceType: text("resource_type").notNull().default("system"),
+  resourceId: text("resource_id").notNull().default(""),
+  boardId: text("board_id").notNull().default(""),
+  result: text("result").notNull().default("success"),
+  message: text("message").notNull().default(""),
+  ipAddress: text("ip_address").notNull().default(""),
+  userAgent: text("user_agent").notNull().default(""),
+  requestId: text("request_id").notNull().default(""),
+  metadata: text("metadata").notNull().default("{}"),
+  createdAt: text("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => ({
+  createdAtIdx: index("audit_logs_created_at_idx").on(table.createdAt),
+  actorIdx: index("audit_logs_actor_user_id_idx").on(table.actorUserId),
+  actionIdx: index("audit_logs_action_idx").on(table.action),
+  boardIdx: index("audit_logs_board_id_idx").on(table.boardId),
+}));
 
 export const systemParameters = sqliteTable("system_parameters", {
   key: text("key").primaryKey(),
@@ -70,8 +203,22 @@ export const systemParameters = sqliteTable("system_parameters", {
   valueType: text("value_type").notNull().default("text"),
   group: text("parameter_group").notNull().default("基础"),
   unit: text("unit").notNull().default(""),
-  minValue: integer("min_value"),
-  maxValue: integer("max_value"),
+  minValue: real("min_value"),
+  maxValue: real("max_value"),
   orderIndex: integer("order_index").notNull().default(0),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+export const schemaComments = sqliteTable(
+  "schema_comments",
+  {
+    tableName: text("table_name").notNull(),
+    columnName: text("column_name").notNull().default(""),
+    commentType: text("comment_type").notNull().default("column"),
+    comment: text("comment").notNull(),
+    updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+  },
+  (table) => ({
+    pk: uniqueIndex("schema_comments_table_column_unique").on(table.tableName, table.columnName),
+  })
+);

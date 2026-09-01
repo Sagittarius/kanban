@@ -1,27 +1,28 @@
 import { NextResponse } from "next/server";
-import { getSystemSettings, updateSystemSettings } from "@/lib/board-store";
+import { withApiLogging } from "@/lib/api-logging";
 import { guardMaintenanceApi } from "@/lib/maintenance";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { errorMessage, errorStatus, requireSessionUser } from "@/lib/server-session";
 
-export async function GET() {
+export const GET = withApiLogging("settings.get", async function GET() {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
   }
 
   try {
-    return NextResponse.json(await getSystemSettings());
+    const user = await requireSessionUser();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.getSystemSettings(user));
   } catch (error) {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Unable to load settings",
-      },
-      { status: 500 }
+      { error: errorMessage(error, "加载参数失败") },
+      { status: errorStatus(error) }
     );
   }
-}
+});
 
-export async function PATCH(request: Request) {
+export const PATCH = withApiLogging("settings.update", async function PATCH(request: Request) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -29,14 +30,13 @@ export async function PATCH(request: Request) {
 
   try {
     const body = await request.json();
-    return NextResponse.json(await updateSystemSettings(body));
+    const user = await requireSessionUser();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.updateSystemSettings(user, body));
   } catch (error) {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Unable to update settings",
-      },
-      { status: 500 }
+      { error: errorMessage(error, "保存参数失败") },
+      { status: errorStatus(error) }
     );
   }
-}
+});

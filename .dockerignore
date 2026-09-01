@@ -2,8 +2,6 @@
 .gitignore
 .data
 .next
-.wrangler
-.vinext
 .claude
 .remember
 node_modules
@@ -11,5 +9,9 @@ node_modules/.cache
 dist
 *.md
 !README.md
+!CHANGELOG.md
 offline-packages
 docker-images
+_deliverables
+*.tsbuildinfo
+.DS_Store

@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
-import { reorderTasks } from "@/lib/board-store";
+import { withApiLogging } from "@/lib/api-logging";
 import { guardMaintenanceApi } from "@/lib/maintenance";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { errorMessage, errorStatus, requireActiveBoardContext } from "@/lib/server-session";
 
-export async function POST(request: Request) {
+export const POST = withApiLogging("tasks.reorder", async function POST(request: Request) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -10,14 +12,13 @@ export async function POST(request: Request) {
 
   try {
     const body = await request.json();
-    return NextResponse.json(await reorderTasks(body));
+    const { user, board } = await requireActiveBoardContext();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.reorderTasks(user, board.id, body));
   } catch (error) {
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error ? error.message : "Unable to reorder tasks",
-      },
-      { status: 500 }
+      { error: errorMessage(error, "保存排序失败") },
+      { status: errorStatus(error) }
     );
   }
-}
+});

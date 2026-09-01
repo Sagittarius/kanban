@@ -1,15 +1,10 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
 :root {
   --background: #f6f7f9;
   --foreground: #17191f;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: Arial, Helvetica, sans-serif;
-  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -23,6 +18,80 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb, rgba(100, 116, 139, 0.62)) var(--scrollbar-track, rgba(226, 232, 240, 0.42));
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: var(--scrollbar-track, rgba(226, 232, 240, 0.42));
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb {
+  min-height: 44px;
+  border: 2px solid var(--scrollbar-track, rgba(226, 232, 240, 0.42));
+  border-radius: 999px;
+  background: var(--scrollbar-thumb, rgba(100, 116, 139, 0.62));
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover, rgba(71, 85, 105, 0.8));
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.loading-skeleton {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  border-radius: 0.75rem;
+  background: var(--loading-skeleton-bg, var(--panel-soft, var(--dash-track, rgba(148, 163, 184, 0.18))));
+}
+
+.loading-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-120%);
+  background: linear-gradient(90deg, transparent, var(--loading-skeleton-sheen, rgba(255, 255, 255, 0.48)), transparent);
+  animation: loading-skeleton-shimmer 1.35s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes loading-skeleton-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  55% {
+    transform: translateX(120%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
+html[data-input-mode="pointer"] button:focus,
+html[data-input-mode="pointer"] [role="button"]:focus,
+html[data-input-mode="pointer"] a[href]:focus,
+html[data-input-mode="pointer"] summary:focus {
+  outline: none;
+}
+
+html[data-input-mode="keyboard"] button:focus,
+html[data-input-mode="keyboard"] [role="button"]:focus,
+html[data-input-mode="keyboard"] a[href]:focus,
+html[data-input-mode="keyboard"] summary:focus {
+  outline: 2px solid var(--accent, var(--dash-accent, #0f766e));
+  outline-offset: 2px;
 }
 
 .kanban-theme {
@@ -43,9 +112,17 @@ body {
   --text: #17191f;
   --muted: #687083;
   --border: #d9dee7;
+  --scrollbar-track: rgba(217, 222, 231, 0.42);
+  --scrollbar-thumb: rgba(104, 112, 131, 0.54);
+  --scrollbar-thumb-hover: rgba(94, 106, 210, 0.74);
+  --loading-skeleton-bg: var(--panel-soft);
+  --loading-skeleton-sheen: rgba(255, 255, 255, 0.58);
+  --loading-overlay-bg: rgba(246, 247, 249, 0.78);
   --accent: #5e6ad2;
   --accent-hover: #4f5cc6;
   --accent-soft: rgba(94, 106, 210, 0.18);
+  --search-highlight-bg: var(--accent);
+  --search-highlight-text: #ffffff;
   --tag-bg: #edf0ff;
   --danger: #c43b2f;
   --danger-soft: #fff0ee;
@@ -129,6 +206,65 @@ body {
   --danger-soft: #fff0ee;
 }
 
+.kanban-theme[data-theme="neon"] {
+  --app-bg: #08111f;
+  --board-bg: #0d1730;
+  --panel: rgba(11, 19, 37, 0.94);
+  --panel-soft: rgba(16, 27, 52, 0.88);
+  --column-bg: rgba(10, 18, 37, 0.9);
+  --card: rgba(13, 22, 42, 0.96);
+  --card-border: rgba(74, 222, 255, 0.18);
+  --card-border-strong: rgba(99, 102, 241, 0.28);
+  --card-section: rgba(18, 30, 56, 0.88);
+  --card-shadow: 0 1px 2px rgba(4, 8, 20, 0.24), 0 12px 30px rgba(0, 0, 0, 0.28);
+  --card-shadow-hover: 0 2px 6px rgba(4, 8, 20, 0.3), 0 20px 44px rgba(0, 0, 0, 0.36);
+  --input: rgba(10, 18, 36, 0.94);
+  --hover: rgba(20, 34, 63, 0.94);
+  --lane-bg: rgba(14, 25, 49, 0.92);
+  --text: #e7f6ff;
+  --muted: #8aa9c7;
+  --border: rgba(109, 136, 177, 0.22);
+  --scrollbar-track: rgba(10, 18, 36, 0.72);
+  --scrollbar-thumb: rgba(138, 169, 199, 0.46);
+  --scrollbar-thumb-hover: rgba(74, 222, 255, 0.74);
+  --accent: #4adeff;
+  --accent-hover: #2fc9ee;
+  --accent-soft: rgba(74, 222, 255, 0.16);
+  --search-highlight-text: #06121f;
+  --tag-bg: rgba(31, 55, 96, 0.62);
+  --danger: #ff4f7b;
+  --danger-soft: rgba(255, 79, 123, 0.24);
+}
+
+.kanban-theme[data-theme="deepspace"] {
+  --app-bg: #12121b;
+  --board-bg: #1a1826;
+  --panel: #171722;
+  --panel-soft: #201f2f;
+  --column-bg: #1b1b28;
+  --card: #1d1f2b;
+  --card-border: #2d3348;
+  --card-border-strong: #404a69;
+  --card-section: #242636;
+  --card-shadow: 0 1px 2px rgba(8, 8, 16, 0.18), 0 12px 30px rgba(8, 8, 16, 0.24);
+  --card-shadow-hover: 0 2px 6px rgba(8, 8, 16, 0.24), 0 20px 44px rgba(8, 8, 16, 0.32);
+  --input: #161827;
+  --hover: #26283a;
+  --lane-bg: #202437;
+  --text: #f3f2ff;
+  --muted: #a7a6bf;
+  --border: #31374d;
+  --scrollbar-track: rgba(22, 24, 39, 0.82);
+  --scrollbar-thumb: rgba(167, 166, 191, 0.46);
+  --scrollbar-thumb-hover: rgba(139, 92, 246, 0.76);
+  --accent: #8b5cf6;
+  --accent-hover: #7c3aed;
+  --accent-soft: rgba(139, 92, 246, 0.18);
+  --tag-bg: rgba(77, 56, 138, 0.34);
+  --danger: #ff5d8f;
+  --danger-soft: rgba(255, 93, 143, 0.24);
+}
+
 .kanban-theme[data-theme="slack"] {
   --app-bg: #f7f6f8;
   --board-bg: #ece8ef;
@@ -176,6 +312,7 @@ body {
   --accent: #0acf83;
   --accent-hover: #08ad6e;
   --accent-soft: rgba(10, 207, 131, 0.16);
+  --search-highlight-text: #061f16;
   --tag-bg: #eef7ff;
   --danger: #f24e1e;
   --danger-soft: #fff1eb;
@@ -202,6 +339,7 @@ body {
   --accent: #00c875;
   --accent-hover: #00a861;
   --accent-soft: rgba(0, 200, 117, 0.16);
+  --search-highlight-text: #061f16;
   --tag-bg: #eaf8ff;
   --danger: #e44258;
   --danger-soft: #fff0f2;
@@ -238,6 +376,18 @@ input,
 textarea,
 select {
   font: inherit;
+}
+
+button:not(:disabled),
+[role="button"],
+a[href],
+select:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled,
+select:disabled {
+  cursor: not-allowed;
 }
 
 * {

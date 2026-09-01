@@ -1,4 +1,4 @@
-const FALLBACK_APP_VERSION = "1.1.0";
+const FALLBACK_APP_VERSION = "1.5.6";
 
 export function getAppVersion() {
   if (process.env.KANBAN_APP_VERSION) {
@@ -13,5 +13,12 @@ export function getAppVersion() {
 }
 
 export function getImageTag() {
-  return process.env.KANBAN_IMAGE_TAG ?? `kanban:${getAppVersion()}`;
+  const configuredTag = process.env.KANBAN_IMAGE_TAG;
+  const appVersion = getAppVersion();
+
+  if (!configuredTag) {
+    return `kanban:${appVersion}`;
+  }
+
+  return configuredTag.replaceAll("{version}", appVersion);
 }

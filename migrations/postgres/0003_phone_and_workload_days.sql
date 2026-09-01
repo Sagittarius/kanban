@@ -1,0 +1,3 @@
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT NOT NULL DEFAULT '';
+--> statement-breakpoint
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS workload_days NUMERIC(6,1);

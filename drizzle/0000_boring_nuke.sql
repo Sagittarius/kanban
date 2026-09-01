@@ -19,6 +19,8 @@ CREATE TABLE `tasks` (
 	`id` text PRIMARY KEY NOT NULL,
 	`project_id` text NOT NULL,
 	`title` text NOT NULL,
+	`requirement_item` text DEFAULT '' NOT NULL,
+	`sub_item` text DEFAULT '' NOT NULL,
 	`description` text DEFAULT '' NOT NULL,
 	`status` text DEFAULT 'backlog' NOT NULL,
 	`priority` text DEFAULT 'medium' NOT NULL,

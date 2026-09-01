@@ -1,27 +1,23 @@
 import { NextResponse } from "next/server";
-import { createSeedBoard } from "@/lib/board-data";
-import { getBoard } from "@/lib/board-store";
+import { withApiLogging } from "@/lib/api-logging";
 import { guardMaintenanceApi } from "@/lib/maintenance";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { errorMessage, errorStatus, requireActiveBoardContext } from "@/lib/server-session";
 
-export async function GET() {
+export const GET = withApiLogging("board.get", async function GET() {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
   }
 
   try {
-    return NextResponse.json(await getBoard());
+    const { user, board } = await requireActiveBoardContext();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.getBoard(user, board.id));
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to load board data";
-
-    if (message.startsWith("Failed query: select count(*) from")) {
-      return NextResponse.json(createSeedBoard());
-    }
-
     return NextResponse.json(
-      { error: message },
-      { status: 500 }
+      { error: errorMessage(error, "加载看板失败") },
+      { status: errorStatus(error) }
     );
   }
-}
+});

@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { readAppVersion, readImageTag, resolveDatabasePath } from "./sqlite-migration-lib.mjs";
+import { formatLogTimestamp, readAppVersion, readImageTag, resolveDatabasePath } from "./sqlite-migration-lib.mjs";
 
 export function resolveMaintenanceStatePath() {
   return (
@@ -31,7 +31,7 @@ export function writeMaintenanceState(payload) {
       {
         appVersion: readAppVersion(),
         imageTag: readImageTag(),
-        updatedAt: new Date().toISOString(),
+        updatedAt: formatLogTimestamp(),
         ...payload,
       },
       null,
@@ -48,7 +48,7 @@ export function clearMaintenanceState() {
   }
 }
 
-export function withMaintenanceLock(run) {
+export async function withMaintenanceLock(run) {
   const lockPath = resolveMaintenanceLockPath();
   let handle;
 
@@ -71,7 +71,7 @@ export function withMaintenanceLock(run) {
   }
 
   try {
-    return run();
+    return await run();
   } finally {
     if (typeof handle === "number") {
       fs.closeSync(handle);

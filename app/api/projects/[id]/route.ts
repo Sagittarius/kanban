@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
-import { deleteProject, updateProject } from "@/lib/board-store";
+import { withApiLogging } from "@/lib/api-logging";
 import { guardMaintenanceApi } from "@/lib/maintenance";
+import { getKanbanRepository } from "@/lib/repositories/kanban-repository";
+import { errorMessage, errorStatus, requireActiveBoardContext } from "@/lib/server-session";
 
 type RouteContext = {
   params: Promise<{
@@ -8,7 +10,7 @@ type RouteContext = {
   }>;
 };
 
-export async function PATCH(request: Request, context: RouteContext) {
+export const PATCH = withApiLogging("projects.update", async function PATCH(request: Request, context: RouteContext) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -17,19 +19,18 @@ export async function PATCH(request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
     const body = await request.json();
-    return NextResponse.json(await updateProject(id, body));
+    const { user, board } = await requireActiveBoardContext();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.updateProject(user, board.id, id, body));
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to update project";
-
     return NextResponse.json(
-      { error: message },
-      { status: message === "Project not found" ? 404 : 500 }
+      { error: errorMessage(error, "保存项目失败") },
+      { status: errorStatus(error) }
     );
   }
-}
+});
 
-export async function DELETE(_request: Request, context: RouteContext) {
+export const DELETE = withApiLogging("projects.delete", async function DELETE(_request: Request, context: RouteContext) {
   const maintenanceResponse = await guardMaintenanceApi();
   if (maintenanceResponse) {
     return maintenanceResponse;
@@ -37,14 +38,13 @@ export async function DELETE(_request: Request, context: RouteContext) {
 
   try {
     const { id } = await context.params;
-    return NextResponse.json(await deleteProject(id));
+    const { user, board } = await requireActiveBoardContext();
+    const repo = await getKanbanRepository();
+    return NextResponse.json(await repo.deleteProject(user, board.id, id));
   } catch (error) {
-    const message =
-      error instanceof Error ? error.message : "Unable to delete project";
-
     return NextResponse.json(
-      { error: message },
-      { status: message === "Project not found" ? 404 : 500 }
+      { error: errorMessage(error, "删除项目失败") },
+      { status: errorStatus(error) }
     );
   }
-}
+});

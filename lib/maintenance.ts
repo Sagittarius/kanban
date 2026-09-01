@@ -1,3 +1,5 @@
+import "server-only";
+
 import fs from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
@@ -19,13 +21,13 @@ export type MaintenanceState = {
 };
 
 export function getDatabasePath() {
-  return process.env.KANBAN_SQLITE_PATH ?? path.join(process.cwd(), ".data", "kanban.sqlite");
+  return process.env.KANBAN_SQLITE_PATH ?? path.join(/* turbopackIgnore: true */ process.cwd(), ".data", "kanban.sqlite");
 }
 
 export function getMaintenanceStatePath() {
   return (
     process.env.KANBAN_MAINTENANCE_STATE_PATH ??
-    path.join(path.dirname(getDatabasePath()), "kanban-maintenance.json")
+    path.join(/* turbopackIgnore: true */ path.dirname(getDatabasePath()), "kanban-maintenance.json")
   );
 }
 
@@ -39,7 +41,7 @@ export function buildMaintenanceDefaults() {
 
 export async function readMaintenanceState(): Promise<MaintenanceState | null> {
   try {
-    const text = await fs.readFile(getMaintenanceStatePath(), "utf8");
+    const text = await fs.readFile(/* turbopackIgnore: true */ getMaintenanceStatePath(), "utf8");
     const parsed = JSON.parse(text) as Partial<MaintenanceState>;
     if (!parsed.mode) {
       return null;

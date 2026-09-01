@@ -1,5 +1,50 @@
 import type { Metadata } from "next";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { join } from "node:path";
+import BrowserCompatReady from "@/components/browser-compat-ready";
+import { getAppVersion } from "@/lib/app-meta";
+import { buildBrowserCompatGateScript } from "@/lib/browser-compat";
+import { buildEarlyDiagnosticsScript } from "@/lib/early-diagnostics";
 import "./globals.css";
+
+const require = createRequire(import.meta.url);
+const browserCompatGate = buildBrowserCompatGateScript();
+
+let cachedCoreJsBundle: string | undefined;
+
+function readCoreJsBundle() {
+  if (cachedCoreJsBundle !== undefined) {
+    return cachedCoreJsBundle;
+  }
+
+  try {
+    cachedCoreJsBundle = readFileSync(
+      /* turbopackIgnore: true */ join(process.cwd(), "node_modules", "core-js-bundle", "minified.js"),
+      "utf8"
+    );
+  } catch {
+    try {
+      cachedCoreJsBundle = readFileSync(
+        /* turbopackIgnore: true */ join(process.cwd(), "..", "..", "node_modules", "core-js-bundle", "minified.js"),
+        "utf8"
+      );
+    } catch {
+      try {
+        cachedCoreJsBundle = readFileSync(require.resolve("core-js-bundle/minified.js"), "utf8");
+      } catch {
+        cachedCoreJsBundle = "";
+      }
+    }
+  }
+
+  cachedCoreJsBundle = stripSourceMapComment(cachedCoreJsBundle);
+  return cachedCoreJsBundle;
+}
+
+function stripSourceMapComment(source: string) {
+  return source.replace(/\n?\/\/# sourceMappingURL=.*$/u, "");
+}
 
 export const metadata: Metadata = {
   title: "项目看板",
@@ -15,9 +60,20 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const coreJsBundle = readCoreJsBundle();
+  const earlyDiagnosticsScript = buildEarlyDiagnosticsScript(getAppVersion());
+
   return (
     <html lang="zh-CN">
-      <body>{children}</body>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: earlyDiagnosticsScript }} />
+        {coreJsBundle ? <script dangerouslySetInnerHTML={{ __html: coreJsBundle }} /> : null}
+        <script dangerouslySetInnerHTML={{ __html: browserCompatGate }} />
+      </head>
+      <body>
+        <BrowserCompatReady />
+        {children}
+      </body>
     </html>
   );
 }

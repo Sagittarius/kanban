@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  AlertTriangle,
-  RefreshCw,
-} from "lucide-react";
+import AppErrorPage from "@/components/app-error-page";
 import {
   Component,
   useEffect,
@@ -12,90 +9,62 @@ import {
 } from "react";
 import KanbanApp from "@/components/kanban-app";
 import type { BoardData } from "@/lib/board-data";
-
-type ErrorSource =
-  | "error-boundary"
-  | "window-error"
-  | "unhandledrejection";
-
-type ClientErrorPayload = {
-  source: ErrorSource;
-  message: string;
-  stack?: string;
-  componentStack?: string;
-  url: string;
-  userAgent: string;
-  timestamp: string;
-};
+import type { ChangelogEntry } from "@/lib/changelog";
+import { reportClientError } from "@/lib/client-observability";
+import {
+  getBrowserCompatErrorIssue,
+  getBrowserCompatIssue,
+  hasBrowserCompatBypass,
+  hasBrowserCompatRecommendationAcknowledged,
+  redirectToBrowserUnsupported,
+} from "@/lib/browser-compat";
 
 type KanbanRuntimeGuardProps = {
   initialBoard: BoardData;
   todayKey: string;
   appVersion: string;
-  imageTag: string;
+  changelogEntries: ChangelogEntry[];
+  initialThemeId?: string;
+  activeBoardId?: string;
 };
 
-const reportedErrors = new Map<string, number>();
-
-function errorKey(payload: ClientErrorPayload) {
-  return [
-    payload.source,
-    payload.message,
-    payload.stack ?? "",
-    payload.componentStack ?? "",
-    payload.url,
-  ].join("|");
+function redirectIfBrowserCompatIssue(error?: unknown) {
+  const skipBrowserNotice =
+    hasBrowserCompatBypass() || hasBrowserCompatRecommendationAcknowledged();
+  const issue =
+    skipBrowserNotice
+      ? null
+      : getBrowserCompatIssue(window.navigator.userAgent) ??
+        (error === undefined ? null : getBrowserCompatErrorIssue(error));
+  return redirectToBrowserUnsupported(issue);
 }
 
-function reportClientError(payload: ClientErrorPayload) {
-  const key = errorKey(payload);
-  const now = Date.now();
-  const last = reportedErrors.get(key);
-
-  if (last && now - last < 5000) {
-    return;
-  }
-
-  reportedErrors.set(key, now);
-
-  if (reportedErrors.size > 100) {
-    const entries = [...reportedErrors.entries()].sort((left, right) => left[1] - right[1]);
-    entries.slice(0, 20).forEach(([entryKey]) => reportedErrors.delete(entryKey));
-  }
-
-  void fetch("/api/client-errors", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(payload),
-    keepalive: true,
-  }).catch(() => {
-    console.error("[kanban] failed to report client error", payload);
-  });
-}
-
-function payloadBase() {
-  return {
-    url: window.location.href,
-    userAgent: window.navigator.userAgent,
-    timestamp: new Date().toISOString(),
-  };
-}
-
-function RuntimeErrorMonitor() {
+function RuntimeErrorMonitor({ appVersion, activeBoardId }: { appVersion: string; activeBoardId?: string }) {
   useEffect(() => {
+    const route = `${window.location.pathname}${window.location.search}`;
     const onError = (event: ErrorEvent) => {
+      if (redirectIfBrowserCompatIssue(event.error ?? event.message)) {
+        event.preventDefault();
+        return;
+      }
+
       reportClientError({
         source: "window-error",
         message: event.message || "Unknown window error",
         stack: event.error instanceof Error ? event.error.stack : undefined,
-        ...payloadBase(),
+        appVersion,
+        activeBoardId,
+        route,
       });
     };
 
     const onUnhandledRejection = (event: PromiseRejectionEvent) => {
       const reason = event.reason;
+      if (redirectIfBrowserCompatIssue(reason)) {
+        event.preventDefault();
+        return;
+      }
+
       const message =
         reason instanceof Error
           ? reason.message
@@ -107,7 +76,9 @@ function RuntimeErrorMonitor() {
         source: "unhandledrejection",
         message,
         stack: reason instanceof Error ? reason.stack : undefined,
-        ...payloadBase(),
+        appVersion,
+        activeBoardId,
+        route,
       });
     };
 
@@ -118,62 +89,62 @@ function RuntimeErrorMonitor() {
       window.removeEventListener("error", onError);
       window.removeEventListener("unhandledrejection", onUnhandledRejection);
     };
-  }, []);
+  }, [activeBoardId, appVersion]);
 
   return null;
 }
 
 function ErrorFallback() {
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[var(--bg)] px-6 py-10 text-[var(--text)]">
-      <section className="w-full max-w-xl rounded-xl border border-[var(--danger)] bg-[var(--panel)] p-8 shadow-sm">
-        <div className="flex items-start gap-4">
-          <div className="rounded-lg bg-[var(--danger-soft)] p-3 text-[var(--danger)]">
-            <AlertTriangle size={22} />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-lg font-semibold">页面发生异常</h1>
-            <p className="mt-2 text-sm leading-6 text-[var(--muted)]">
-              当前界面未能继续稳定渲染。系统已记录错误信息。建议刷新页面后继续操作，避免在当前状态下继续拖拽。
-            </p>
-            <div className="mt-5 flex flex-wrap items-center gap-3">
-              <button
-                type="button"
-                onClick={() => window.location.reload()}
-                className="inline-flex items-center gap-2 rounded-md border border-[var(--text)] bg-[var(--text)] px-4 py-2 text-sm font-medium text-[var(--panel)] transition hover:opacity-90"
-              >
-                <RefreshCw size={15} />
-                刷新页面
-              </button>
-            </div>
-          </div>
-        </div>
-      </section>
-    </main>
+    <AppErrorPage
+      title="页面发生异常"
+      message="当前界面未能继续稳定渲染。系统已记录错误信息。建议先刷新页面继续操作；如果问题仍然存在，可以直接退出登录后重新进入。"
+    />
   );
 }
 
 class RuntimeErrorBoundary extends Component<
-  { children: ReactNode },
-  { hasError: boolean }
+  { children: ReactNode; appVersion: string; activeBoardId?: string },
+  { hasError: boolean; redirecting: boolean }
 > {
-  state = { hasError: false };
+  state = { hasError: false, redirecting: false };
 
-  static getDerivedStateFromError() {
-    return { hasError: true };
+  static getDerivedStateFromError(error: Error) {
+    const skipBrowserNotice =
+      typeof window !== "undefined" &&
+      (hasBrowserCompatBypass() || hasBrowserCompatRecommendationAcknowledged());
+    if (
+      typeof window !== "undefined" &&
+      !skipBrowserNotice &&
+      (getBrowserCompatIssue(window.navigator.userAgent) ||
+        getBrowserCompatErrorIssue(error))
+    ) {
+      return { hasError: false, redirecting: true };
+    }
+    return { hasError: true, redirecting: false };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    if (redirectIfBrowserCompatIssue(error)) {
+      return;
+    }
+
     reportClientError({
       source: "error-boundary",
       message: error.message || "Unknown render error",
       stack: error.stack,
       componentStack: errorInfo.componentStack ?? undefined,
-      ...payloadBase(),
+      appVersion: this.props.appVersion,
+      activeBoardId: this.props.activeBoardId,
+      route: `${window.location.pathname}${window.location.search}`,
     });
   }
 
   render() {
+    if (this.state.redirecting) {
+      return null;
+    }
+
     if (this.state.hasError) {
       return <ErrorFallback />;
     }
@@ -186,16 +157,19 @@ export default function KanbanRuntimeGuard({
   initialBoard,
   todayKey,
   appVersion,
-  imageTag,
+  changelogEntries,
+  initialThemeId,
+  activeBoardId,
 }: KanbanRuntimeGuardProps) {
   return (
-    <RuntimeErrorBoundary>
-      <RuntimeErrorMonitor />
+    <RuntimeErrorBoundary appVersion={appVersion} activeBoardId={activeBoardId} >
+      <RuntimeErrorMonitor appVersion={appVersion} activeBoardId={activeBoardId} />
       <KanbanApp
         initialBoard={initialBoard}
         todayKey={todayKey}
         appVersion={appVersion}
-        imageTag={imageTag}
+        changelogEntries={changelogEntries}
+        initialThemeId={initialThemeId}
       />
     </RuntimeErrorBoundary>
   );
