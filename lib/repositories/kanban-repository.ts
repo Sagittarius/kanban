@@ -917,22 +917,38 @@ export class KanbanRepository {
       row.created_at,
       row.updated_at,
     ]);
-    await this.replaceTeamMembers(row.id, ids(input.memberIds));
+    const memberIds = withTeamOwnerMember(
+      ids(input.memberIds),
+      row.owner_user_id,
+      row.owner_user_id === actor.id && (actor.role === "project_manager" || actor.role === "development_manager")
+    );
+    await this.replaceTeamMembers(row.id, memberIds);
     await this.recordAuditLog({
       actor,
       action: "team.create",
       resourceType: "team",
       resourceId: row.id,
       message: `创建团队 ${row.name}`,
-      metadata: { memberIds: ids(input.memberIds), ownerUserId: row.owner_user_id },
+      metadata: { memberIds, ownerUserId: row.owner_user_id },
     });
-    return team({ ...row, owner_username: actor.username }, ids(input.memberIds));
+    return team({ ...row, owner_username: actor.username }, memberIds);
   }
 
   async updateTeam(actor: CurrentUser, teamId: string, input: UpdateTeamInput): Promise<TeamSummary> {
-    await this.requireTeamWrite(actor, teamId);
+    await this.requireTeamEdit(actor, teamId);
     const current = await this.getTeamRow(teamId);
     if (!current) throw new Error("团队不存在");
+    const currentOwnerUserId = String(current.owner_user_id);
+    const requestedOwnerUserId = input.ownerUserId === undefined
+      ? currentOwnerUserId
+      : text(input.ownerUserId, currentOwnerUserId);
+    if (
+      requestedOwnerUserId !== currentOwnerUserId &&
+      actor.role !== "super_admin" &&
+      actor.id !== currentOwnerUserId
+    ) {
+      throw new Error("Forbidden");
+    }
     const owner = await this.resolveTeamOwner(input.ownerUserId, actor, String(current.owner_user_id));
     await this.x("UPDATE teams SET name=?,description=?,owner_user_id=?,color=?,updated_at=? WHERE id=?", [
       text(input.name, String(current.name)),
@@ -942,9 +958,12 @@ export class KanbanRepository {
       iso(),
       teamId,
     ]);
-    if (input.memberIds !== undefined) {
-      await this.replaceTeamMembers(teamId, ids(input.memberIds));
-    }
+    const currentMemberIds = (await this.teamMemberIds([teamId])).get(teamId) ?? [];
+    const requestedMemberIds = input.memberIds === undefined ? currentMemberIds : ids(input.memberIds);
+    await this.replaceTeamMembers(
+      teamId,
+      withTeamOwnerMember(requestedMemberIds, owner.id, owner.role === "project_manager" || owner.role === "development_manager")
+    );
     const updated = await this.getTeamRow(teamId);
     if (!updated) throw new Error("团队不存在");
     const memberIds = (await this.teamMemberIds([teamId])).get(teamId) ?? [];
@@ -2416,6 +2435,27 @@ export class KanbanRepository {
     if (String(teamRow.owner_user_id) !== actor.id) throw new Error("Forbidden");
   }
 
+  async requireTeamEdit(actor: CurrentUser, teamId: string) {
+    this.requireAdminAccess(actor);
+    const teamRow = await this.getTeamRow(teamId);
+    if (!teamRow) {
+      throw new Error("Forbidden");
+    }
+    if (actor.role === "super_admin" || String(teamRow.owner_user_id) === actor.id) {
+      return;
+    }
+    if (actor.role !== "project_manager" && actor.role !== "development_manager") {
+      throw new Error("Forbidden");
+    }
+    const membership = await this.q(
+      "SELECT 1 FROM team_members WHERE team_id=? AND user_id=? LIMIT 1",
+      [teamId, actor.id]
+    );
+    if (!membership[0]) {
+      throw new Error("Forbidden");
+    }
+  }
+
   async resolveTeamOwner(rawOwnerUserId: unknown, actor: CurrentUser, fallbackOwnerUserId?: string) {
     const ownerUserId = text(rawOwnerUserId, fallbackOwnerUserId ?? actor.id);
     const ownerRow = await this.getManagedUserRow(ownerUserId);
@@ -2427,6 +2467,7 @@ export class KanbanRepository {
       return {
         id: String(ownerRow.id),
         username: String(ownerRow.username),
+        role,
       };
     }
     if (role !== "project_manager" && role !== "development_manager") {
@@ -2435,6 +2476,7 @@ export class KanbanRepository {
     return {
       id: String(ownerRow.id),
       username: String(ownerRow.username),
+      role,
     };
   }
 
@@ -3396,7 +3438,7 @@ function canCreateBoards(actor: CurrentUser) {
 
 function canUpdateUserRole(actor: CurrentUser, currentRole: UserRole, nextRole: UserRole) {
   if (actor.role === "super_admin") return true;
-  return currentRole === nextRole;
+  return currentRole !== "super_admin" && nextRole !== "super_admin";
 }
 
 function canManageTargetUser(actor: CurrentUser, targetRole: UserRole) {
@@ -3651,6 +3693,14 @@ function normalizeTaskDetailSubtasks(value: unknown[]) {
 function ids(value: unknown) {
   if (!Array.isArray(value)) return [];
   return value.filter((item) => typeof item === "string" && item.trim()).map((item) => item.trim());
+}
+
+function withTeamOwnerMember(memberIds: string[], ownerUserId: string, ownerCanBeMember: boolean) {
+  const nextMemberIds = [...new Set(memberIds)];
+  if (ownerCanBeMember && ownerUserId && !nextMemberIds.includes(ownerUserId)) {
+    nextMemberIds.push(ownerUserId);
+  }
+  return nextMemberIds;
 }
 
 function reorderItem(value: unknown) {

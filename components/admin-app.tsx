@@ -163,6 +163,14 @@ const TEAM_PAGE_SIZE_OPTIONS = [9, 18, 36, 54];
 const BOARD_PAGE_SIZE_OPTIONS = [6, 12, 24, 48];
 const AUDIT_PAGE_SIZE_OPTIONS = [20, 40, 80, 120];
 
+function ensureTeamOwnerMember(memberIds: string[], ownerUserId: string, ownerCanBeMember = true) {
+  const nextMemberIds = [...new Set(memberIds.filter(Boolean))];
+  if (ownerCanBeMember && ownerUserId && !nextMemberIds.includes(ownerUserId)) {
+    nextMemberIds.push(ownerUserId);
+  }
+  return nextMemberIds;
+}
+
 export default function AdminApp({ currentUser, initialThemeId = "notion" }: { currentUser: CurrentUser; initialThemeId?: string }) {
   const defaultTeamDraft = useMemo(
     () => ({
@@ -171,9 +179,9 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
       description: "",
       ownerUserId: currentUser.id,
       color: "#0f766e",
-      memberIds: [] as string[],
+      memberIds: (currentUser.role === "project_manager" || currentUser.role === "development_manager" ? [currentUser.id] : []) as string[],
     }),
-    [currentUser.id]
+    [currentUser.id, currentUser.role]
   );
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [userDirectory, setUserDirectory] = useState<AdminUserDirectoryEntry[]>([]);
@@ -421,9 +429,11 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
     const roles: UserRole[] =
       currentUser.role === "super_admin"
         ? ["super_admin", "project_manager", "development_manager", "team_member"]
-        : ["team_member"];
+        : userDraft.id
+          ? ["project_manager", "development_manager", "team_member"]
+          : ["team_member"];
     return roles.map((role) => ({ value: role, label: roleLabels[role] }));
-  }, [currentUser.role]);
+  }, [currentUser.role, userDraft.id]);
 
   const jobTitleSelectOptions = useMemo<SearchableSelectOption[]>(
     () => jobTitleOptions.map((option) => ({ value: option.value, label: option.label })),
@@ -608,14 +618,32 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
       description: team.description,
       ownerUserId: team.ownerUserId,
       color: team.color,
-      memberIds: team.memberIds,
+      memberIds: ensureTeamOwnerMember(
+        team.memberIds,
+        team.ownerUserId,
+        assignableUsers.some((user) => user.id === team.ownerUserId)
+      ),
     });
     setActiveTab("teams");
   }
 
-  function canManageTeam(team: TeamSummary) {
+  function canEditTeam(team: TeamSummary) {
+    return (
+      isSuperAdminRole(currentUser.role) ||
+      team.ownerUserId === currentUser.id ||
+      ((currentUser.role === "project_manager" || currentUser.role === "development_manager") &&
+        team.memberIds.includes(currentUser.id))
+    );
+  }
+
+  function canDeleteTeam(team: TeamSummary) {
     return isSuperAdminRole(currentUser.role) || team.ownerUserId === currentUser.id;
   }
+
+  const canTransferTeamOwnership =
+    !teamDraft.id ||
+    isSuperAdminRole(currentUser.role) ||
+    teamDraft.ownerUserId === currentUser.id;
 
   function resetTeamDraft() {
     setTeamDraft(defaultTeamDraft);
@@ -991,8 +1019,19 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     <SearchableSelect
                       value={teamDraft.ownerUserId}
                       options={teamOwnerOptions}
-                      onChange={(ownerUserId) => setTeamDraft((current) => ({ ...current, ownerUserId }))}
+                      onChange={(ownerUserId) =>
+                        setTeamDraft((current) => ({
+                          ...current,
+                          ownerUserId,
+                          memberIds: ensureTeamOwnerMember(
+                            current.memberIds,
+                            ownerUserId,
+                            assignableUsers.some((user) => user.id === ownerUserId)
+                          ),
+                        }))
+                      }
                       placeholder="选择归属用户"
+                      disabled={!canTransferTeamOwnership}
                     />
                   </Field>
                 ) : null}
@@ -1001,8 +1040,18 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                     <SearchMultiSelect
                       value={teamDraft.memberIds}
                       options={assignableUserOptions}
-                      onChange={(memberIds) => setTeamDraft((current) => ({ ...current, memberIds }))}
+                      onChange={(memberIds) =>
+                        setTeamDraft((current) => ({
+                          ...current,
+                          memberIds: ensureTeamOwnerMember(
+                            memberIds,
+                            current.ownerUserId,
+                            assignableUsers.some((user) => user.id === current.ownerUserId)
+                          ),
+                        }))
+                      }
                       placeholder="搜索成员"
+                      lockedValues={assignableUsers.some((user) => user.id === teamDraft.ownerUserId) ? [teamDraft.ownerUserId] : []}
                     />
                   </div>
                 </Field>
@@ -1044,30 +1093,32 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
                         <p className="mt-2 text-xs text-[var(--muted)]">{team.ownerUsername} · {team.memberCount} 人</p>
                       </div>
                     </div>
-                    {canManageTeam(team) ? (
+                    {canEditTeam(team) || canDeleteTeam(team) ? (
                       <div className="mt-4 flex justify-end gap-2">
-                        <SmallButton
-                          onClick={() => editTeam(team)}
-                        >
-                          编辑
-                        </SmallButton>
-                        <SmallButton
-                          onClick={() =>
-                            setConfirmState({
-                              title: "删除团队",
-                              message: `删除团队「${team.name}」后，与该团队绑定的看板关联会同步解除。`,
-                              tone: "danger",
-                              actionLabel: "删除团队",
-                              onConfirm: async () => {
-                                await deleteTeam(team);
-                                setSelectedTeam(null);
-                                setConfirmState(null);
-                              },
-                            })
-                          }
-                        >
-                          删除
-                        </SmallButton>
+                        {canEditTeam(team) ? (
+                          <SmallButton onClick={() => editTeam(team)}>
+                            编辑
+                          </SmallButton>
+                        ) : null}
+                        {canDeleteTeam(team) ? (
+                          <SmallButton
+                            onClick={() =>
+                              setConfirmState({
+                                title: "删除团队",
+                                message: `删除团队「${team.name}」后，与该团队绑定的看板关联会同步解除。`,
+                                tone: "danger",
+                                actionLabel: "删除团队",
+                                onConfirm: async () => {
+                                  await deleteTeam(team);
+                                  setSelectedTeam(null);
+                                  setConfirmState(null);
+                                },
+                              })
+                            }
+                          >
+                            删除
+                          </SmallButton>
+                        ) : null}
                       </div>
                     ) : null}
                   </div>
@@ -1426,7 +1477,8 @@ export default function AdminApp({ currentUser, initialThemeId = "notion" }: { c
           members={selectedTeam.memberIds
             .map((memberId) => memberById.get(memberId))
             .filter((member): member is TeamMemberSummary => Boolean(member))}
-          canManage={canManageTeam(selectedTeam)}
+          canEdit={canEditTeam(selectedTeam)}
+          canDelete={canDeleteTeam(selectedTeam)}
           onClose={() => setSelectedTeam(null)}
           onSelectMember={setSelectedTeamMember}
           onEdit={() => {
@@ -1814,7 +1866,8 @@ function useDebouncedValue<T>(value: T, delayMs: number) {
 function TeamDetailDialog({
   team,
   members,
-  canManage,
+  canEdit,
+  canDelete,
   onClose,
   onSelectMember,
   onEdit,
@@ -1822,7 +1875,8 @@ function TeamDetailDialog({
 }: {
   team: TeamSummary;
   members: TeamMemberSummary[];
-  canManage: boolean;
+  canEdit: boolean;
+  canDelete: boolean;
   onClose: () => void;
   onSelectMember: (member: TeamMemberSummary) => void;
   onEdit: () => void;
@@ -1900,14 +1954,18 @@ function TeamDetailDialog({
           </div>
         </div>
       </div>
-      {canManage ? (
+      {canEdit || canDelete ? (
         <div className="flex justify-end gap-2 border-t border-[var(--border)] px-6 py-4">
-          <button type="button" onClick={onEdit} className="rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-4 py-2 text-sm font-semibold transition hover:bg-[var(--hover)]">
-            编辑
-          </button>
-          <button type="button" onClick={onDelete} className="rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-4 py-2 text-sm font-semibold text-[var(--danger)] transition hover:bg-[var(--danger-soft)]">
-            删除
-          </button>
+          {canEdit ? (
+            <button type="button" onClick={onEdit} className="rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-4 py-2 text-sm font-semibold transition hover:bg-[var(--hover)]">
+              编辑
+            </button>
+          ) : null}
+          {canDelete ? (
+            <button type="button" onClick={onDelete} className="rounded-xl border border-[var(--border)] bg-[var(--panel-soft)] px-4 py-2 text-sm font-semibold text-[var(--danger)] transition hover:bg-[var(--danger-soft)]">
+              删除
+            </button>
+          ) : null}
         </div>
       ) : null}
     </ModalShell>

@@ -22,6 +22,7 @@ export default function SearchMultiSelect({
   className = "",
   panelClassName = "",
   compact = false,
+  lockedValues = [],
 }: {
   value: string[];
   options: MultiSelectOption[];
@@ -32,6 +33,7 @@ export default function SearchMultiSelect({
   className?: string;
   panelClassName?: string;
   compact?: boolean;
+  lockedValues?: string[];
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -50,6 +52,7 @@ export default function SearchMultiSelect({
 
   const selected = useMemo(() => options.filter((option) => value.includes(option.value)), [options, value]);
   const selectedValueSet = useMemo(() => new Set(value), [value]);
+  const lockedValueSet = useMemo(() => new Set(lockedValues), [lockedValues]);
   const filtered = useMemo(() => {
     return options.filter((option) => selectItemMatchesQuery(option, query));
   }, [options, query]);
@@ -58,6 +61,7 @@ export default function SearchMultiSelect({
   const bulkActionLabel = allFilteredSelected ? "反选" : "全选";
 
   function toggle(nextValue: string) {
+    if (lockedValueSet.has(nextValue)) return;
     onChange(value.includes(nextValue) ? value.filter((item) => item !== nextValue) : [...value, nextValue]);
   }
 
@@ -69,7 +73,7 @@ export default function SearchMultiSelect({
   function invertFilteredSelection() {
     if (filteredValues.length === 0) return;
     const filteredValueSet = new Set(filteredValues);
-    const keptValues = value.filter((item) => !filteredValueSet.has(item));
+    const keptValues = value.filter((item) => !filteredValueSet.has(item) || lockedValueSet.has(item));
     const addedValues = filteredValues.filter((item) => !selectedValueSet.has(item));
     onChange([...keptValues, ...addedValues]);
   }
@@ -133,7 +137,7 @@ export default function SearchMultiSelect({
             title={`清空${summaryLabel}`}
             onClick={(event) => {
               event.stopPropagation();
-              onChange([]);
+              onChange(value.filter((item) => lockedValueSet.has(item)));
             }}
             className="grid h-6 w-6 shrink-0 place-items-center rounded text-[var(--sms-muted)] transition hover:bg-[var(--sms-panel-soft)] hover:text-[var(--sms-text)]"
           >
@@ -194,12 +198,15 @@ export default function SearchMultiSelect({
             ) : (
               filtered.map((option) => {
                 const active = selectedValueSet.has(option.value);
+                const locked = lockedValueSet.has(option.value);
                 return (
                   <button
                     key={option.value}
                     type="button"
+                    disabled={locked}
                     onClick={() => toggle(option.value)}
-                    className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition ${
+                    title={locked ? "团队归属人不可移除" : undefined}
+                    className={`flex w-full items-center gap-2 rounded-md border px-3 py-2 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-75 ${
                       active
                         ? "border-[var(--sms-accent)] bg-[var(--sms-accent-soft)] text-[var(--sms-accent)] shadow-sm"
                         : "border-transparent text-[var(--sms-text)] hover:border-[var(--sms-border)] hover:bg-[var(--sms-panel-soft)]"

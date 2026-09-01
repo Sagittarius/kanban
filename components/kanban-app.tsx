@@ -65,6 +65,7 @@ import SearchMultiSelect, { type MultiSelectOption } from "@/components/search-m
 import SearchableSelect, { type SearchableSelectOption } from "@/components/searchable-select";
 import {
   type Dispatch,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -1170,6 +1171,7 @@ export default function KanbanApp({
   const [themeId, setThemeId] = useState<ThemeId>(isThemeId(initialThemeId) ? initialThemeId : "notion");
   const [drawerMode, setDrawerMode] = useState<DrawerMode>(null);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [taskDraftCache, setTaskDraftCache] = useState<Record<string, TaskDrawerDraft>>({});
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     initialBoard.projects[0]?.id ?? null
   );
@@ -1401,6 +1403,21 @@ export default function KanbanApp({
     setSelectedTaskId(taskId);
     setDrawerMode("task");
   }
+
+  const updateTaskDraft = useCallback((taskId: string, nextDraft: TaskDrawerDraft) => {
+    setTaskDraftCache((current) => ({ ...current, [taskId]: nextDraft }));
+  }, []);
+
+  const discardTaskDraft = useCallback((taskId: string) => {
+    setTaskDraftCache((current) => {
+      if (!(taskId in current)) {
+        return current;
+      }
+      const nextDraftCache = { ...current };
+      delete nextDraftCache[taskId];
+      return nextDraftCache;
+    });
+  }, []);
 
   function changeTheme(nextTheme: ThemeId) {
     setThemeId(nextTheme);
@@ -1673,8 +1690,7 @@ export default function KanbanApp({
 
   async function saveTaskDetail(
     taskId: string,
-    patch: Partial<BoardTask>,
-    nextSubtasks: SubtaskDraft[]
+    patch: Partial<BoardTask>
   ) {
     const previous = board.tasks.find((task) => task.id === taskId);
     const previousTasks = board.tasks;
@@ -1683,16 +1699,6 @@ export default function KanbanApp({
     }
 
     const updatedAt = new Date().toISOString();
-    const normalizedSubtasks = nextSubtasks
-      .map((step, index) => ({
-        ...step,
-        title: step.title.trim(),
-        orderIndex: (index + 1) * 10,
-        updatedAt,
-      }))
-      .filter((step) => step.title);
-    const progress = progressFromSubtasks(normalizedSubtasks, patch.progress ?? previous.progress);
-
     setBoard((current) => ({
       ...current,
       tasks: current.tasks.map((task) =>
@@ -1700,8 +1706,6 @@ export default function KanbanApp({
           ? applyDoneSideEffects({
               ...task,
               ...patch,
-              subtasks: normalizedSubtasks,
-              progress,
               updatedAt,
             }, updatedAt)
           : task
@@ -1721,11 +1725,6 @@ export default function KanbanApp({
     try {
       const saved = await apiRequest<BoardTask>(`/api/tasks/${taskId}/detail`, "PATCH", {
         task: patch,
-        subtasks: normalizedSubtasks.map((step) => ({
-          id: step.id,
-          title: step.title,
-          done: step.done,
-        })),
       });
       setBoard((current) => ({
         ...current,
@@ -1739,6 +1738,97 @@ export default function KanbanApp({
       setBoard((current) => ({ ...current, tasks: previousTasks }));
       setSyncState("local");
       notify(error instanceof Error ? error.message : "任务保存失败", "error");
+      return false;
+    }
+  }
+
+  async function createTaskSubtask(taskId: string, title: string) {
+    if (isLocalPreview) {
+      const now = new Date().toISOString();
+      setBoard((current) => ({
+        ...current,
+        tasks: current.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const subtasks = [
+            ...task.subtasks,
+            {
+              id: nextLocalId("subtask"),
+              taskId,
+              title,
+              done: false,
+              orderIndex: (task.subtasks.length + 1) * 10,
+              createdAt: now,
+              updatedAt: now,
+            },
+          ];
+          return { ...task, subtasks, progress: progressFromSubtasks(subtasks, task.progress), updatedAt: now };
+        }),
+      }));
+      return true;
+    }
+
+    try {
+      await apiRequest(`/api/tasks/${taskId}/subtasks`, "POST", { title });
+      await refreshBoard(false);
+      notifyDashboardRefresh();
+      return true;
+    } catch (error) {
+      await refreshBoard(false);
+      notify(error instanceof Error ? error.message : "创建任务拆解失败", "error");
+      return false;
+    }
+  }
+
+  async function updateTaskSubtask(taskId: string, subtaskId: string, patch: Pick<SubtaskDraft, "title" | "done">) {
+    if (isLocalPreview) {
+      const now = new Date().toISOString();
+      setBoard((current) => ({
+        ...current,
+        tasks: current.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const subtasks = task.subtasks.map((subtask) =>
+            subtask.id === subtaskId ? { ...subtask, ...patch, updatedAt: now } : subtask
+          );
+          return { ...task, subtasks, progress: progressFromSubtasks(subtasks, task.progress), updatedAt: now };
+        }),
+      }));
+      return true;
+    }
+
+    try {
+      await apiRequest(`/api/tasks/${taskId}/subtasks/${subtaskId}`, "PATCH", patch);
+      await refreshBoard(false);
+      notifyDashboardRefresh();
+      return true;
+    } catch (error) {
+      await refreshBoard(false);
+      notify(error instanceof Error ? error.message : "保存任务拆解失败", "error");
+      return false;
+    }
+  }
+
+  async function deleteTaskSubtask(taskId: string, subtaskId: string) {
+    if (isLocalPreview) {
+      const now = new Date().toISOString();
+      setBoard((current) => ({
+        ...current,
+        tasks: current.tasks.map((task) => {
+          if (task.id !== taskId) return task;
+          const subtasks = task.subtasks.filter((subtask) => subtask.id !== subtaskId);
+          return { ...task, subtasks, progress: progressFromSubtasks(subtasks, task.progress), updatedAt: now };
+        }),
+      }));
+      return true;
+    }
+
+    try {
+      await apiRequest(`/api/tasks/${taskId}/subtasks/${subtaskId}`, "DELETE");
+      await refreshBoard(false);
+      notifyDashboardRefresh();
+      return true;
+    } catch (error) {
+      await refreshBoard(false);
+      notify(error instanceof Error ? error.message : "删除任务拆解失败", "error");
       return false;
     }
   }
@@ -2783,11 +2873,25 @@ export default function KanbanApp({
               currentUser={currentUser ?? undefined}
               editable={selectedTaskEditable}
               normalizableOverdueMarkers={selectedTaskNormalizableOverdueMarkers}
-              onSave={(patch, subtasks) => saveTaskDetail(selectedTask.id, patch, subtasks)}
+              initialDraft={taskDraftCache[selectedTask.id]}
+              onDraftChange={updateTaskDraft}
+              onSave={async (patch) => {
+                const saved = await saveTaskDetail(selectedTask.id, patch);
+                if (saved) {
+                  discardTaskDraft(selectedTask.id);
+                }
+                return saved;
+              }}
+              onCreateSubtask={(title) => createTaskSubtask(selectedTask.id, title)}
+              onUpdateSubtask={(subtaskId, patch) => updateTaskSubtask(selectedTask.id, subtaskId, patch)}
+              onDeleteSubtask={(subtaskId) => deleteTaskSubtask(selectedTask.id, subtaskId)}
               onNormalizeOverdue={(warningKey) => normalizeTaskOverdue(selectedTask.id, warningKey)}
               onInvalid={showNotice}
               onRework={() => reworkTask(selectedTask.id)}
-              onDelete={() => void removeTask(selectedTask.id)}
+              onDelete={() => {
+                discardTaskDraft(selectedTask.id);
+                void removeTask(selectedTask.id);
+              }}
             />
           ) : null}
           {drawerMode === "project" ? (
@@ -3903,6 +4007,10 @@ type TaskDraft = {
 
 type SubtaskDraft = Subtask;
 
+type TaskDrawerDraft = {
+  draft: TaskDraft;
+};
+
 function taskDraftFromTask(task: BoardTask): TaskDraft {
   return {
     title: task.title,
@@ -3935,7 +4043,12 @@ function TaskDrawer({
   currentUser,
   editable,
   normalizableOverdueMarkers,
+  initialDraft,
+  onDraftChange,
   onSave,
+  onCreateSubtask,
+  onUpdateSubtask,
+  onDeleteSubtask,
   onNormalizeOverdue,
   onInvalid,
   onRework,
@@ -3948,13 +4061,18 @@ function TaskDrawer({
   currentUser: BoardData["currentUser"];
   editable: boolean;
   normalizableOverdueMarkers: DeadlineMarker[];
-  onSave: (patch: Partial<BoardTask>, subtasks: SubtaskDraft[]) => Promise<boolean>;
+  initialDraft?: TaskDrawerDraft;
+  onDraftChange: (taskId: string, nextDraft: TaskDrawerDraft) => void;
+  onSave: (patch: Partial<BoardTask>) => Promise<boolean>;
+  onCreateSubtask: (title: string) => Promise<boolean>;
+  onUpdateSubtask: (subtaskId: string, patch: Pick<SubtaskDraft, "title" | "done">) => Promise<boolean>;
+  onDeleteSubtask: (subtaskId: string) => Promise<boolean>;
   onNormalizeOverdue: (warningKey: DeadlineMarker["key"]) => Promise<boolean>;
   onInvalid: (message: string, title?: string) => void;
   onRework: () => Promise<void>;
   onDelete: () => void;
 }) {
-  const [draft, setDraft] = useState<TaskDraft>(() => taskDraftFromTask(task));
+  const [draft, setDraft] = useState<TaskDraft>(() => initialDraft?.draft ?? taskDraftFromTask(task));
   const [subtaskDrafts, setSubtaskDrafts] = useState<SubtaskDraft[]>(() => task.subtasks);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [saving, setSaving] = useState(false);
@@ -3963,7 +4081,7 @@ function TaskDrawer({
   const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
   const [editingSubtaskTitle, setEditingSubtaskTitle] = useState("");
   const taskSubtasksRef = useRef(task.subtasks);
-  const taskDraftSnapshot = useMemo<TaskDraft>(() => taskDraftFromTask(task), [task]);
+  const subtaskActionIdsRef = useRef(new Set<string>());
 
   const taskMembers = membersForProject(projects, teams, draft.projectId);
   const restrictedEditor = editable && currentUser?.role === "team_member";
@@ -3998,12 +4116,16 @@ function TaskDrawer({
   }, [task.subtasks]);
 
   useEffect(() => {
-    setDraft(taskDraftSnapshot);
     setSubtaskDrafts(taskSubtasksRef.current);
-    setNewSubtaskTitle("");
     setEditingSubtaskId(null);
     setEditingSubtaskTitle("");
-  }, [subtaskResetKey, task.id, task.updatedAt, taskDraftSnapshot]);
+  }, [subtaskResetKey, task.id]);
+
+  useEffect(() => {
+    onDraftChange(task.id, {
+      draft,
+    });
+  }, [draft, onDraftChange, task.id]);
 
   function buildTaskPatch(nextDraft: TaskDraft, nextSubtaskDrafts: SubtaskDraft[]) {
     const hasSubtasks = nextSubtaskDrafts.length > 0;
@@ -4046,7 +4168,7 @@ function TaskDrawer({
     };
   }
 
-  async function persistTaskDraft(nextDraft: TaskDraft, nextSubtaskDrafts: SubtaskDraft[]) {
+  async function persistTaskDraft(nextDraft: TaskDraft) {
     if (!nextDraft.title.trim()) {
       onInvalid("请输入任务名称。", "无法保存任务");
       return false;
@@ -4071,61 +4193,59 @@ function TaskDrawer({
 
     setSaving(true);
     try {
-      const { patch } = buildTaskPatch(nextDraft, nextSubtaskDrafts);
-      return await onSave(patch, nextSubtaskDrafts);
+      const { patch } = buildTaskPatch(nextDraft, subtaskDrafts);
+      return await onSave(patch);
     } finally {
       setSaving(false);
     }
   }
 
-  function commitSubtaskTitle(subtaskId: string, title: string) {
+  async function commitSubtaskTitle(subtaskId: string, title: string) {
+    if (subtaskActionIdsRef.current.has(subtaskId)) {
+      return;
+    }
     if (!title.trim()) {
       setEditingSubtaskId(null);
       setEditingSubtaskTitle("");
       return;
     }
-    setSubtaskDrafts((current) =>
-      current.map((step) =>
-        step.id === subtaskId
-          ? { ...step, title: title.trim(), updatedAt: new Date().toISOString() }
-          : step
-      )
+    const existing = subtaskDrafts.find((step) => step.id === subtaskId);
+    if (!existing || existing.title === title.trim()) {
+      setEditingSubtaskId(null);
+      setEditingSubtaskTitle("");
+      return;
+    }
+    const previousSubtasks = subtaskDrafts;
+    const nextSubtasks = previousSubtasks.map((step) =>
+      step.id === subtaskId ? { ...step, title: title.trim(), updatedAt: new Date().toISOString() } : step
     );
+    subtaskActionIdsRef.current.add(subtaskId);
+    setSubtaskDrafts(nextSubtasks);
     setEditingSubtaskId(null);
     setEditingSubtaskTitle("");
+    const saved = await onUpdateSubtask(subtaskId, { title: title.trim(), done: existing.done });
+    subtaskActionIdsRef.current.delete(subtaskId);
+    if (!saved) {
+      setSubtaskDrafts(previousSubtasks);
+    }
   }
 
   async function addSubtask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!newSubtaskTitle.trim()) {
+    const title = newSubtaskTitle.trim();
+    if (!title) {
       return;
     }
-    const now = new Date().toISOString();
-    const nextSubtasks = [
-      ...subtaskDrafts,
-      {
-        id: `draft-step-${task.id}-${Date.now()}-${subtaskDrafts.length + 1}`,
-        taskId: task.id,
-        title: newSubtaskTitle.trim(),
-        done: false,
-        orderIndex: subtaskDrafts.length * 10 + 10,
-        createdAt: now,
-        updatedAt: now,
-      },
-    ];
-
-    setSubtaskDrafts(nextSubtasks);
-    const saved = await persistTaskDraft(draft, nextSubtasks);
-    if (saved) {
-      setNewSubtaskTitle("");
-      return;
+    setNewSubtaskTitle("");
+    const saved = await onCreateSubtask(title);
+    if (!saved) {
+      setNewSubtaskTitle(title);
     }
-    setSubtaskDrafts(subtaskDrafts);
   }
 
   async function saveTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    await persistTaskDraft(draft, subtaskDrafts);
+    await persistTaskDraft(draft);
   }
 
   async function handleRework() {
@@ -4369,15 +4489,16 @@ function TaskDrawer({
               <div key={step.id} className="flex items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--input)] px-3 py-2">
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={async () => {
+                    const previousSubtasks = subtaskDrafts;
                     setSubtaskDrafts((current) =>
                       current.map((item) =>
-                        item.id === step.id
-                          ? { ...item, done: true, updatedAt: new Date().toISOString() }
-                          : item
+                        item.id === step.id ? { ...item, done: true, updatedAt: new Date().toISOString() } : item
                       )
-                    )
-                  }
+                    );
+                    const saved = await onUpdateSubtask(step.id, { title: step.title, done: true });
+                    if (!saved) setSubtaskDrafts(previousSubtasks);
+                  }}
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[var(--border)] transition hover:border-[var(--accent)]"
                 >
                   <Check size={11} className="opacity-0" />
@@ -4387,10 +4508,10 @@ function TaskDrawer({
                     value={editingSubtaskTitle}
                     onChange={(e) => setEditingSubtaskTitle(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") { commitSubtaskTitle(step.id, editingSubtaskTitle); }
+                      if (e.key === "Enter") { e.preventDefault(); void commitSubtaskTitle(step.id, editingSubtaskTitle); }
                       if (e.key === "Escape") { setEditingSubtaskId(null); setEditingSubtaskTitle(""); }
                     }}
-                    onBlur={() => commitSubtaskTitle(step.id, editingSubtaskTitle)}
+                    onBlur={() => void commitSubtaskTitle(step.id, editingSubtaskTitle)}
                     autoFocus
                     className="flex-1 rounded border border-[var(--accent)] bg-[var(--input)] px-2 py-1 text-sm outline-none"
                   />
@@ -4405,9 +4526,12 @@ function TaskDrawer({
                 )}
                 <button
                   type="button"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
+                    const previousSubtasks = subtaskDrafts;
                     setSubtaskDrafts((current) => current.filter((item) => item.id !== step.id));
+                    const saved = await onDeleteSubtask(step.id);
+                    if (!saved) setSubtaskDrafts(previousSubtasks);
                   }}
                   title="删除拆解"
                   className="shrink-0 rounded p-1 text-[var(--muted)] transition hover:bg-[var(--panel-soft)] hover:text-[var(--danger)]"
@@ -4420,15 +4544,16 @@ function TaskDrawer({
               <div key={step.id} className="flex items-center gap-2 rounded-md border border-[#c8d8bf] bg-[#edf6ea] px-3 py-2">
                 <button
                   type="button"
-                  onClick={() =>
+                  onClick={async () => {
+                    const previousSubtasks = subtaskDrafts;
                     setSubtaskDrafts((current) =>
                       current.map((item) =>
-                        item.id === step.id
-                          ? { ...item, done: false, updatedAt: new Date().toISOString() }
-                          : item
+                        item.id === step.id ? { ...item, done: false, updatedAt: new Date().toISOString() } : item
                       )
-                    )
-                  }
+                    );
+                    const saved = await onUpdateSubtask(step.id, { title: step.title, done: false });
+                    if (!saved) setSubtaskDrafts(previousSubtasks);
+                  }}
                   className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-[#4f7a45] bg-[#4f7a45] text-white transition"
                 >
                   <Check size={11} />
@@ -4438,10 +4563,10 @@ function TaskDrawer({
                     value={editingSubtaskTitle}
                     onChange={(e) => setEditingSubtaskTitle(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") { commitSubtaskTitle(step.id, editingSubtaskTitle); }
+                      if (e.key === "Enter") { e.preventDefault(); void commitSubtaskTitle(step.id, editingSubtaskTitle); }
                       if (e.key === "Escape") { setEditingSubtaskId(null); setEditingSubtaskTitle(""); }
                     }}
-                    onBlur={() => commitSubtaskTitle(step.id, editingSubtaskTitle)}
+                    onBlur={() => void commitSubtaskTitle(step.id, editingSubtaskTitle)}
                     autoFocus
                     className="flex-1 rounded border border-[var(--accent)] bg-white px-2 py-1 text-sm text-[#58704e] outline-none"
                   />
@@ -4456,9 +4581,12 @@ function TaskDrawer({
                 )}
                 <button
                   type="button"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation();
+                    const previousSubtasks = subtaskDrafts;
                     setSubtaskDrafts((current) => current.filter((item) => item.id !== step.id));
+                    const saved = await onDeleteSubtask(step.id);
+                    if (!saved) setSubtaskDrafts(previousSubtasks);
                   }}
                   title="删除拆解"
                   className="shrink-0 rounded p-1 text-[#6d8064] transition hover:bg-white/50 hover:text-[var(--danger)]"
